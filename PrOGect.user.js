@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.2.0-v13
+// @version         0.2.1-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.2.0-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.2.1-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -376,19 +376,28 @@ GM_addStyle(`
    The tabs now stay exactly where the game puts them (loadSpyTable inserts the table AFTER them),
    so nothing needs repositioning; the rule below only neutralises the inherited hack. */
 #messagecontainercomponent .ogl_spytable:has(.ogl_spyLine:not(.ogl_spySum))+.messageContent .tabsWrapper:has(.active[data-subtab-id="20"]) { position:static !important; top:auto !important; left:auto !important; width:auto !important; border:0 !important; border-radius:0 !important; overflow:visible !important; }
-.ogl_spytable { --spy-cols:26px 40px 32px 26px 100px minmax(140px, 1fr) 84px 64px 64px 118px; box-sizing:border-box; width:100%; margin:0 0 10px !important; padding:8px; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:8px; color:var(--syl-ink); font-size:12px; }
+/* Fluid track: every data column may shrink (minmax(0,...)) and the name absorbs the slack, so the
+   grid can never be wider than its panel. The previous values assumed a ~1000px container; moving the
+   table inside .messageContent gave it a much narrower parent and the actions spilled out of the tab.
+   No width is assumed here - the only hard floors are the row number, the type icon, a 48px name and
+   the actions' own content, ~210px in total. */
+.ogl_spytable { --spy-cols:18px minmax(0,30px) minmax(0,24px) 20px minmax(0,78px) minmax(48px,1fr) minmax(0,64px) minmax(0,48px) minmax(0,48px) auto; box-sizing:border-box; width:100%; max-width:100%; margin:0 0 10px !important; padding:6px; overflow-x:auto; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:8px; color:var(--syl-ink); font-size:12px; }
 #fleetsTab .ogl_spytable { margin-top:0 !important; margin-bottom:10px !important; }
 /* one source of truth for the column track: header and rows cannot drift apart */
-.ogl_spyHeader, .ogl_spytable .ogl_spyLine > div:not(.ogl_more) { display:grid; grid-template-columns:var(--spy-cols); gap:4px; align-items:center; }
+.ogl_spyHeader, .ogl_spytable .ogl_spyLine > div:not(.ogl_more) { display:grid; grid-template-columns:var(--spy-cols); gap:3px; align-items:center; }
 .ogl_spyHeader { margin:0 0 6px; padding:0 0 6px; border-bottom:1px solid var(--syl-border); border-radius:0; }
 .ogl_spytable .ogl_spyHeader b { padding:0 2px; background:none; border-radius:0; color:var(--syl-muted); font-size:11px !important; font-weight:700; letter-spacing:.4px; text-transform:uppercase; line-height:20px !important; }
 .ogl_spytable .ogl_spyHeader b.material-icons { font-size:15px !important; letter-spacing:0; text-transform:none; }
 .ogl_spytable .ogl_spyHeader [data-filter] { cursor:pointer; transition:color .15s ease-out; }
 .ogl_spytable .ogl_spyHeader [data-filter]:hover { color:var(--syl-ink); }
 .ogl_spytable .ogl_spyHeader [data-filter].ogl_active { color:var(--syl-accent); }
-.ogl_spytable [data-filter]:after { margin-left:2px; color:currentColor; opacity:.45; font-size:14px; }
+/* sort arrow only on the column actually sorted: on all nine it is noise and it steals width */
+.ogl_spytable .ogl_spyHeader [data-filter]:after { content:none !important; }
+.ogl_spytable .ogl_spyHeader [data-filter].ogl_active:after { content:"\\f15f" !important; float:none !important; display:inline; margin-left:2px; color:currentColor; opacity:.7; font-family:'Material Icons'; font-size:13px; }
 /* data cells: raised surface, tabular numbers so columns read down the page */
-.ogl_spytable .ogl_spyLine > div > * { height:26px; padding:0 6px; background:var(--syl-raised); border:1px solid transparent; border-radius:var(--syl-radius); font-variant-numeric:tabular-nums; }
+.ogl_spytable .ogl_spyHeader b, .ogl_spytable .ogl_spyLine > div > * { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap !important; }
+.ogl_spytable .ogl_spyLine > div > * { height:26px; padding:0 4px; background:var(--syl-raised); border:1px solid transparent; border-radius:var(--syl-radius); font-variant-numeric:tabular-nums; }
+.ogl_spyLine .ogl_spyTableName a { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ogl_spytable .ogl_spyLine:not(.ogl_spySum):hover > div > * { border-color:var(--syl-border); }
 .ogl_spyLine .ogl_spyTableName { height:26px; background:var(--syl-raised); border-radius:var(--syl-radius); }
 .ogl_spytable .ogl_spyLine > div > .ogl_loot { color:var(--syl-ink); font-weight:700; }
@@ -404,10 +413,12 @@ GM_addStyle(`
 .ogl_spytable .ogl_spyLine > div > .ogl_hasValue { background:rgba(224,115,107,.14); border-color:rgba(224,115,107,.4); color:#f0a9a3; }
 .ogl_spytable .ogl_spySum > div > * { background:none; border:0; color:var(--syl-muted); font-weight:700; }
 .ogl_spytable .ogl_spySum > div > .ogl_textRight { color:var(--syl-ink); }
-/* actions: transparent cell, buttons as the same compact icon chip used elsewhere */
-.ogl_spytable .ogl_spyLine > div > .ogl_actions { display:flex; justify-content:flex-end; gap:3px; padding:0 !important; background:none !important; border:0 !important; }
-.ogl_spytable .ogl_actions .ogl_button { display:inline-flex; align-items:center; justify-content:center; width:26px !important; height:26px !important; padding:0; background:var(--syl-raised); border:1px solid var(--syl-border) !important; border-radius:var(--syl-radius); color:var(--syl-muted); font-size:15px !important; line-height:26px !important; transition:border-color .15s ease-out, color .15s ease-out; }
-.ogl_spytable .ogl_actions .ogl_button:hover { border-color:var(--syl-accent) !important; color:var(--syl-accent); }
+/* actions: a dense 5-icon row, so compact borderless icons - the bordered chip vocabulary belongs to
+   the settings sub-panels, and at this size it did not fit. Interactive controls outrank labels: this
+   cell is never clipped, the name column gives up the space instead. */
+.ogl_spytable .ogl_spyLine > div > .ogl_actions { display:flex; justify-content:flex-end; gap:1px; padding:0 !important; background:none !important; border:0 !important; overflow:visible !important; text-overflow:clip !important; }
+.ogl_spytable .ogl_actions .ogl_button { display:inline-flex; align-items:center; justify-content:center; width:19px !important; height:24px !important; padding:0 !important; background:none !important; border:0 !important; border-radius:3px; color:var(--syl-muted); font-size:15px !important; line-height:24px !important; transition:background .15s ease-out, color .15s ease-out; }
+.ogl_spytable .ogl_actions .ogl_button:hover { background:var(--syl-raised); color:var(--syl-accent); }
 .ogl_spytable .ogl_spytableSettings { justify-content:flex-end; gap:2px; background:none !important; border:0 !important; }
 .ogl_spytable .ogl_spytableSettings > div { height:22px; padding:0 5px; border-radius:var(--syl-radius); font-size:16px !important; line-height:22px !important; transition:background .15s ease-out, color .15s ease-out; }
 .ogl_spytable .ogl_spytableSettings > div:hover { background:var(--syl-raised); }

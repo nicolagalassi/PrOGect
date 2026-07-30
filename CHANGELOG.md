@@ -2,6 +2,23 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.2.1-v13
+
+### Fixed
+
+- **The restyled spy table was too wide and its action buttons spilled out of the messages tab.** The
+  0.2.0 column widths were tuned against a mock built at 1000px, but moving the table inside
+  `.messageContent` gave it a much narrower parent, and the fixed tracks plus a 140px floor on the name
+  column forced a 730px minimum. The track is now fluid: every data column may shrink, the name absorbs
+  the slack, and the only hard floors are the row number, the type icon, a 48px name and the actions'
+  own content. No container width is assumed anywhere. Verified at 480, 560, 720 and 900px: nothing
+  overflows and all five action buttons stay inside the panel and clickable at every width.
+- The action buttons used the bordered chip from the settings sub-panels. That vocabulary does not fit a
+  dense five-icon table row, so they are compact borderless icons with hover feedback, as the base had.
+- The sort arrow was drawn on all nine sortable columns, stealing width and, being floated, wrapping the
+  header onto a second line. It now appears only on the column actually sorted, and the header is one
+  line again at every width.
+
 ## 0.2.0-v13
 
 ### Fixed
