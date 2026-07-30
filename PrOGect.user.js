@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.2.1-v13
+// @version         0.2.2-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.2.1-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.2.2-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -86,14 +86,21 @@ GM_addStyle(`
 .smallplanet .planet-name { color:hsl(208deg 45% 72%) !important; font-size:11px !important; font-weight:bold !important; top:7px !important; left:33px !important; }
 .smallplanet .planet-koords { color:hsl(208deg 12% 68%) !important; font-size:12px !important; font-weight:normal !important; letter-spacing:-0.05em; top:auto !important; bottom:8px !important; left:33px !important; }
 .smallplanet .ogl_todoIcon { color:#cfcfcf; }
-.smallplanet .ogl_sideIconBottom { top:-1px !important; }
+/* Side icons live in ONE horizontal strip to the right of the row (see DomManager.loadBase). The
+   inherited layout stacked three absolutely positioned tiers 13-14px apart, but each tier is 15-17px
+   tall, so on the compact 41px row a planet holding both a structures icon and a returning fleet drew
+   them on top of each other - visible exactly when only some planets have fleets in flight. Laying them
+   out horizontally removes the vertical budget problem entirely, at any row height. */
+.smallplanet .ogl_sideIcons { position:absolute; left:calc(100% + 6px); top:0; height:100%; display:flex; align-items:center; gap:6px; white-space:nowrap; }
+.smallplanet .ogl_sideIcons > div { position:static !important; top:auto !important; left:auto !important; }
+.smallplanet .ogl_sideIcons > div:empty { display:none !important; }
 .smallplanet .constructionIcon { left:3px !important; top:3px !important; }
 /* PrOGect: hide OGLight's left-menu ping <li> (in #menuTable, near Riepilogo) while keeping the top-bar ping div under the date */
 #menuTable .ogl_ping { display:none !important; }
-/* PrOGect: brand entry in the left menu. It is intentionally NOT a link (no published page yet), and
-   OGame colours menu labels through a link pseudo-class, which does not match an anchor without href —
-   so the text was invisible until hover. Set the label colour explicitly instead of faking a link. */
-#menuTable .ogl_pgMenuLabel { cursor:default !important; }
+/* PrOGect: brand entry in the left menu. It carries an href (which is what makes OGame's native menu
+   button styling apply at all - without one the label rendered as bare text, visible only on hover) and
+   opens PrOGect's settings rather than any external page. These two rules only pin the label colour so
+   it does not depend on the game's visited/unvisited link palette. */
 #menuTable .ogl_pgMenuLabel .textlabel { color:#9fb0c0 !important; }
 #menuTable .ogl_pgMenuLabel:hover .textlabel { color:#dfe7ee !important; }
 .smallplanet .ogl_refreshTimer { background:rgba(0,0,0,.8) !important; border-radius:14px !important; width:15px !important; height:15px !important; line-height:13px !important; padding:1px !important; top:2px !important; bottom:auto !important; text-align:center; font-size:12px !important; }
@@ -2109,9 +2116,15 @@ class DomManager extends Manager
             planet._ogl.queue = Util.addDom('div', { class:'ogl_buildIconList', parent:planet });
             planet._ogl.coords = _getKoords(planet);
             planet._ogl.name = _getName(planet);
-            planet._ogl.sideIcon = Util.addDom('div', { class:'ogl_sideIconTop', parent:line });
-            planet._ogl.sideIconBack = Util.addDom('div', { class:'ogl_sideIconBottom', parent:line });
-            planet._ogl.sideInfo = Util.addDom('div', { class:'ogl_sideIconInfo', parent:line });
+            // The three side-icon strips (outgoing fleets + structures / returning fleets + moon /
+            // jumpgate timer) used to be stacked as three absolutely positioned tiers. Each strip is
+            // 15-17px tall, so three of them need ~48px and the compact 41px row made them overlap.
+            // One horizontal flex row instead: it cannot overlap at any row height, and the strips keep
+            // their class names so everything that writes into them stays untouched.
+            const sideIcons = Util.addDom('div', { class:'ogl_sideIcons', parent:line });
+            planet._ogl.sideIcon = Util.addDom('div', { class:'ogl_sideIconTop', parent:sideIcons });
+            planet._ogl.sideIconBack = Util.addDom('div', { class:'ogl_sideIconBottom', parent:sideIcons });
+            planet._ogl.sideInfo = Util.addDom('div', { class:'ogl_sideIconInfo', parent:sideIcons });
 
             this.planet[planetID] = planet;
 
@@ -2231,10 +2244,17 @@ class DomManager extends Manager
         const fragment = document.createDocumentFragment();
 
         const oglBlock = Util.addDom('li', { parent:fragment });
-        // Brand entry: text only for now (the OGLight icon was removed; a PrOGect logo comes later).
-        // Not a link: PrOGect has no published page, and pointing it at OGLight's greasyfork / board
-        // threads would misattribute the tool. See the ogl_pgMenuLabel CSS for why the colour is explicit.
-        Util.addDom('a', { parent:oglBlock, class:'menubutton tooltipRight ogl_pgMenuLabel', child:`<span class="textlabel">PrOGect ${version}</span>` });
+        // Brand entry. The OGLight icon is gone (a PrOGect logo comes later) but the empty .menu_icon
+        // cell stays: OGame's menu lays out `.menu_icon + .menubutton`, and dropping it left the label
+        // without the native button chrome. The href is what makes OGame's link styling apply at all
+        // (it colours labels through a link pseudo-class), so the entry opens PrOGect's own settings -
+        // our UI, one click, no game action. It deliberately does not point at OGLight's pages.
+        Util.addDom('span', { parent:oglBlock, class:'menu_icon ogl_leftMenuIcon' });
+        Util.addDom('a', { parent:oglBlock, class:'menubutton tooltipRight ogl_pgMenuLabel', href:'#', child:`<span class="textlabel">PrOGect ${version}</span>`, onclick:event =>
+        {
+            event.preventDefault();
+            this.ogl._topbar.openSettings(true);   // openSettings lives on TopbarManager, not DomManager
+        }});
 
         if(this.ogl.ptreKey)
         {
@@ -8556,6 +8576,15 @@ class JumpgateManager extends Manager
                 const now = serverTime.getTime();
                 this.ogl.db.myPlanets[originID].jumpgateTimer = now + calcTimer(originLevel);
                 this.ogl.db.myPlanets[jumpGateTargetId].jumpgateTimer = now + calcTimer(destinationLevel);
+
+                // Follow the fleet: land the player on the moon they just jumped to. The jump already
+                // moved the ships, so leaving the view on the origin moon means every follow-up click
+                // (loading the ships, sending them on) starts on the wrong body. This is a foreground
+                // navigation caused by the player's own jump click - the same thing clicking a moon in
+                // the planet list does - not a background call, so cp= is fine here (AGENTS.md SS4.2
+                // forbids cp= in background/automated requests).
+                this.ogl.save();
+                window.location.href = `https://${window.location.host}/game/index.php?page=ingame&component=overview&cp=${jumpGateTargetId}`;
             }
 
             errorBoxAsArray(a.errorbox);
