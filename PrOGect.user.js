@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.2.2-v13
+// @version         0.2.3-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.2.2-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.2.3-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -2292,7 +2292,7 @@ class DomManager extends Manager
         {
             const currentLF = `lifeform${this.ogl.db.myPlanets[this.ogl.account.currentPlanetID]?.lifeform || 0}`;
             const iconLF = document.querySelector('#lifeform .lifeform-item-icon');
-            if(iconLF) iconLF.innerHTML = `<span>${(this.ogl.db.lfBonuses[currentLF]?.bonus || 0) * 10}</span>`;
+            if(iconLF) iconLF.innerHTML = `<span>${Util.lfLevel(this.ogl.db.lfBonuses[currentLF])}</span>`;
         }
     
         // wreckfield top icon
@@ -8694,10 +8694,10 @@ class AccountManager extends Manager
                 <div class="ogl_accountScore">${Util.formatToUnits(this.score.lifeform)} pts</div>
                 <div class="ogl_accountRanking">#${Util.formatNumber(this.ranking.lifeform)}</div>
                 <div class="ogl_accountProduction">
-                    <div class="ogl_icon ogl_lifeform1">${(this.ogl.db.lfBonuses?.lifeform1?.bonus || 0) * 10}</div>
-                    <div class="ogl_icon ogl_lifeform2">${(this.ogl.db.lfBonuses?.lifeform2?.bonus || 0) * 10}</div>
-                    <div class="ogl_icon ogl_lifeform3">${(this.ogl.db.lfBonuses?.lifeform3?.bonus || 0) * 10}</div>
-                    <div class="ogl_icon ogl_lifeform4">${(this.ogl.db.lfBonuses?.lifeform4?.bonus || 0) * 10}</div>
+                    <div class="ogl_icon ogl_lifeform1">${Util.lfLevel(this.ogl.db.lfBonuses?.lifeform1)}</div>
+                    <div class="ogl_icon ogl_lifeform2">${Util.lfLevel(this.ogl.db.lfBonuses?.lifeform2)}</div>
+                    <div class="ogl_icon ogl_lifeform3">${Util.lfLevel(this.ogl.db.lfBonuses?.lifeform3)}</div>
+                    <div class="ogl_icon ogl_lifeform4">${Util.lfLevel(this.ogl.db.lfBonuses?.lifeform4)}</div>
                 </div>
             </div>
         `});
@@ -14598,6 +14598,16 @@ class Util
         }
 
         return number.toLocaleString('de-DE');
+    }
+
+    // The lifeform level is a whole number the game hands us directly (speciesBonuses JSON exposes
+    // `level`). Rebuilding it from the bonus percentage as `bonus * 10` is lossy: the server sends
+    // fractions such as 0.08700000000000001, which reached the UI as "87.00000000000001". Use the real
+    // level, and only fall back to the derived value for the v12 scrape, which has no level field.
+    static lfLevel(entry)
+    {
+        if(entry?.level != null) return parseInt(entry.level) || 0;
+        return Math.round((entry?.bonus || 0) * 10);
     }
 
     static formatToUnits(value, forced, colored)
