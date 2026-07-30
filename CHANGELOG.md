@@ -2,6 +2,22 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.2.4-v13
+
+### Fixed
+
+- **Galaxy view showed a stray "(v)" vacation marker in the position column, including on empty
+  positions.** Two causes. The status element was looked up with
+  `row.querySelector('[class*="status_"]')` as a fallback, loose enough to match a cell that is not the
+  player's, and the function it is handed to adds a `status_abbr_*` class to whatever it receives, which
+  is what OGame renders as the `(v)` prefix. The lookup is now scoped to the player cell, so a marker
+  cannot land in the position column. Second, the per-system reset spares the position cell (it holds the
+  number) and only cleared two of our own classes, so a status class that had landed there survived into
+  the next system and sat on a position that no longer held anyone. The reset now strips
+  `status_abbr_*` and `data-status-tag` from every cell while leaving the position number in place.
+  Reproduced and verified against a real DOM with the shipped code: the marker is gone, the lookup never
+  selects the position cell even on an empty row, and the position numbers survive the reset.
+
 ## 0.2.3-v13
 
 ### Fixed

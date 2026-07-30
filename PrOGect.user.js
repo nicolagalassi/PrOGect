@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.2.3-v13
+// @version         0.2.4-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.2.3-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.2.4-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -8294,9 +8294,14 @@ class GalaxyManager extends Manager
         // New OGame may use different class names for galaxy row cells
         const _cellPlayer = row.querySelector('.cellPlayerName') || row.querySelector('[class*="cellPlayer"]') || row.querySelector('td:nth-child(6)');
         const _cellPlanet = row.querySelector('.cellPlanetName') || row.querySelector('[class*="cellPlanet"]') || row.querySelector('td:nth-child(2)');
-        const _statusEl   = row.querySelector('[class*="status_abbr"]') || row.querySelector('[class*="status_"]');
+        // The status abbreviation belongs to the PLAYER name. The previous fallback was
+        // row.querySelector('[class*="status_"]'), loose enough to match a cell that is not the player's
+        // (the position cell among them), and turnIntoPlayerLink adds a status_abbr_* class to whatever
+        // it is handed - which is what OGame renders as the "(v)" prefix. Scope the lookup to the player
+        // cell so a stray marker cannot land in the position column.
+        const _statusEl = (_cellPlayer || row).querySelector('[class*="status_abbr"]') || _cellPlayer;
 
-        this.ogl._ui.turnIntoPlayerLink(player.uid, _statusEl, player.name, player.status);
+        if(_statusEl) this.ogl._ui.turnIntoPlayerLink(player.uid, _statusEl, player.name, player.status);
         if(_cellPlayer) Util.addDom('a', { class:'ogl_ranking', parent:_cellPlayer, href:`https://${window.location.host}/game/index.php?page=ingame&component=highscore&site=${page}&category=1&searchRelId=${player.uid}`, child:'#'+player.score.globalRanking });
 
         if(!isOwn)
@@ -8382,15 +8387,27 @@ class GalaxyManager extends Manager
         for(let i=1; i<16; i++)
         {
             // v13 compat: #galaxyRow<N> may be renamed
-            document.querySelectorAll(`#galaxyRow${i} .galaxyCell:not(.cellPosition), [id*="galaxyRow${i}"] .galaxyCell:not(.cellPosition)`).forEach(e =>
+            const _rowEl = document.querySelector(`#galaxyRow${i}`) || document.querySelector(`[id*="galaxyRow${i}"]`);
+            if(!_rowEl) continue;
+
+            _rowEl.querySelectorAll('.galaxyCell:not(.cellPosition)').forEach(e =>
             {
                 e.innerText = '';
                 e.classList.remove('ogl_important');
                 e.classList.remove('ogl_active');
             });
 
-            const _rowEl = document.querySelector(`#galaxyRow${i}`) || document.querySelector(`[id*="galaxyRow${i}"]`);
-            if(_rowEl) _rowEl.className = 'galaxyRow ctContentRow empty_filter filtered_filter_empty';
+            // The position cell keeps its number so it is never emptied, and this reset used to leave its
+            // classes alone too: a player status class that had landed there survived into the next
+            // system, leaving a stray "(v)" on a position that no longer holds anyone. Strip the status
+            // markers from every cell (text untouched) so nothing can linger.
+            _rowEl.querySelectorAll('.galaxyCell').forEach(e =>
+            {
+                [...e.classList].filter(c => c.startsWith('status_abbr_')).forEach(c => e.classList.remove(c));
+                e.removeAttribute('data-status-tag');
+            });
+
+            _rowEl.className = 'galaxyRow ctContentRow empty_filter filtered_filter_empty';
         }
     }
 
