@@ -2,6 +2,20 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.2.6-v13
+
+### Fixed
+
+- **Removed a rule that displaced OGame's advertisement banner.** The inherited base stylesheet carried
+  `div#bannerSkyscrapercomponent { margin-left:300px !important }`, which pushed the skyscraper banner
+  300px to the right, presumably to clear space for an older side-panel layout. AGENTS.md 1.7 forbids
+  hiding, obscuring, resizing, moving or otherwise altering banners and monetization content "in any way,
+  including sneaky CSS tricks", so this would have been grounds for rejection at review. The declaration
+  is deleted from the source rather than overridden, so nothing in the shipped file touches the banner.
+  Checked that removing it does not create the opposite problem: the tool never shifts the game's own
+  layout containers, and its only persistently positioned element is the side panel, which sits
+  off-screen (`translateX(±100%)`) until the player opens it, on either side setting.
+
 ## 0.2.5-v13
 
 ### Fixed
