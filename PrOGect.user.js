@@ -2126,6 +2126,36 @@ class DomManager extends Manager
             planet._ogl.sideIconBack = Util.addDom('div', { class:'ogl_sideIconBottom', parent:sideIcons });
             planet._ogl.sideInfo = Util.addDom('div', { class:'ogl_sideIconInfo', parent:sideIcons });
 
+            // [SYL-GEO DIAG] temporary local probe: measure the real horizontal budget between the
+            // planet list and OGame's banner, so the side-icon strip can be sized from measurements
+            // instead of guesses. Never shipped - removed once the numbers are known.
+            if(!DomManager._sylGeoProbed)
+            {
+                DomManager._sylGeoProbed = true;
+                requestAnimationFrame(() =>
+                {
+                    try
+                    {
+                        const _r = el => { if(!el) return null; const b = el.getBoundingClientRect(); return { l:Math.round(b.left), r:Math.round(b.right), w:Math.round(b.width), t:Math.round(b.top), h:Math.round(b.height) }; };
+                        const _banner = document.querySelector('#bannerSkyscrapercomponent') || document.querySelector('[id*="banner" i]');
+                        const _strips = [...document.querySelectorAll('.ogl_sideIcons')].map(_r).filter(Boolean);
+                        const _widest = _strips.sort((a, b) => b.r - a.r)[0] || null;
+                        console.warn('[SYL-GEO] ' + JSON.stringify({
+                            viewportW: window.innerWidth,
+                            planetList: _r(document.querySelector('#planetList')),
+                            row: _r(document.querySelector('#planetList .smallplanet')),
+                            bannerId: _banner ? (_banner.id || 'no-id') : 'NOT-FOUND',
+                            banner: _r(_banner),
+                            stripCount: _strips.length,
+                            widestStrip: _widest,
+                            stripOverhang: (_widest && _r(document.querySelector('#planetList'))) ? _widest.r - _r(document.querySelector('#planetList')).r : null,
+                            overlapsBanner: (_widest && _banner) ? _widest.r > _r(_banner).l : null
+                        }));
+                    }
+                    catch(e) { console.warn('[SYL-GEO] err ' + String(e)); }
+                });
+            }
+
             this.planet[planetID] = planet;
 
             if(moon)
@@ -13209,23 +13239,23 @@ class TechManager extends Manager
         if(planet.lifeform == 2)
         {
             // rocktal chamber
-            tech.bonus.prodEnergy += planetData[12107] * Datafinder.getTech(12107).bonus1BaseValue / 100;
-            tech.bonus.conso += planetData[12107] * Datafinder.getTech(12107).bonus2BaseValue / 100;
+            tech.bonus.prodEnergy += (planetData[12107] || 0) * (Datafinder.getTech(12107)?.bonus1BaseValue || 0) / 100;
+            tech.bonus.conso += (planetData[12107] || 0) * (Datafinder.getTech(12107)?.bonus2BaseValue || 0) / 100;
 
             if(tech.isLfBuilding)
             {
                 // rocktal monument
-                tech.bonus.price += planetData[12108] * Datafinder.getTech(12108).bonus1BaseValue / 100;
-                tech.bonus.duration += planetData[12108] * Datafinder.getTech(12108).bonus2BaseValue / 100;
+                tech.bonus.price += (planetData[12108] || 0) * (Datafinder.getTech(12108)?.bonus1BaseValue || 0) / 100;
+                tech.bonus.duration += (planetData[12108] || 0) * (Datafinder.getTech(12108)?.bonus2BaseValue || 0) / 100;
             }
         }
         else if(planet.lifeform == 3)
         {
-            tech.bonus.prodEnergy += planetData[13107] * Datafinder.getTech(13107).bonus1BaseValue / 100;
+            tech.bonus.prodEnergy += (planetData[13107] || 0) * (Datafinder.getTech(13107)?.bonus1BaseValue || 0) / 100;
 
             if(tech.isBaseShip || tech.isBaseDef)
             {
-                tech.bonus.duration += planetData[13106] * Datafinder.getTech(13106).bonus1BaseValue / 100; // meca center
+                tech.bonus.duration += (planetData[13106] || 0) * (Datafinder.getTech(13106)?.bonus1BaseValue || 0) / 100; // meca center
             }
         }
 
@@ -13239,23 +13269,23 @@ class TechManager extends Manager
         {
             if(planet.lifeform == 1) // human
             {
-                tech.bonus.price += planetData[11103] * Datafinder.getTech(11103).bonus1BaseValue / 100;
-                tech.bonus.duration += planetData[11103] * Datafinder.getTech(11103).bonus2BaseValue / 100;
+                tech.bonus.price += (planetData[11103] || 0) * (Datafinder.getTech(11103)?.bonus1BaseValue || 0) / 100;
+                tech.bonus.duration += (planetData[11103] || 0) * (Datafinder.getTech(11103)?.bonus2BaseValue || 0) / 100;
             }
             else if(planet.lifeform == 2) // rocktal
             {
-                tech.bonus.price += planetData[12103] * Datafinder.getTech(12103).bonus1BaseValue / 100;
-                tech.bonus.duration += planetData[12103] * Datafinder.getTech(12103).bonus2BaseValue / 100;
+                tech.bonus.price += (planetData[12103] || 0) * (Datafinder.getTech(12103)?.bonus1BaseValue || 0) / 100;
+                tech.bonus.duration += (planetData[12103] || 0) * (Datafinder.getTech(12103)?.bonus2BaseValue || 0) / 100;
             }
             else if(planet.lifeform == 3) // meca
             {
-                tech.bonus.price += planetData[13103] * Datafinder.getTech(13103).bonus1BaseValue / 100;
-                tech.bonus.duration += planetData[13103] * Datafinder.getTech(13103).bonus2BaseValue / 100;
+                tech.bonus.price += (planetData[13103] || 0) * (Datafinder.getTech(13103)?.bonus1BaseValue || 0) / 100;
+                tech.bonus.duration += (planetData[13103] || 0) * (Datafinder.getTech(13103)?.bonus2BaseValue || 0) / 100;
             }
             else if(planet.lifeform == 4) // kaelesh
             {
-                tech.bonus.price += planetData[14103] * Datafinder.getTech(14103).bonus1BaseValue / 100;
-                tech.bonus.duration += planetData[14103] * Datafinder.getTech(14103).bonus2BaseValue / 100;
+                tech.bonus.price += (planetData[14103] || 0) * (Datafinder.getTech(14103)?.bonus1BaseValue || 0) / 100;
+                tech.bonus.duration += (planetData[14103] || 0) * (Datafinder.getTech(14103)?.bonus2BaseValue || 0) / 100;
             }
 
             tech.bonus.price += (this.ogl.db.lfBonuses?.LfResearch?.cost || 0) / 100;
@@ -13264,7 +13294,7 @@ class TechManager extends Manager
 
         if(planet.lifeform == 2 && (tech.id == 1 || tech.id == 2 || tech.id == 3 || tech.id == 4 || tech.id == 12 || tech.id == 12101 || tech.id == 12102))
         {
-            tech.bonus.price += planetData[12111] * Datafinder.getTech(12111).bonus1BaseValue / 100;
+            tech.bonus.price += (planetData[12111] || 0) * (Datafinder.getTech(12111)?.bonus1BaseValue || 0) / 100;
         }
 
         if(tech.isBaseResearch || tech.isBaseDef || tech.isBaseShip)
