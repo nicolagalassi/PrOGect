@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProjectSyl — settings & panels harness</title>
+<!-- real ProjectSyl CSS, extracted from the userscript's GM_addStyle blocks -->
+<link rel="stylesheet" href="ogl.css">
+<link rel="stylesheet" href="polish.css">
+<style>
+  /* harness-only chrome: NOT ported back. Just gives the surfaces a page + backdrop to sit on. */
+  html,body{background:#0b1423;margin:0;font-family:Verdana,Geneva,sans-serif;color:#cdd4dc;}
+  .harness-bar{position:sticky;top:0;z-index:50;display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;background:#0d1522;border-bottom:1px solid #1c2636;}
+  .harness-bar button{background:#182234;border:1px solid #263349;color:#cdd4dc;padding:6px 12px;border-radius:5px;cursor:pointer;font-size:13px;}
+  .harness-bar button.on{background:#2a3550;border-color:#3a4a68;color:#fff;}
+  .harness-stage{padding:26px;display:flex;flex-direction:column;gap:30px;align-items:center;}
+  .harness-label{width:100%;max-width:960px;color:#6d8199;font-size:12px;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px dashed #24304a;padding-bottom:4px;}
+  /* emulate the popup shell so .ogl_config sits centered like in-game */
+  .fauxpopup{position:relative;display:flex;justify-content:center;width:100%;}
+  /* material-icons don't load here; show a small monospace glyph box instead so layout is honest */
+  .material-icons{font-family:monospace!important;font-size:12px;opacity:.7;}
+</style>
+</head>
+<body>
+
+<div class="harness-bar">
+  <strong style="align-self:center;color:#8b9bff;margin-right:8px;">ProjectSyl harness</strong>
+  <button data-view="settings" class="on">Big settings</button>
+  <button data-view="limiter">Panel: Limiter</button>
+  <button data-view="keyboard">Panel: Keyboard</button>
+  <button data-view="ships">Panel: Allowed ships</button>
+  <button data-view="spyrules">Panel: Spy rules</button>
+  <button data-view="ptre">Panel: PTRE errors</button>
+  <button data-view="managedata">Panel: Manage data</button>
+  <button data-view="all">Show all</button>
+</div>
+
+<div class="harness-stage" id="stage"></div>
+
+<!-- ============ TEMPLATES (DOM mirrors Util.addDom output in the userscript) ============ -->
+
+<template id="tpl-settings">
+<div class="harness-label">Settings — big page (.ogl_config.ogl_bigSettings)</div>
+<div class="fauxpopup"><div class="ogl_config ogl_bigSettings">
+  <h2>Settings<i class="material-icons">settings</i></h2>
+  <div class="ogl_settingsDetail"></div>
+  <div class="ogl_settingsGrid">
+
+    <div data-container="fleet" data-sec="fleet" class="ogl_active">
+      <h3>fleet</h3>
+      <label data-label="Default ship type" data-opt="defaultShip">
+        <div class="ogl_icon ogl_202"></div><div class="ogl_icon ogl_203"></div><div class="ogl_icon ogl_219"></div><div class="ogl_icon ogl_210"></div>
+      </label>
+      <label data-label="Default mission" data-opt="defaultMission">
+        <div class="ogl_icon ogl_mission3"></div><div class="ogl_icon ogl_mission4"></div><div class="ogl_icon ogl_mission8"></div><div class="ogl_icon ogl_mission1"></div>
+      </label>
+      <label data-label="Fleet profiles" data-opt="profileButton"><button class="material-icons">person</button></label>
+      <label data-label="Fleet save preset" data-opt="fleetSaveConfig"><button class="material-icons">bedtime</button></label>
+      <label data-label="Limiter settings" data-opt="msu"><button class="material-icons">tune</button></label>
+    </div>
+
+    <div data-container="general" data-sec="general" class="ogl_active">
+      <h3>general</h3>
+      <label data-label="Resource threshold" data-opt="resourceTreshold"><input class="ogl_inputCheck" type="text" value="300 000"></label>
+      <label data-label="Metal standard unit" data-opt="msu"><input class="ogl_inputCheck" type="text" value="3:2:1"></label>
+      <label data-label="Battle simulator" data-opt="sim">
+        <select class="dropdownInitialized"><option>osims</option><option>trashsim</option></select>
+      </label>
+      <label data-label="Battle converter" data-opt="converter">
+        <select class="dropdownInitialized"><option>ogotcha</option><option>none</option></select>
+      </label>
+      <label data-label="Use client time zone" data-opt="useClientTime">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput" checked><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Keyboard settings" data-opt="keyboardActions"><button class="material-icons">keyboard</button></label>
+    </div>
+
+    <div data-container="interface" data-sec="interface" class="ogl_active">
+      <h3>interface</h3>
+      <label data-label="Planets menu layout" data-opt="showMenuResources">
+        <select class="dropdownInitialized"><option>All</option><option>Coords</option><option>Resources</option></select>
+      </label>
+      <label data-label="Display shortcuts under the planet menu" data-opt="shortcutsOnRight">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput"><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Side panel on left" data-opt="sidePanelOnLeft">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput" checked><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Disable planets menu tooltips" data-opt="disablePlanetTooltips">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput"><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Fold large images" data-opt="reduceLargeImages">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput"><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Colorblind mode" data-opt="colorblindMode">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput"><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Display planets timer" data-opt="displayPlanetTimers">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput" checked><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+    </div>
+
+    <div data-container="expeditions" data-sec="expeditions" class="ogl_active">
+      <h3>expeditions</h3>
+      <label data-label="Expedition value" data-opt="expeditionValue"><input class="ogl_inputCheck" type="text" value="163 188 000"></label>
+      <label data-label="Expedition hold time (h)" data-opt="expeditionHoldTime"><input class="ogl_inputCheck" type="text" value="8"></label>
+      <label data-label="Random system" data-opt="expeditionRandomSystem"><input class="ogl_inputCheck" type="text" value="0"></label>
+      <label data-label="Redirect to the next planet/moon" data-opt="expeditionRedirect">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput" checked><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Allowed biggest ships" data-opt="expeditionBigShips"><button class="material-icons">rocket_launch</button></label>
+    </div>
+
+    <div data-container="stats" data-sec="stats" class="ogl_active">
+      <h3>stats</h3>
+      <label data-label="Ships found value (%)" data-opt="expeditionShipRatio"><input class="ogl_inputCheck" type="text" value="100"></label>
+      <label data-label="Ignore ships lost in expeditions" data-opt="ignoreExpeShipsLoss">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput"><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Ignore fleet consumption" data-opt="ignoreConsumption">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput"><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+    </div>
+
+    <div data-container="messages" data-sec="messages" class="ogl_active">
+      <h3>messages</h3>
+      <label data-label="Display spy table" data-opt="displaySpyTable">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput" checked><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Auto clean reports" data-opt="autoCleanReports">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput"><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Auto clean counter spies" data-opt="autoCleanCounterSpies">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput"><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Use MSU in spy table" data-opt="spyTableMSU">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput"><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+      <label data-label="Spy table rules" data-opt="spyTableRules"><button class="material-icons">rule</button></label>
+    </div>
+
+    <div data-container="PTRE" data-sec="PTRE" class="ogl_active">
+      <h3>PTRE</h3>
+      <label data-label="Team key" data-opt="ptreTeamKey"><input type="password" placeholder="TM-XXXX-XXXX-XXXX-XXXX"></label>
+      <label data-label="Display PTRE errors" data-opt="ptreLogs"><button class="material-icons">bug_report</button></label>
+    </div>
+
+    <div data-container="data" data-sec="data" class="ogl_active">
+      <h3>data</h3>
+      <label data-label="Manage OGLight data" data-opt="manageData"><button class="material-icons">database</button></label>
+      <label data-label="Debug mode" data-opt="debugMode">
+        <span class="ogl_sylToggle"><input type="checkbox" class="ogl_sylToggleInput"><span class="ogl_sylToggleKnob"></span></span>
+      </label>
+    </div>
+
+  </div>
+</div></div>
+</template>
+
+<template id="tpl-limiter">
+<div class="harness-label">Internal panel — Limiter (.ogl_limiterSettings, original 3-col openFleetProfile)</div>
+<div class="fauxpopup"><div class="ogl_config"><div class="ogl_settingsDetailBody"><div class="ogl_limiterSettings">
+  <h2>Limiters settings</h2>
+  <div class="ogl_grid">
+    <div class="ogl_limiterColumn">
+      <div class="ogl_header"><div><i class="material-icons"></i> </div><div class="ogl_limiterColumnAction"></div></div>
+      <div class="ogl_icon ogl_metal"></div>
+      <div class="ogl_icon ogl_crystal"></div>
+      <div class="ogl_icon ogl_deut"></div>
+      <div class="ogl_icon ogl_food"></div>
+      <br>
+      <div class="ogl_icon ogl_202"></div>
+      <div class="ogl_icon ogl_203"></div>
+      <div class="ogl_icon ogl_210"></div>
+    </div>
+    <div class="ogl_limiterColumn">
+      <div class="ogl_header"><div><i class="material-icons">public</i> planet</div><div class="ogl_limiterColumnAction">
+        <div class="ogl_syncLimiter ogl_button tooltip ogl_disabled"><i class="material-icons">public</i></div>
+        <div class="ogl_syncLimiter ogl_button tooltip"><i class="material-icons">bedtime</i></div>
+        <div class="ogl_syncLimiter ogl_button tooltip"><i class="material-icons">door_back</i></div>
+      </div></div>
+      <input class="ogl_inputCheck ogl_inputField ogl_metal" value="500 000">
+      <input class="ogl_inputCheck ogl_inputField ogl_crystal" value="5 000">
+      <input class="ogl_inputCheck ogl_inputField ogl_deut" value="5 000">
+      <input class="ogl_inputCheck ogl_inputField ogl_food" value="0">
+      <br>
+      <input class="ogl_inputCheck ogl_inputField ogl_202" value="0">
+      <input class="ogl_inputCheck ogl_inputField ogl_203" value="20">
+      <input class="ogl_inputCheck ogl_inputField ogl_210" value="10">
+    </div>
+    <div class="ogl_limiterColumn">
+      <div class="ogl_header"><div><i class="material-icons">bedtime</i> moon</div><div class="ogl_limiterColumnAction">
+        <div class="ogl_syncLimiter ogl_button tooltip"><i class="material-icons">public</i></div>
+        <div class="ogl_syncLimiter ogl_button tooltip ogl_disabled"><i class="material-icons">bedtime</i></div>
+        <div class="ogl_syncLimiter ogl_button tooltip"><i class="material-icons">door_back</i></div>
+      </div></div>
+      <input class="ogl_inputCheck ogl_inputField ogl_metal" value="0">
+      <input class="ogl_inputCheck ogl_inputField ogl_crystal" value="0">
+      <input class="ogl_inputCheck ogl_inputField ogl_deut" value="0">
+      <input class="ogl_inputCheck ogl_inputField ogl_food" value="0">
+      <br>
+      <input class="ogl_inputCheck ogl_inputField ogl_202" value="0">
+      <input class="ogl_inputCheck ogl_inputField ogl_203" value="0">
+      <input class="ogl_inputCheck ogl_inputField ogl_210" value="5">
+    </div>
+    <div class="ogl_limiterColumn">
+      <div class="ogl_header"><div><i class="material-icons">door_back</i> jumpgate</div><div class="ogl_limiterColumnAction">
+        <div class="ogl_syncLimiter ogl_button tooltip"><i class="material-icons">public</i></div>
+        <div class="ogl_syncLimiter ogl_button tooltip"><i class="material-icons">bedtime</i></div>
+        <div class="ogl_syncLimiter ogl_button tooltip ogl_disabled"><i class="material-icons">door_back</i></div>
+      </div></div>
+      <input class="ogl_inputCheck ogl_inputField ogl_metal ogl_disabled" value="0">
+      <input class="ogl_inputCheck ogl_inputField ogl_crystal ogl_disabled" value="0">
+      <input class="ogl_inputCheck ogl_inputField ogl_deut ogl_disabled" value="0">
+      <input class="ogl_inputCheck ogl_inputField ogl_food ogl_disabled" value="0">
+      <br>
+      <input class="ogl_inputCheck ogl_inputField ogl_202" value="0">
+      <input class="ogl_inputCheck ogl_inputField ogl_203" value="10">
+      <input class="ogl_inputCheck ogl_inputField ogl_210" value="0">
+    </div>
+  </div>
+</div></div></div></div>
+</template>
+
+<template id="tpl-keyboard">
+<div class="harness-label">Internal panel — Keyboard (.ogl_keyboardActions, original OGLight renderer)</div>
+<div class="fauxpopup"><div class="ogl_config"><div class="ogl_settingsDetailBody"><div class="ogl_keyboardActions">
+  <h2>Keyboard settings</h2>
+  <label>Menu toggle<input maxlength="1" type="text" value="²"></label>
+  <label>Previous planet<input maxlength="1" type="text" value="i"></label>
+  <label>Next planet<input maxlength="1" type="text" value="o"></label>
+  <label>Repeat last fleet<input maxlength="1" type="text" value="p"></label>
+  <label>Select all ships<input maxlength="1" type="text" value="a"></label>
+  <label>Small cargo expedition<input maxlength="1" type="text" value="s"></label>
+  <label>Large cargo expedition<input maxlength="1" type="text" value="l"></label>
+  <label>Split ships/resources<input class="ogl_disabled" maxlength="1" type="text" value="2-9" disabled></label>
+  <label>Back last fleet sent<input maxlength="1" type="text" value="l"></label>
+  <label>Fleet save (night fleet)<input maxlength="1" type="text" value="n"></label>
+  <label>Night expedition<input maxlength="1" type="text" value="e"></label>
+  <button class="ogl_button">save</button>
+</div></div></div></div>
+</template>
+
+<template id="tpl-ships">
+<div class="harness-label">Internal panel — Allowed biggest ships (.ogl_sylShipGrid, from buildBiggestShipsUI)</div>
+<div class="fauxpopup"><div class="ogl_config"><div class="ogl_settingsDetailBody"><div class="ogl_sylPanel">
+  <h2><i class="material-icons">rocket_launch</i> Allowed biggest ships</h2>
+  <div class="ogl_sylShipGrid">
+    <div class="ogl_sylShipCard ogl_button ogl_active"><div class="ogl_icon ogl_204"></div><span>Light fighter</span></div>
+    <div class="ogl_sylShipCard ogl_button ogl_active"><div class="ogl_icon ogl_205"></div><span>Heavy fighter</span></div>
+    <div class="ogl_sylShipCard ogl_button"><div class="ogl_icon ogl_206"></div><span>Cruiser</span></div>
+    <div class="ogl_sylShipCard ogl_button ogl_active"><div class="ogl_icon ogl_207"></div><span>Battleship</span></div>
+    <div class="ogl_sylShipCard ogl_button"><div class="ogl_icon ogl_215"></div><span>Battlecruiser</span></div>
+    <div class="ogl_sylShipCard ogl_button"><div class="ogl_icon ogl_211"></div><span>Bomber</span></div>
+    <div class="ogl_sylShipCard ogl_button"><div class="ogl_icon ogl_213"></div><span>Destroyer</span></div>
+    <div class="ogl_sylShipCard ogl_button"><div class="ogl_icon ogl_218"></div><span>Reaper</span></div>
+  </div>
+</div></div></div></div>
+</template>
+
+<template id="tpl-spyrules">
+<div class="harness-label">Internal panel — Spy table rules (.ogl_spyTableRules, ignore + highlight)</div>
+<div class="fauxpopup"><div class="ogl_config"><div class="ogl_settingsDetailBody"><div class="ogl_spyTableRules">
+  <div class="ogl_spyRuleSet">
+    <fieldset class="ogl_addRule">
+      <legend><i class="material-icons ogl_danger">block</i> Ignore all reports with...</legend>
+      <select class="dropdownInitialized ogl_inputField"><option>Resources + Fleet debris</option></select>
+      <select class="dropdownInitialized ogl_inputField"><option>&lt;</option><option>&gt;</option></select>
+      <input class="ogl_inputCheck ogl_inputField" type="text" value="300 000">
+      <button class="ogl_button"><i>+</i> add a rule</button>
+    </fieldset>
+    <div class="ogl_rulesList">
+      <div><div>Resources</div><div>&lt;</div><div>100 000</div><input type="checkbox" class="ogl_inputField" checked><div class="material-icons ogl_button ogl_danger">delete</div></div>
+      <div><div>Distance (systems)</div><div>&gt;</div><div>50</div><input type="checkbox" class="ogl_inputField" checked><div class="material-icons ogl_button ogl_danger">delete</div></div>
+    </div>
+  </div>
+  <div class="ogl_spyRuleSet">
+    <fieldset class="ogl_addRule">
+      <legend><i class="material-icons ogl_caution">star</i> Highlight all reports with...</legend>
+      <select class="dropdownInitialized ogl_inputField"><option>Resources + Fleet debris</option></select>
+      <select class="dropdownInitialized ogl_inputField"><option>&lt;</option><option>&gt;</option></select>
+      <input class="ogl_inputCheck ogl_inputField" type="text" value="300 000">
+      <button class="ogl_button"><i>+</i> add a rule</button>
+    </fieldset>
+    <div class="ogl_rulesList">
+      <div><div>Fleet debris</div><div>&gt;</div><div>1 000 000</div><input type="checkbox" class="ogl_inputField" checked><div class="material-icons ogl_button ogl_danger">delete</div></div>
+    </div>
+  </div>
+</div></div></div></div>
+</template>
+
+<template id="tpl-ptre">
+<div class="harness-label">Internal panel — PTRE errors (.ogl_log)</div>
+<div class="fauxpopup"><div class="ogl_config"><div class="ogl_settingsDetailBody"><div class="ogl_log">
+  <div><div>time</div><div>error code</div><div>message</div></div>
+  <div><div>2026-07-23 14:02</div><div>403</div><div>Invalid team key</div></div>
+  <div><div>2026-07-23 13:58</div><div>500</div><div>Server error while importing galaxy infos</div></div>
+</div></div></div></div>
+</template>
+
+<template id="tpl-managedata">
+<div class="harness-label">Internal panel — Manage OGLight data (.ogl_manageData)</div>
+<div class="fauxpopup"><div class="ogl_config"><div class="ogl_settingsDetailBody"><div class="ogl_manageData">
+  <h2>Manage OGLight data</h2>
+  <div class="ogl_grid">
+    <label class="ogl_button" for="h_imp"><i class="material-icons">file_open</i>Import all data</label>
+    <label class="ogl_button" for="h_imp"><i class="material-icons">monitoring</i>Import stats</label>
+    <input id="h_imp" class="ogl_hidden" type="file">
+    <a class="ogl_button"><i class="material-icons">file_export</i>Export data</a>
+    <fieldset class="ogl_grid ogl_dangerZone">
+      <legend>Danger zone</legend>
+      <div class="ogl_button"><i class="material-icons">monitoring</i>Reset stats</div>
+      <div class="ogl_button"><i class="material-icons">stroke_full</i>Reset tagged planets</div>
+      <div class="ogl_button"><i class="material-icons">keep</i>Reset pinned players</div>
+    </fieldset>
+  </div>
+</div></div></div></div>
+</template>
+
+<script>
+const stage = document.getElementById('stage');
+const views = ['settings','limiter','keyboard','ships','spyrules','ptre','managedata'];
+function render(view){
+  stage.innerHTML='';
+  const list = view==='all' ? views : [view];
+  list.forEach(v => { const t=document.getElementById('tpl-'+v); if(t) stage.appendChild(t.content.cloneNode(true)); });
+  document.querySelectorAll('.harness-bar button').forEach(b=>b.classList.toggle('on', b.dataset.view===view));
+}
+document.querySelectorAll('.harness-bar button').forEach(b=> b.addEventListener('click',()=>render(b.dataset.view)));
+render('settings');
+</script>
+</body>
+</html>

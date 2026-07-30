@@ -1,0 +1,30 @@
+# ─── local runtime data ────────────────────────────────────────────────────────
+# devlog.jsonl is the dev bridge's capture of the LIVE game session (server host,
+# planet ids, coordinates). It must never be published.
+devlog.jsonl
+
+# ─── local tool / editor config ────────────────────────────────────────────────
+.claude/
+
+# ─── local backups ─────────────────────────────────────────────────────────────
+*.bak-*
+*.backup
+
+# ─── third-party reference scripts (kept locally, NOT redistributed) ───────────
+# Originals consulted while porting to OGame v13:
+#   OGLight (MIT, © 2019 Oz)  ·  OGame-One (GPL-3.0)  ·  OGDark (OGLight fork)
+# PrOGect is a derivative of OGLight and credits it in LICENSE + the script header,
+# but there is no reason to vendor whole copies of other people's tools here —
+# and mixing a GPL-3.0 script into an MIT repo would muddle the licensing.
+OGLight*.user.js
+oglight*.user.js
+OGLight Settings - standalone.html
+ogameone.user.js
+ogdarkv13.user.js.backup
+ogamediag.user.js
+analize.txt
+
+# ─── throwaway visual harnesses (regenerated on demand from the userscript) ────
+*-mock/
+settings-harness/ogl.css
+settings-harness/polish.css
