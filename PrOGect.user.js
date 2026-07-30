@@ -90,6 +90,12 @@ GM_addStyle(`
 .smallplanet .constructionIcon { left:3px !important; top:3px !important; }
 /* PrOGect: hide OGLight's left-menu ping <li> (in #menuTable, near Riepilogo) while keeping the top-bar ping div under the date */
 #menuTable .ogl_ping { display:none !important; }
+/* PrOGect: brand entry in the left menu. It is intentionally NOT a link (no published page yet), and
+   OGame colours menu labels through a link pseudo-class, which does not match an anchor without href —
+   so the text was invisible until hover. Set the label colour explicitly instead of faking a link. */
+#menuTable .ogl_pgMenuLabel { cursor:default !important; }
+#menuTable .ogl_pgMenuLabel .textlabel { color:#9fb0c0 !important; }
+#menuTable .ogl_pgMenuLabel:hover .textlabel { color:#dfe7ee !important; }
 .smallplanet .ogl_refreshTimer { background:rgba(0,0,0,.8) !important; border-radius:14px !important; width:15px !important; height:15px !important; line-height:13px !important; padding:1px !important; top:2px !important; bottom:auto !important; text-align:center; font-size:12px !important; }
 .smallplanet .ogl_refreshTimer.ogl_planet { left:3px !important; right:auto !important; }
 .smallplanet .ogl_refreshTimer.ogl_moon { left:auto !important; right:48px !important; }
@@ -2169,11 +2175,10 @@ class DomManager extends Manager
         const fragment = document.createDocumentFragment();
 
         const oglBlock = Util.addDom('li', { parent:fragment });
-        // The icon ligature name comes from the base icon font, so it must stay as-is. No external link:
-        // PrOGect has no published page yet, and pointing our own menu entry at OGLight's greasyfork /
-        // board threads would misattribute this tool as being OGLight.
-        Util.addDom('span', { parent:oglBlock, class:'menu_icon ogl_leftMenuIcon', child:`<i class="material-icons">oglight_simple</i>` });
-        Util.addDom('a', { parent:oglBlock, class:'menubutton tooltipRight', child:`<span class="textlabel">PrOGect ${version}</span>` });
+        // Brand entry: text only for now (the OGLight icon was removed; a PrOGect logo comes later).
+        // Not a link: PrOGect has no published page, and pointing it at OGLight's greasyfork / board
+        // threads would misattribute the tool. See the ogl_pgMenuLabel CSS for why the colour is explicit.
+        Util.addDom('a', { parent:oglBlock, class:'menubutton tooltipRight ogl_pgMenuLabel', child:`<span class="textlabel">PrOGect ${version}</span>` });
 
         if(this.ogl.ptreKey)
         {
@@ -7012,9 +7017,14 @@ class FleetManager extends Manager
         this.ogl.currentPlanet.obj.deut -= Math.min(this.initialResOnPlanet.deut, fleetDispatcher.cargoDeuterium + conso);
         this.ogl.currentPlanet.obj.food -= Math.min(this.initialResOnPlanet.food, fleetDispatcher.cargoFood);
 
-        // add conso to stats
+        // add conso to stats, split by DESTINATION so each stats tab owns its own fuel: position 16 is
+        // the expedition slot, anything else (positions 1-15) is an attack/transport and belongs on the
+        // attacks tab. Days recorded before this split keep everything under `conso` (history from a
+        // single aggregate cannot be re-split after the fact).
         const stats = this.ogl._stats.getDayStats(this.ogl._time.timeToKey(serverTime.getTime()));
-        stats.conso = (stats.conso || 0) + Math.min(this.initialResOnPlanet.deut, conso);
+        const spentFuel = Math.min(this.initialResOnPlanet.deut, conso);
+        if(parseInt(fleetDispatcher.targetPlanet?.position) === 16) stats.conso = (stats.conso || 0) + spentFuel;
+        else stats.consoRaid = (stats.consoRaid || 0) + spentFuel;
 
         if(this.isQuickRaid) this.ogl.db.quickRaidList.shift();
         if(this.ogl.mode === 5 && fleetDispatcher.mission !== 15 && this.ogl.db.options.expeditionRedirect) this.ogl.mode = 0;
@@ -13412,7 +13422,8 @@ class StatsManager extends Manager
             }
         });
 
-        if(!this.ogl.db.options.ignoreConsumption) total.deut -= (Object.values(data)?.[0]?.conso || 0);
+        // the mini recap is the OVERALL daily figure, so it takes both fuel buckets (expeditions + attacks)
+        if(!this.ogl.db.options.ignoreConsumption) total.deut -= ((Object.values(data)?.[0]?.conso || 0) + (Object.values(data)?.[0]?.consoRaid || 0));
         total.msu = Util.getMSU(total.metal, total.crystal, total.deut, this.ogl.db.options.msu) || 0;
 
         const start = new Date(this.displayedRange.start).toLocaleString('default', { day:'numeric', month:'long', year:'numeric' });
@@ -13608,8 +13619,9 @@ class StatsManager extends Manager
                 }
             });
 
-            // consumption is a single aggregate (mission fuel) — attribute it to the expeditions tab only
-            if(!isRaid && !this.ogl.db.options.ignoreConsumption) deut -= (dataMonth?.conso || 0);
+            // fuel is split per destination, so each tab's graph reflects only its own consumption:
+            // position-16 fuel on the expeditions tab, everything else on the attacks tab
+            if(!this.ogl.db.options.ignoreConsumption) deut -= (dataMonth?.[isRaid ? 'consoRaid' : 'conso'] || 0);
 
             const totalMSU = Util.getMSU(metal, crystal, deut, this.ogl.db.options.msu) || 0;
             if(totalMSU < lowest) lowest = totalMSU;
@@ -13890,9 +13902,11 @@ class StatsManager extends Manager
             else Util.addDom('div', { class:`ogl_icon ogl_${resource}`, parent:header });
         });
 
-        // rows per active tab: expeditions show expe + consumption + average + total; attacks show
-        // raids + average + total (no consumption row — fuel is attributed to the expeditions tab)
-        const rows = this.activeStatsTab === 'raid' ? ['raid', 'u', 'total'] : ['expe', 'conso', 'u', 'total'];
+        // rows per active tab. Each tab shows ITS OWN fuel: the expeditions tab the position-16
+        // consumption, the attacks tab the fuel of everything else (positions 1-15).
+        const consoKey = this.activeStatsTab === 'raid' ? 'consoRaid' : 'conso';
+        const tabConso = data?.[consoKey] || 0;
+        const rows = this.activeStatsTab === 'raid' ? ['raid', 'conso', 'u', 'total'] : ['expe', 'conso', 'u', 'total'];
         rows.forEach(type =>
         {
             const line = Util.addDom('div', { parent:container, child:`<div class="ogl_statsRecapHeader">${typeLong[type]}</div>` });
@@ -13953,7 +13967,7 @@ class StatsManager extends Manager
             }
             else if(type == 'u')
             {
-                if(!this.ogl.db.options.ignoreConsumption) deut -= (data.conso || 0);
+                if(!this.ogl.db.options.ignoreConsumption) deut -= tabConso;
 
                 Util.addDom('div', { parent:line, class:'ogl_metal', child:!missionsCount ? 0 : Util.formatToUnits(Math.floor(metal / missionsCount), false, true) });
                 Util.addDom('div', { parent:line, class:'ogl_crystal', child:!missionsCount ? 0 : Util.formatToUnits(Math.floor(crystal / missionsCount), false, true) });
@@ -13966,14 +13980,14 @@ class StatsManager extends Manager
             {
                 Util.addDom('div', { parent:line, class:'ogl_metal', child:'-' });
                 Util.addDom('div', { parent:line, class:'ogl_crystal', child:'-' });
-                Util.addDom('div', { parent:line, class:'ogl_deut', child:Util.formatToUnits(-data.conso, false, true) });
-                Util.addDom('div', { parent:line, class:'ogl_msu', child:Util.formatToUnits(Util.getMSU(0, 0, -data.conso, this.ogl.db.options.msu), false, true) });
+                Util.addDom('div', { parent:line, class:'ogl_deut', child:Util.formatToUnits(-tabConso, false, true) });
+                Util.addDom('div', { parent:line, class:'ogl_msu', child:Util.formatToUnits(Util.getMSU(0, 0, -tabConso, this.ogl.db.options.msu), false, true) });
                 Util.addDom('div', { parent:line, class:'ogl_dm', child:'-' });
                 Util.addDom('div', { parent:line, class:'ogl_artefact', child:'-' });
             }
             else if(type == 'total')
             {
-                if(!this.ogl.db.options.ignoreConsumption) deut -= (data.conso || 0);
+                if(!this.ogl.db.options.ignoreConsumption) deut -= tabConso;
 
                 Util.addDom('div', { parent:line, class:'ogl_metal', child:Util.formatToUnits(metal, false, true) });
                 Util.addDom('div', { parent:line, class:'ogl_crystal', child:Util.formatToUnits(crystal, false, true) });
