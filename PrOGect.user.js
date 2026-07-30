@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.1.0-v13
+// @version         0.2.0-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.1.0-v13";
+let pgVersion = "0.2.0-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -602,7 +602,7 @@ if(typeof window?.GM_info == typeof undefined)
     window.GM_info.script = {};
     window.GM_info.script.name = 'PrOGect GM_less';
     window.GM_info.script.version = pgVersion;
-    window.GM_info.script.downloadURL = 'https://github.com/progect/PrOGect.user.js';
+    window.GM_info.script.downloadURL = 'https://github.com/nicolagalassi/PrOGect';
 }
 
 if(typeof window?.GM_xmlhttpRequest == typeof undefined)

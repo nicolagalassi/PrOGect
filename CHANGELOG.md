@@ -1,0 +1,70 @@
+# Changelog
+
+Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
+
+## 0.2.0-v13
+
+### Fixed
+
+- **Spy table sat under the game's own message tabs.** The inherited CSS pulled the game's
+  `.tabsWrapper` out of flow with `position:absolute` and v12 pixel metrics (`top:114px`,
+  `left:10px`, `width:650px`); on v13 that dropped the tabs on top of the first two rows and hid a
+  report completely. The table is now inserted *after* the tabs, so the game's menu keeps its native
+  position and nothing is repositioned.
+- **Fleet fuel was all attributed to expeditions.** Consumption was recorded as a single aggregate
+  and only rendered on the expeditions tab, so attack fuel inflated expedition costs and the attacks
+  tab had no consumption row at all. Fuel is now split at record time by destination: position 16
+  (the expedition slot) and positions 1-15 (attacks) are tracked separately, each tab shows its own
+  row, and the topbar mini recap still reports the combined figure. Days recorded before this change
+  keep everything under the expedition bucket; a single aggregate cannot be split retroactively.
+- **The PrOGect entry in the left menu was invisible until hovered.** It is not a link, and OGame
+  colours menu labels through a link pseudo-class, which does not match an anchor without `href`.
+  The label colour is now set explicitly.
+- The spy table's total row closed with `<div>` instead of `</div>`, injecting a stray empty cell.
+
+### Changed
+
+- **Spy table restyled onto the design tokens.** It still used hard-coded surfaces, the old amber
+  accent for the active filter and 11px text, with header labels at roughly 2:1 contrast. Now on the
+  `--syl-*` system: violet accent for active filter and highlighted rows, tabular numbers, action
+  buttons as the same compact icon chip used elsewhere, and a `prefers-reduced-motion` alternative.
+  Measured contrast: header labels 5.80:1, data 13.35:1, dimmed rows 5.36:1 (they were `opacity:.2`,
+  i.e. unreadable).
+- The spy table's column track was duplicated between header and rows and could drift; it is now one
+  `--spy-cols` custom property.
+- Fleet and defence values were tinted with an inline gradient from JavaScript; they now use a state
+  class driven by tokens.
+- Removed the inherited OGLight icon from the left-menu entry (a PrOGect logo comes later).
+
+## 0.1.0-v13
+
+First build under the PrOGect name. Fork of OGLight 5.3.3 (MIT, © 2019 Oz), ported to OGame v13 and
+kept working on v12.
+
+### Fixed
+
+- **Fleet movement indicators never appeared on v13.** The event-list fetch was gated on
+  `#eventboxContent .eventFleet`, which v13 leaves empty until the list is fetched, and the response
+  is a JSON envelope whose HTML lives at `content.eventlist` rather than the older
+  `components.eventList`. The fetch now feeds the parser directly, because the global jQuery
+  `ajaxSuccess` hook does not fire for that request on v13.
+- **Empire update only worked on v13.** There was no version branch, so pre-v13 servers silently got
+  nothing. Added an OGame-version sniff plus the v12 empire endpoint, which feeds the v12 parser that
+  already shipped but was never called.
+- **Research and lifeform-research durations were far too long.** The lifeform bonuses were scraped
+  from a `DOMParser` document, where custom elements never render, so the research-time reduction was
+  lost and the duration factor collapsed to 1 (a 70% reduction made durations 3.3x too long). v13 now
+  reads OGame's own species-bonuses export; the v12 scrape stays, hardened against missing rows.
+- **Fleet save ate the deuterium it was told to leave behind.** It discarded the profile limiter's
+  reserve (both wrote the same fields, last writer won) and never reserved flight fuel, which is
+  charged on top of the deuterium loaded as cargo. It now holds whichever reserve is larger and
+  reserves the consumption.
+- **Empire production columns read 0.** Production was written with lowercase keys and read with
+  camelCase ones. Normalised on camelCase.
+- The expedition hold time was lost when the redirect pre-filled the next planet.
+
+### Notes
+
+- Renamed from the working title ProjectSyl.
+- The PTRE integration keys and the inherited icon-font ligature names are external contracts and are
+  deliberately left untouched.
