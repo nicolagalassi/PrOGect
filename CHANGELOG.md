@@ -2,6 +2,27 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.2.2-v13
+
+### Fixed
+
+- **Structures and in-flight fleets drew on top of each other in the planet list.** The side icons were
+  three absolutely positioned tiers 13-14px apart, but each tier renders 15-17px tall, so three of them
+  need about 48px and the compact 41px row could not hold them. A planet carrying both a structures icon
+  and a returning fleet overlapped, which is why it only showed when some planets had fleets in flight.
+  The strips now sit in one horizontal flex row beside the planet, so the vertical budget stops mattering
+  at any row height. Verified for every combination (structures only, fleet only, both, plus the jumpgate
+  timer, plus none): no overlap, nothing outside the row, and unused strips collapse instead of leaving
+  gaps.
+- **The left-menu entry rendered as bare text instead of a menu button.** Removing the icon also removed
+  the empty `.menu_icon` cell OGame's menu lays out against, and without an `href` the game's link
+  styling never applied. The empty icon cell is back and the entry carries an href, so it gets the native
+  button chrome; it opens PrOGect's own settings rather than any external page.
+- **The jumpgate left the view on the origin moon.** After a successful jump the ships are on the
+  destination, so every follow-up click started on the wrong body. The game now follows the fleet to the
+  moon that was jumped to. This is a foreground navigation caused by the player's own jump click, the
+  same thing clicking a moon in the planet list does, not a background call.
+
 ## 0.2.1-v13
 
 ### Fixed
