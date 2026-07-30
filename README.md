@@ -66,6 +66,20 @@ or shipped to users — only the plain `PrOGect.user.js` does.
 each one. `settings-harness/` holds the design tokens and a static harness used to iterate on the
 settings UI without a live game session.
 
+### Releasing
+
+Every change ships with a version bump. The version lives in two places that must not drift (the
+`@version` header Tampermonkey reads, and the `pgVersion` literal the UI displays), so use the helper
+rather than editing them by hand:
+
+```bash
+node bump-version.mjs             # print the current version
+node bump-version.mjs patch       # or: minor / major / an explicit 0.3.0-v13
+```
+
+It writes both sites, re-reads the file to prove they match, and refuses to half-write. Then add a
+[CHANGELOG.md](CHANGELOG.md) entry and push.
+
 ## Credits
 
 - **OGLight** by Oz — the base this is forked from (MIT).

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         PrOGect DEV loader (hot reload)
-// @namespace    https://github.com/projectsyl
+// @namespace    https://github.com/nicolagalassi/PrOGect
 // @version      1.0
 // @description  DEV ONLY — fetches the latest PrOGect build from the local dev server on every page load and runs it. Install this ONCE; then just reload the OGame tab to run fresh code. NEVER publish or submit this loader (see AGENTS.md) — the release build is the plain PrOGect.user.js installed the normal way.
 // @author        PrOGect contributors
