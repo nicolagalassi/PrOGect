@@ -367,6 +367,51 @@ GM_addStyle(`
 .ogl_spyTableRules .ogl_addRule .ogl_button:hover { filter:brightness(1.08); }
 .ogl_spyTableRules .ogl_rulesList > div { display:grid; grid-template-columns:1fr auto auto auto auto; align-items:center; gap:10px; padding:5px 10px; border-top:1px solid hsl(210deg 32% 11%); color:var(--syl-muted); font-size:12.5px; }
 .ogl_spyTableRules .ogl_rulesList .ogl_danger { color:#e0736b; cursor:pointer; }
+/* ===== spy table restyle =================================================================
+   The inherited table still used the pre-token visual language (hard-coded #12161a/#93b3c9
+   surfaces, the old amber --ogl accent, 11px text) and shipped an alignment hack: it pulled the
+   GAME's own message tabs out of flow with position:absolute + top:114px / left:10px / width:650px,
+   v12 metrics that on v13 dropped the tabs on top of the first two rows. Root causes: token drift
+   (never migrated to --syl-*) and a magic-number one-off instead of document flow.
+   The tabs now stay exactly where the game puts them (loadSpyTable inserts the table AFTER them),
+   so nothing needs repositioning; the rule below only neutralises the inherited hack. */
+#messagecontainercomponent .ogl_spytable:has(.ogl_spyLine:not(.ogl_spySum))+.messageContent .tabsWrapper:has(.active[data-subtab-id="20"]) { position:static !important; top:auto !important; left:auto !important; width:auto !important; border:0 !important; border-radius:0 !important; overflow:visible !important; }
+.ogl_spytable { --spy-cols:26px 40px 32px 26px 100px minmax(140px, 1fr) 84px 64px 64px 118px; box-sizing:border-box; width:100%; margin:0 0 10px !important; padding:8px; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:8px; color:var(--syl-ink); font-size:12px; }
+#fleetsTab .ogl_spytable { margin-top:0 !important; margin-bottom:10px !important; }
+/* one source of truth for the column track: header and rows cannot drift apart */
+.ogl_spyHeader, .ogl_spytable .ogl_spyLine > div:not(.ogl_more) { display:grid; grid-template-columns:var(--spy-cols); gap:4px; align-items:center; }
+.ogl_spyHeader { margin:0 0 6px; padding:0 0 6px; border-bottom:1px solid var(--syl-border); border-radius:0; }
+.ogl_spytable .ogl_spyHeader b { padding:0 2px; background:none; border-radius:0; color:var(--syl-muted); font-size:11px !important; font-weight:700; letter-spacing:.4px; text-transform:uppercase; line-height:20px !important; }
+.ogl_spytable .ogl_spyHeader b.material-icons { font-size:15px !important; letter-spacing:0; text-transform:none; }
+.ogl_spytable .ogl_spyHeader [data-filter] { cursor:pointer; transition:color .15s ease-out; }
+.ogl_spytable .ogl_spyHeader [data-filter]:hover { color:var(--syl-ink); }
+.ogl_spytable .ogl_spyHeader [data-filter].ogl_active { color:var(--syl-accent); }
+.ogl_spytable [data-filter]:after { margin-left:2px; color:currentColor; opacity:.45; font-size:14px; }
+/* data cells: raised surface, tabular numbers so columns read down the page */
+.ogl_spytable .ogl_spyLine > div > * { height:26px; padding:0 6px; background:var(--syl-raised); border:1px solid transparent; border-radius:var(--syl-radius); font-variant-numeric:tabular-nums; }
+.ogl_spytable .ogl_spyLine:not(.ogl_spySum):hover > div > * { border-color:var(--syl-border); }
+.ogl_spyLine .ogl_spyTableName { height:26px; background:var(--syl-raised); border-radius:var(--syl-radius); }
+.ogl_spytable .ogl_spyLine > div > .ogl_loot { color:var(--syl-ink); font-weight:700; }
+/* semantic states - every one stays legible (the inherited .ogl_ignored used opacity:.2) */
+.ogl_spytable .ogl_danger { color:#e0736b !important; font-weight:700; }
+.ogl_spytable .ogl_warning { color:#d8a657 !important; }
+.ogl_spytable .ogl_ignored { opacity:.55; }
+.ogl_spytable .ogl_ignored > div > * { background:var(--syl-bg); color:var(--syl-muted); }
+.ogl_spytable .ogl_ignored.ogl_highlighted { opacity:.75; }
+.ogl_spytable .ogl_highlighted > div:not(.ogl_more) > :not(.ogl_actions) { background:var(--syl-accent-weak); border-color:rgba(124,92,255,.35); }
+.ogl_spytable .ogl_highlighted > div:not(.ogl_more) > .ogl_textRight { color:var(--syl-accent) !important; font-weight:700; }
+/* fleet / defence present: tinted cell, replaces the inline gradient the JS used to set */
+.ogl_spytable .ogl_spyLine > div > .ogl_hasValue { background:rgba(224,115,107,.14); border-color:rgba(224,115,107,.4); color:#f0a9a3; }
+.ogl_spytable .ogl_spySum > div > * { background:none; border:0; color:var(--syl-muted); font-weight:700; }
+.ogl_spytable .ogl_spySum > div > .ogl_textRight { color:var(--syl-ink); }
+/* actions: transparent cell, buttons as the same compact icon chip used elsewhere */
+.ogl_spytable .ogl_spyLine > div > .ogl_actions { display:flex; justify-content:flex-end; gap:3px; padding:0 !important; background:none !important; border:0 !important; }
+.ogl_spytable .ogl_actions .ogl_button { display:inline-flex; align-items:center; justify-content:center; width:26px !important; height:26px !important; padding:0; background:var(--syl-raised); border:1px solid var(--syl-border) !important; border-radius:var(--syl-radius); color:var(--syl-muted); font-size:15px !important; line-height:26px !important; transition:border-color .15s ease-out, color .15s ease-out; }
+.ogl_spytable .ogl_actions .ogl_button:hover { border-color:var(--syl-accent) !important; color:var(--syl-accent); }
+.ogl_spytable .ogl_spytableSettings { justify-content:flex-end; gap:2px; background:none !important; border:0 !important; }
+.ogl_spytable .ogl_spytableSettings > div { height:22px; padding:0 5px; border-radius:var(--syl-radius); font-size:16px !important; line-height:22px !important; transition:background .15s ease-out, color .15s ease-out; }
+.ogl_spytable .ogl_spytableSettings > div:hover { background:var(--syl-raised); }
+@media (prefers-reduced-motion: reduce) { .ogl_spytable *, .ogl_spytable *:hover { transition:none !important; } }
 /* internal panel: PTRE errors log */
 .ogl_log { display:flex; flex-direction:column; }
 .ogl_log > h2 { text-align:center; font-size:15px; font-weight:700; color:var(--syl-ink); margin:2px 0 12px; padding-bottom:10px; border-bottom:1px solid var(--syl-border); }
@@ -10362,8 +10407,9 @@ class MessageManager extends Manager
             this.spyRecap.count++;
             this.spyRecap.value += message.wave1;
 
-            if(message.fleetValue != 0) fleet.style.background = 'linear-gradient(192deg, #622a2a, #3c1717 70%)';
-            if(message.defValue != 0) def.style.background = 'linear-gradient(192deg, #622a2a, #3c1717 70%)';
+            // state class instead of an inline gradient, so the colour comes from the design tokens
+            if(message.fleetValue != 0) fleet.classList.add('ogl_hasValue');
+            if(message.defValue != 0) def.classList.add('ogl_hasValue');
 
             // update message content actions
             if(messageDom && !message.isCounterSpy && (!message.ignored || !this.ogl.db.options.autoCleanReports))
@@ -10453,18 +10499,31 @@ class MessageManager extends Manager
         if(!isOutdated) this.spytable.classList.remove('ogl_outdated');
         this.spytable.querySelector('.ogl_lineWrapper')?.remove();
         this.spytable.appendChild(wrapper);
-        // New OGame changed message container structure - try multiple selectors
+        // Place the table AFTER the game's own message tabs. The inherited code inserted it before
+        // .messageContent and then dragged the tabs back up with absolute positioning + v12 magic
+        // numbers, which on v13 landed them on top of the first rows. Sitting after the tabs keeps
+        // the game's menu exactly where the game put it (aligned by construction) and puts the table
+        // directly above the messages it summarises - no repositioning of game chrome at all.
         const _msgContent = document.querySelector('#messagecontainercomponent .content')
             || document.querySelector('#messagecontainercomponent')
             || document.querySelector('.messagesHolder')
             || document.querySelector('#messages');
         if(_msgContent)
         {
-            const _msgTarget = _msgContent.querySelector('.messageContent')
-                || _msgContent.querySelector('.msg')
-                || _msgContent.firstElementChild;
-            if(_msgTarget) _msgContent.insertBefore(this.spytable, _msgTarget);
-            else _msgContent.prepend(this.spytable);
+            const _tabs = _msgContent.querySelector('.tabsWrapper')
+                || _msgContent.querySelector('[class*="tabsWrapper"]')
+                || _msgContent.querySelector('[class*="tabs"]');
+
+            if(_tabs) _tabs.after(this.spytable);
+            else
+            {
+                // no tabs found (renamed markup): fall back to the previous placement
+                const _msgTarget = _msgContent.querySelector('.messageContent')
+                    || _msgContent.querySelector('.msg')
+                    || _msgContent.firstElementChild;
+                if(_msgTarget) _msgContent.insertBefore(this.spytable, _msgTarget);
+                else _msgContent.prepend(this.spytable);
+            }
         }
 
         this.updateSumLine();
@@ -10474,7 +10533,7 @@ class MessageManager extends Manager
 
     updateSumLine()
     {
-        this.spySumLine.innerHTML = `<div><span></span><span></span><span></span><span></span><span></span><span>Total</span><span class="ogl_textRight">${Util.formatToUnits(this.spyRecap.value)}</span><span></span><span></span><div>`;
+        this.spySumLine.innerHTML = `<div><span></span><span></span><span></span><span></span><span></span><span>Total</span><span class="ogl_textRight">${Util.formatToUnits(this.spyRecap.value)}</span><span></span><span></span></div>`;
     }
 
     addSpyIcons(parent, displayActivity, data)
