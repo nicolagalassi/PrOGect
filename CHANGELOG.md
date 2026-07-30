@@ -2,6 +2,17 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.2.3-v13
+
+### Fixed
+
+- **Lifeform levels showed floating-point noise, e.g. `87.00000000000001`.** Regression from 0.1.0, when
+  the v13 path switched to OGame's species-bonuses export: the UI rebuilt the level from the bonus
+  percentage as `bonus * 10`, and the server sends fractions such as `0.08700000000000001`, so the
+  reconstruction carried the error into the label. The export already contains the exact integer `level`,
+  so the five display sites now read that and only fall back to the derived value for the v12 scrape,
+  which has no level field, rounded because a level is always a whole number.
+
 ## 0.2.2-v13
 
 ### Fixed
