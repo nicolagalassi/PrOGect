@@ -2,6 +2,23 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.2.5-v13
+
+### Fixed
+
+- **Empire production was 3600x too large on v13** (a level 43 metal mine read `+137.97 G` per day, the
+  account total `+1.67 T`). The production keys are stored per SECOND: every consumer multiplies by
+  `3600 * 24` for a daily figure, the resources-bar writer feeds units/second, and the v12 empire parser
+  divides its hourly payload by 3600 for exactly that reason. The v13 `accountInfo` path reports hourly
+  values and stored them raw, so the daily figures came out an hour's worth too high. It now divides by
+  3600 like the v12 path, and the canonical unit is stated at the writer so the four writers cannot
+  drift apart again. The same row now reads `+38.33 M` per day and the total `+463.89 M`.
+
+  This is the second half of a bug whose first half shipped in 0.1.0: the keys were also written
+  lowercase there while the empire tab read camelCase, which showed as `0`. Normalising the name in
+  0.1.0 revealed the value, and only then could the wrong scale be seen. Unifying the key was not enough;
+  the unit had to be unified too.
+
 ## 0.2.4-v13
 
 ### Fixed

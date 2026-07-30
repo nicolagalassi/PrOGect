@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.2.4-v13
+// @version         0.2.5-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.2.4-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.2.5-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -3478,14 +3478,19 @@ class FetchManager extends Manager
                 if(res[key] != null) planet[key.replace('deuterium', 'deut')] = Math.floor(res[key]);
             });
 
-            // v13: accountInfo production is already real HOURLY (all bonuses included), decimals - no conversion needed
+            // v13: accountInfo reports production as real HOURLY values (all bonuses included, decimals)
             const prod = body.production || {};
-            // canonical keys are camelCase (prodMetal/prodCrystal/prodDeut) - the same ones the v12 empire
-            // parser writes and the empire tab / calcCumul read. They used to be written lowercase here,
-            // so the empire tab's production columns showed 0 on v13.
-            if(prod.metal != null) planet.prodMetal = prod.metal;
-            if(prod.crystal != null) planet.prodCrystal = prod.crystal;
-            if(prod.deuterium != null) planet.prodDeut = prod.deuterium;
+            // CANONICAL UNIT: prodMetal/prodCrystal/prodDeut are stored per SECOND. Every consumer
+            // multiplies by 3600 * 24 to show a daily figure, the resources-bar writer feeds units/sec,
+            // and the v12 empire parser divides its hourly payload by 3600 for exactly this reason.
+            // accountInfo reports HOURLY production (all bonuses included), so it must be divided too -
+            // storing it raw made every empire production figure 3600x too large (a lvl 43 mine read
+            // "+137.97 G" per day instead of "+38 M"). The keys are camelCase, the same ones the v12
+            // parser writes and the empire tab / calcCumul read; they used to be written lowercase here,
+            // which is why the production columns showed 0 on v13.
+            if(prod.metal != null) planet.prodMetal = prod.metal / 3600;
+            if(prod.crystal != null) planet.prodCrystal = prod.crystal / 3600;
+            if(prod.deuterium != null) planet.prodDeut = prod.deuterium / 3600;
 
             // buildings/ships/defenses/speciesBuildings/speciesResearches/researches: flat tech-id ->
             // level/count, matching the myPlanets[id][techId] convention already used across
