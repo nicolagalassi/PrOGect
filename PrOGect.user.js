@@ -2126,34 +2126,63 @@ class DomManager extends Manager
             planet._ogl.sideIconBack = Util.addDom('div', { class:'ogl_sideIconBottom', parent:sideIcons });
             planet._ogl.sideInfo = Util.addDom('div', { class:'ogl_sideIconInfo', parent:sideIcons });
 
-            // [SYL-GEO DIAG] temporary local probe: measure the real horizontal budget between the
-            // planet list and OGame's banner, so the side-icon strip can be sized from measurements
-            // instead of guesses. Never shipped - removed once the numbers are known.
+            // [SYL-GEO DIAG] temporary local probe. The previous version measured on the first frame
+            // after loadBase, before OGame's banner had even been inserted, so its numbers described a
+            // layout that never reaches the screen. This one waits for the banner rect to stop moving,
+            // then asks the browser who actually paints on top via elementFromPoint - the only thing
+            // that settles whether our opaque list covers the ad or the ad covers us. Never shipped.
             if(!DomManager._sylGeoProbed)
             {
                 DomManager._sylGeoProbed = true;
-                requestAnimationFrame(() =>
+                const _r = el => { if(!el) return null; const b = el.getBoundingClientRect(); return { l:Math.round(b.left), r:Math.round(b.right), w:Math.round(b.width), t:Math.round(b.top), h:Math.round(b.height) }; };
+                const _tag = el => { if(!el) return null; let s = el.tagName.toLowerCase(); if(el.id) s += '#' + el.id; if(el.className && typeof el.className === 'string') s += '.' + el.className.trim().split(/\s+/).slice(0, 3).join('.'); return s; };
+                const _chain = el => { const out = []; let n = el; while(n && n !== document.body && out.length < 5) { out.push(_tag(n)); n = n.parentElement; } return out.join(' < '); };
+                const _findBanner = () => document.querySelector('#bannerSkyscrapercomponent');
+                let _still = 0, _prev = '', _frames = 0;
+                const _settle = () =>
                 {
+                    _frames++;
+                    const b = _findBanner();
+                    const key = b ? JSON.stringify(_r(b)) : 'none';
+                    if(b && key === _prev) _still++; else _still = 0;
+                    _prev = key;
+                    // stable for 30 straight frames, or give up after ~10s of frames
+                    if(_still < 30 && _frames < 600) { requestAnimationFrame(_settle); return; }
                     try
                     {
-                        const _r = el => { if(!el) return null; const b = el.getBoundingClientRect(); return { l:Math.round(b.left), r:Math.round(b.right), w:Math.round(b.width), t:Math.round(b.top), h:Math.round(b.height) }; };
-                        const _banner = document.querySelector('#bannerSkyscrapercomponent') || document.querySelector('[id*="banner" i]');
-                        const _strips = [...document.querySelectorAll('.ogl_sideIcons')].map(_r).filter(Boolean);
-                        const _widest = _strips.sort((a, b) => b.r - a.r)[0] || null;
-                        console.warn('[SYL-GEO] ' + JSON.stringify({
+                        const banner = _findBanner();
+                        const list = document.querySelector('#planetList');
+                        const row = document.querySelector('#planetList .smallplanet');
+                        const strips = [...document.querySelectorAll('.ogl_sideIcons')].filter(s => s.getBoundingClientRect().width > 0);
+                        const widest = strips.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right)[0] || null;
+                        const rB = _r(banner), rL = _r(list), rW = _r(widest);
+                        // who paints on top, sampled inside any horizontal overlap
+                        let hitAtBannerEdge = null, hitAtStripEnd = null;
+                        if(rB && rL)
+                        {
+                            const y = Math.round(rL.t + Math.min(60, rL.h / 2));
+                            hitAtBannerEdge = _chain(document.elementFromPoint(rB.l + 4, y));
+                        }
+                        if(rW) hitAtStripEnd = _chain(document.elementFromPoint(rW.r - 2, Math.round(rW.t + rW.h / 2)));
+                        console.warn('[SYL-GEO2] ' + JSON.stringify({
+                            settledAfterFrames: _frames,
                             viewportW: window.innerWidth,
-                            planetList: _r(document.querySelector('#planetList')),
-                            row: _r(document.querySelector('#planetList .smallplanet')),
-                            bannerId: _banner ? (_banner.id || 'no-id') : 'NOT-FOUND',
-                            banner: _r(_banner),
-                            stripCount: _strips.length,
-                            widestStrip: _widest,
-                            stripOverhang: (_widest && _r(document.querySelector('#planetList'))) ? _widest.r - _r(document.querySelector('#planetList')).r : null,
-                            overlapsBanner: (_widest && _banner) ? _widest.r > _r(_banner).l : null
+                            devicePixelRatio: window.devicePixelRatio,
+                            list: rL,
+                            row: _r(row),
+                            banner: rB,
+                            bannerFound: !!banner,
+                            widestStrip: rW,
+                            listOverlapsBannerBand: (rB && rL) ? rL.r > rB.l : null,
+                            stripOverlapsBannerBand: (rB && rW) ? rW.r > rB.l : null,
+                            overlapPx: (rB && rL) ? Math.max(0, rL.r - rB.l) : null,
+                            whoPaintsAtBannerLeftEdge: hitAtBannerEdge,
+                            whoPaintsAtStripEnd: hitAtStripEnd
                         }));
                     }
-                    catch(e) { console.warn('[SYL-GEO] err ' + String(e)); }
-                });
+                    catch(e) { console.warn('[SYL-GEO2] err ' + String(e)); }
+                };
+                requestAnimationFrame(_settle);
             }
 
             this.planet[planetID] = planet;
