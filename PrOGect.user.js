@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.2.7-v13
+// @version         0.2.8-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.2.7-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.2.8-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -492,26 +492,33 @@ GM_addStyle(`
       expedition now reads blue in its timer as well as its count. Missions 11-14 and 16 are listed for
       parity with the base: the palette has no entry for them upstream, so they resolve to no colour
       exactly as .detailsFleet already does today. The arrival clock keeps its neutral --time colour so
-      the two time columns stay tellable apart. */
+      the two time columns stay tellable apart.
+      Each rule carries a positional hook next to the class one, because targeting .countDown alone had
+      no effect in game: v13 evidently paints that cell through some other name, and the class-only
+      selector silently matched nothing. The first cell of the row is the countdown at every width, and
+      the trailing "*" reaches a nested span carrying its own colour, so the rule holds whether the
+      colour sits on the cell or inside it. Checked against four shapes - v12 class, renamed cell,
+      renamed cell with coloured inner span, and v12 class with inner span - with the game's own green
+      applied on top; all four resolve to the mission colour. */
 #eventboxContent .eventFleet, #eventboxContent .allianceAttack { grid-template-columns:82px max-content 23px 70px 87px minmax(0,1fr) 19px 87px 70px 20px 21px 20px !important; }
 #eventboxContent .eventFleet > td { min-width:0; }
-[data-mission-type="1"]:not(.fleetDetails) .countDown{color:var(--mission1)!important}
-[data-mission-type="2"]:not(.fleetDetails) .countDown{color:var(--mission2)!important}
-[data-mission-type="3"]:not(.fleetDetails) .countDown{color:var(--mission3)!important}
-[data-mission-type="4"]:not(.fleetDetails) .countDown{color:var(--mission4)!important}
-[data-mission-type="5"]:not(.fleetDetails) .countDown{color:var(--mission5)!important}
-[data-mission-type="6"]:not(.fleetDetails) .countDown{color:var(--mission6)!important}
-[data-mission-type="7"]:not(.fleetDetails) .countDown{color:var(--mission7)!important}
-[data-mission-type="8"]:not(.fleetDetails) .countDown{color:var(--mission8)!important}
-[data-mission-type="9"]:not(.fleetDetails) .countDown{color:var(--mission9)!important}
-[data-mission-type="10"]:not(.fleetDetails) .countDown{color:var(--mission10)!important}
-[data-mission-type="11"]:not(.fleetDetails) .countDown{color:var(--mission11)!important}
-[data-mission-type="12"]:not(.fleetDetails) .countDown{color:var(--mission12)!important}
-[data-mission-type="13"]:not(.fleetDetails) .countDown{color:var(--mission13)!important}
-[data-mission-type="14"]:not(.fleetDetails) .countDown{color:var(--mission14)!important}
-[data-mission-type="15"]:not(.fleetDetails) .countDown{color:var(--mission15)!important}
-[data-mission-type="17"]:not(.fleetDetails) .countDown{color:var(--mission17)!important}
-[data-mission-type="18"]:not(.fleetDetails) .countDown{color:var(--mission18)!important}
+[data-mission-type="1"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="1"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="1"] > td:first-child *{color:var(--mission1)!important}
+[data-mission-type="2"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="2"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="2"] > td:first-child *{color:var(--mission2)!important}
+[data-mission-type="3"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="3"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="3"] > td:first-child *{color:var(--mission3)!important}
+[data-mission-type="4"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="4"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="4"] > td:first-child *{color:var(--mission4)!important}
+[data-mission-type="5"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="5"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="5"] > td:first-child *{color:var(--mission5)!important}
+[data-mission-type="6"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="6"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="6"] > td:first-child *{color:var(--mission6)!important}
+[data-mission-type="7"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="7"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="7"] > td:first-child *{color:var(--mission7)!important}
+[data-mission-type="8"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="8"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="8"] > td:first-child *{color:var(--mission8)!important}
+[data-mission-type="9"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="9"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="9"] > td:first-child *{color:var(--mission9)!important}
+[data-mission-type="10"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="10"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="10"] > td:first-child *{color:var(--mission10)!important}
+[data-mission-type="11"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="11"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="11"] > td:first-child *{color:var(--mission11)!important}
+[data-mission-type="12"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="12"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="12"] > td:first-child *{color:var(--mission12)!important}
+[data-mission-type="13"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="13"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="13"] > td:first-child *{color:var(--mission13)!important}
+[data-mission-type="14"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="14"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="14"] > td:first-child *{color:var(--mission14)!important}
+[data-mission-type="15"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="15"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="15"] > td:first-child *{color:var(--mission15)!important}
+[data-mission-type="17"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="17"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="17"] > td:first-child *{color:var(--mission17)!important}
+[data-mission-type="18"]:not(.fleetDetails) .countDown, #eventboxContent .eventFleet[data-mission-type="18"] > td:first-child, #eventboxContent .eventFleet[data-mission-type="18"] > td:first-child *{color:var(--mission18)!important}
 `);
 
 // ===== PrOGect THEME — minimal graphite + soft violet =====================================
