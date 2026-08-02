@@ -2,6 +2,33 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.4.1-v13
+
+### Changed
+
+- **"Legacy" now means the settings in the side panel, which is what was actually asked for.** 0.4.0
+  shipped `legacyMenu`, which moved the tool's button strip into the game's colony-count box. That was
+  a misreading of the request *and* broken on v13: the research was done against the old script, where
+  that box sits above the planet list, but on v13 it lives in the page header — so the strip vanished
+  into the header instead of appearing as a grid. The placement feature and its CSS are removed.
+  In its place, `options.legacySettings` renders the settings in the side panel, the surface OGLight
+  originally used, instead of the centered popup this fork switched to. The drawer brings its own close
+  button and toggle-when-open behaviour, so the popup-only bookkeeping is skipped on that path, and the
+  three-column layout collapses to one column for the ~385px width. Measured in the drawer: one column,
+  all sections on the same left edge, nothing exceeding the panel.
+
+### Notes
+
+- **Correction to the 0.4.0 compliance note.** That note said per-body presets were independent of the
+  `oglmode=6` auto-walk and that nothing was built on top of it. That was wrong. The walk pre-fills by
+  calling `fleetSave()` on page load, and `fleetSave()` now resolves through `Util.fsFor` — so every hop
+  of the walk pre-fills with *that body's own* preset. The walk did not stay as it was: it became more
+  autonomous per hop, since each stop now arms a destination, mission, speed and reserve set chosen in
+  advance for that specific body.
+  The question for a ToolDev (AGENTS.md §3) should therefore cover the interaction, not just the chain
+  in isolation: *is a one-click sequence that navigates the empire by itself and arms a per-body
+  preset at each stop still acceptable, given every send remains a separate manual confirmation?*
+
 ## 0.4.0-v13
 
 ### Added

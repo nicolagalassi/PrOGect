@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.4.0-v13
+// @version         0.4.1-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.4.0-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.4.1-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -374,15 +374,15 @@ GM_addStyle(`
 .ogl_fsScope .ogl_button { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:28px; height:24px; background:var(--syl-bg); border:1px solid var(--syl-border); border-radius:var(--syl-radius); color:var(--syl-muted); cursor:pointer; transition:border-color .15s ease-out, color .15s ease-out; }
 .ogl_fsScope .ogl_button:hover { border-color:var(--syl-accent); color:var(--syl-accent); }
 .ogl_fsScope .ogl_button i { font-size:15px; }
-/* PrOGect: legacy menu placement (options.legacyMenu). Same buttons as the default strip, laid out as
-   the old OGLight's compact icon grid inside the game's colony-count box above the planet list.
-   The game's own colony text is left alone and the box simply grows to fit the grid underneath it -
-   the legacy script blanked that text to save room, which we do not do (AGENTS.md §1.7). */
-.ogl_topbar.ogl_legacyMenu { display:grid !important; grid-template-columns:repeat(4, 1fr); gap:3px; width:100%; box-sizing:border-box; margin:4px 0 0; padding:4px; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:6px; }
-.ogl_topbar.ogl_legacyMenu > * { display:inline-flex !important; align-items:center; justify-content:center; min-width:0; height:22px; margin:0 !important; border-radius:var(--syl-radius); font-size:15px !important; line-height:22px !important; }
-.ogl_topbar.ogl_legacyMenu > *:hover { background:var(--syl-raised); }
-/* the trailing text button spans the row so its label is not squeezed into a quarter column */
-.ogl_topbar.ogl_legacyMenu > .ogl_button:not(.material-icons) { grid-column:1 / -1; height:auto; padding:3px 0; font-size:11px !important; line-height:15px !important; }
+/* PrOGect: settings rendered in the side panel, OGLight's original surface (options.legacySettings).
+   The drawer is ~385px wide, so the three-column layout the centered popup uses has to collapse to a
+   single column, and the inline detail body takes the drawer's own scroll instead of a slice of the
+   viewport height it no longer has. */
+.ogl_side .ogl_settingsGrid { columns:1 !important; column-gap:0 !important; }
+.ogl_side .ogl_config { line-height:22px; }
+.ogl_side .ogl_config > h2 { font-size:15px; }
+.ogl_side .ogl_settingsDetailBody { max-height:none !important; padding-right:0; }
+.ogl_side .ogl_settingsFooter { margin-top:10px; }
 .ogl_limiterSettings .ogl_limiterRowLabel { display:flex; align-items:center; justify-content:center; }
 .ogl_limiterSettings .ogl_limiterRowLabel .ogl_icon { width:24px; height:24px; }
 .ogl_limiterSettings .ogl_limiterGrid .ogl_inputField { box-sizing:border-box; width:100% !important; text-align:right; padding:6px 9px !important; background:var(--syl-bg) !important; border:1px solid var(--syl-border) !important; border-radius:var(--syl-radius); color:var(--syl-ink) !important; font-size:12px; outline:none; }
@@ -858,9 +858,9 @@ class PrOGect
                 displaySpyTable: true,
                 shortcutsOnRight: false,
                 sidePanelOnLeft: false,
-                // render the tool's own button strip as the old OGLight's icon grid, inside the game's
-                // colony-count box above the planet list, instead of a strip over the planet list
-                legacyMenu: false,
+                // render the settings in the side panel, the way OGLight originally did, instead of
+                // the centered popup this fork switched to
+                legacySettings: false,
                 spyTableRules: [],
                 spyTableMSU: false,
                 // PrOGect: Fleet Save (night fleet) preset — instant manual send, fleet travels overnight.
@@ -2706,7 +2706,7 @@ class LangManager extends Manager
             colorblindMode:"Colorblind mode",
             fleetQuickCollect:"Quick collect this planet resources",
             sidePanelOnLeft:"Side panel on left",
-            legacyMenu:"Legacy menu (icon grid above the planet list)",
+            legacySettings:"Legacy settings (in the side panel)",
             galaxyReload:"Reload galaxy",
             spyTableMSU:"Use MSU in the spy table",
         };
@@ -2827,7 +2827,7 @@ class LangManager extends Manager
             colorblindMode:"Mode daltonien",
             fleetQuickCollect:"Collecte rapide des ressources de cette planète",
             sidePanelOnLeft:"Panneau latéral à gauche",
-            legacyMenu:"Menu legacy (grille d'icônes au-dessus des planètes)",
+            legacySettings:"Réglages legacy (dans le panneau latéral)",
             galaxyReload:"Recharger la galaxie",
             spyTableMSU:"Utiliser le MSU dans le tableau d'espio",
         };
@@ -5267,18 +5267,7 @@ class TopbarManager extends Manager
         // v13 compat: #planetList may be renamed
         const _plistEl = document.querySelector('#planetList') || document.querySelector('[id*="planetList"]') || document.querySelector('.planet-list');
 
-        // PrOGect: optional legacy placement. The old OGLight did not have this strip - it put its
-        // controls as a compact icon grid inside the game's "Colonies x/y" box above the planet list.
-        // With options.legacyMenu on we render the SAME buttons into that box as a grid instead of the
-        // strip, so the layout is the old one without inventing controls we do not have.
-        // Deliberately NOT copied from the legacy script: it blanked the game's own colony counter with
-        // `#countColonies { color:transparent }` and `#countColonies p { display:none }` to make room.
-        // Hiding game text is not something we do (AGENTS.md §1.7), so the counter stays visible and the
-        // grid sits under it; the box grows instead.
-        const _legacyHost = this.ogl.db.options.legacyMenu ? this.ogl._dom.countColonies : null;
-        this.topbar = _legacyHost
-            ? Util.addDom('div', { class:'ogl_topbar ogl_legacyMenu', parent:_legacyHost })
-            : Util.addDom('div', { class:'ogl_topbar', prepend:_plistEl });
+        this.topbar = Util.addDom('div', { class:'ogl_topbar', prepend:_plistEl });
 
         Util.addDom('i', {class:'material-icons tooltip ogl_tbHarvest', child:'conversion_path', title:this.ogl._lang.find('collectResources'),parent:this.topbar, onclick:e =>
         {
@@ -5636,9 +5625,13 @@ class TopbarManager extends Manager
 
     openSettings(buttonSource)
     {
-        // PrOGect: settings render as a centered popup (was a side panel). Clicking the gear
-        // (or the menu hotkey) while the settings popup is already open toggles it closed.
-        if(buttonSource && document.querySelector('.ogl_popup.ogl_active .ogl_config'))
+        // Settings render as a centered popup by default; with options.legacySettings they render in
+        // the side panel instead, which is where OGLight originally put them. Clicking the gear (or the
+        // menu hotkey) while they are already open toggles them closed - openSide does that itself for
+        // the side panel, so only the popup path needs handling here.
+        const _legacySide = this.ogl.db.options.legacySettings;
+
+        if(!_legacySide && buttonSource && document.querySelector('.ogl_popup.ogl_active .ogl_config'))
         {
             this.ogl._popup.close();
             return;
@@ -5668,7 +5661,7 @@ class TopbarManager extends Manager
         [
             'defaultShip', 'defaultMission', 'profileButton', 'fleetSaveConfig', 'cargoFallback',
             'resourceTreshold', 'msu', 'sim', 'converter', 'useClientTime', 'keyboardActions',
-            'showMenuResources', /*'tooltipDelay',*/ 'shortcutsOnRight', 'sidePanelOnLeft', 'legacyMenu', 'disablePlanetTooltips', 'reduceLargeImages', 'colorblindMode', 'displayPlanetTimers', 'importExportItem',
+            'showMenuResources', /*'tooltipDelay',*/ 'shortcutsOnRight', 'sidePanelOnLeft', 'legacySettings', 'disablePlanetTooltips', 'reduceLargeImages', 'colorblindMode', 'displayPlanetTimers', 'importExportItem',
             'expeditionValue', 'expeditionHoldTime', 'expeditionRandomSystem', 'expeditionRedirect', 'expeditionBigShips',
             'expeditionShipRatio', 'ignoreExpeShipsLoss', 'ignoreConsumption',
             'displaySpyTable', 'autoCleanReports', 'autoCleanCounterSpies', 'boardTab', 'spyTableMSU', 'spyTableRules',
@@ -5884,12 +5877,12 @@ class TopbarManager extends Manager
                         localStorage.setItem('syl_sidepanelleft', this.ogl.db.options[opt]);
                         document.body.setAttribute('data-sidepanel', this.ogl.db.options[opt]);
                     }
-                    else if(opt == 'legacyMenu')
+                    else if(opt == 'legacySettings')
                     {
-                        // the strip and the grid are the same buttons in a different host, so rebuild
-                        // the bar in place rather than making the player reload to see the change
-                        document.querySelector('.ogl_topbar')?.remove();
-                        this.ogl._topbar.load(true);
+                        // re-render the settings in the surface just chosen, so the switch shows its
+                        // own effect immediately instead of only on the next open
+                        this.ogl._popup.close();
+                        Util.runAsync(() => this.openSettings()).then(() => {});
                     }
                     else if(opt == 'spyTableMSU')
                     {
@@ -6070,7 +6063,16 @@ class TopbarManager extends Manager
         const settingsFooter = Util.addDom('div', { class:'ogl_settingsFooter', parent:container });
         Util.addDom('a', { parent:settingsFooter, class:'ogl_button tooltip ogl_donate', child:`<i class="material-icons">favorite</i>${this.ogl._lang.find('coffee')}`, title:this.ogl._lang.find('coffee'), target:'_blank', href:'https://ko-fi.com/O4O22XV69' });
 
-        // open settings as a centered popup instead of the side panel (no canShare -> no screenshot btn)
+        if(_legacySide)
+        {
+            // the original OGLight surface: the settings live in the right-hand drawer, which brings
+            // its own close button, its own toggle-when-already-open behaviour and formats the numeric
+            // fields itself - so none of the popup bookkeeping below applies here.
+            this.ogl._ui.openSide(container, 'settings', buttonSource);
+            return;
+        }
+
+        // default: centered popup (no canShare -> no screenshot btn)
         this.ogl._popup.open(container);
         // _popup.open (unlike openSide) doesn't format the numeric .ogl_inputCheck fields — do it.
         container.querySelectorAll('.ogl_inputCheck').forEach(e => Util.formatInput(e));
