@@ -2,6 +2,30 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.4.4-v13
+
+### Fixed
+
+- **Switching settings surface left an empty side panel behind.** Turning `legacySettings` off
+  re-rendered the settings as a popup but never dismissed the drawer, which keeps `currentSide =
+  'settings'` and so stayed open as a blank column beside the popup. The two surfaces are mutually
+  exclusive now: whichever one is being left is closed before the other opens.
+
+### Changed
+
+- **The limiter button moved in with the other fleet tool buttons and got its own icon.** It was
+  inserted next to the game's "all resources" / "none" buttons with hand-written chrome, so it never
+  matched anything around it. It now sits in `.secondcol` and is built exactly like the cargo and
+  quick-collect buttons, inheriting the same button skin — measured at 36x30, identical to the
+  quick-collect button beside it.
+  The glyph is an inline SVG stopwatch with a rules bubble, stroked in white via `currentColor` so it
+  follows the button's colour like its neighbours. No single Material icon carries that meaning, which
+  is why it is drawn rather than picked from the font.
+  Its tooltip reuses the existing translated `profileButton` string. Worth noting: `_lang.find`
+  returns the literal `'TEXT_NOT_FOUND'` for an unknown key rather than a falsy value, so the invented
+  key with a `|| 'Limiters'` fallback this first used would have displayed that string, not the
+  fallback.
+
 ## 0.4.3-v13
 
 ### Changed
