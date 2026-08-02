@@ -59,5 +59,26 @@ if (h !== next || l !== next) {
   console.error(`write did not take: header=${h} literal=${l} expected=${next}`);
   process.exit(1);
 }
+
+// A stray backtick inside a GM_addStyle(`...`) block silently ENDS the CSS template literal: every
+// rule after it vanishes while the file still parses, so `node --check` stays green and the breakage
+// only shows up in the browser as unstyled UI. It has bitten this project twice, both times from a
+// comment quoting a CSS declaration in backticks. Cheap to detect, so check it on every release.
+const cssBlocks = [...check.matchAll(/GM_addStyle\(\s*`/g)];
+let openBlocks = 0;
+for (const m of cssBlocks) {
+  let i = m.index + m[0].length;
+  while (i < check.length) {
+    if (check[i] === '\\') { i += 2; continue; }
+    if (check[i] === '`') break;
+    i++;
+  }
+  if (i >= check.length) openBlocks++;
+}
+if (openBlocks) {
+  console.error(`${openBlocks} GM_addStyle block(s) never close - a stray backtick is truncating the CSS.`);
+  process.exit(1);
+}
+console.log(`css: ${cssBlocks.length} GM_addStyle blocks, all closed`);
 console.log(`${header[2]} -> ${next}  (header + pgVersion both updated)`);
 console.log('next: add a CHANGELOG.md entry, then commit and push.');

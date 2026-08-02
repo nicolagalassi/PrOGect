@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.4.2-v13
+// @version         0.4.3-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.4.2-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.4.3-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -374,21 +374,29 @@ GM_addStyle(`
 .ogl_fsScope .ogl_button { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:28px; height:24px; background:var(--syl-bg); border:1px solid var(--syl-border); border-radius:var(--syl-radius); color:var(--syl-muted); cursor:pointer; transition:border-color .15s ease-out, color .15s ease-out; }
 .ogl_fsScope .ogl_button:hover { border-color:var(--syl-accent); color:var(--syl-accent); }
 .ogl_fsScope .ogl_button i { font-size:15px; }
-/* PrOGect: legacy settings (options.legacySettings). The drawer is a vertical INDEX - one row per
-   setting group - and the controls themselves open as a centered popup. This is deliberately not the
-   wide panel squeezed into 385px: it is a different shape, which is the whole point of the mode. */
-.ogl_legacyNav { display:flex; flex-direction:column; gap:2px; }
-.ogl_legacyNav > h2 { display:flex; align-items:center; justify-content:center; gap:6px; margin:2px 0 14px; padding-bottom:10px; border-bottom:1px solid var(--syl-border); color:var(--syl-ink); font-size:15px; font-weight:700; }
-.ogl_legacyNavItem { display:flex !important; align-items:center; justify-content:space-between; gap:10px; box-sizing:border-box; width:100%; padding:10px 12px; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:8px; color:var(--syl-ink); font-size:13px; font-weight:600; text-align:left; cursor:pointer; transition:border-color .12s ease-out, background .12s ease-out; }
-.ogl_legacyNavItem:hover { border-color:var(--syl-accent); background:var(--syl-accent-weak); }
-.ogl_legacyNavItem > span { min-width:0; overflow-wrap:anywhere; text-transform:capitalize; }
-.ogl_legacyNavItem i { flex:0 0 auto; color:var(--syl-accent); font-size:18px; }
-/* the group popup gets the middle of the screen, so it keeps the normal two-column comfort */
-.ogl_legacyGroup { min-width:min(460px, 80vw); max-height:70vh; overflow-y:auto; }
-.ogl_legacyGroup > h2, .ogl_legacyDetail > h2 { display:flex; align-items:center; justify-content:center; gap:6px; margin:2px 0 14px; padding-bottom:10px; border-bottom:1px solid var(--syl-border); color:var(--syl-ink); font-size:15px; font-weight:700; text-transform:capitalize; }
-.ogl_legacyGroup [data-container] { display:block !important; }
-.ogl_legacyDetail { min-width:min(460px, 80vw); }
-.ogl_side .ogl_settingsFooter { margin-top:14px; }
+/* PrOGect: legacy settings (options.legacySettings). Every option sits in the drawer, grouped into
+   cards, exactly as OGLight presents them; only the secondary panels open in the middle of the screen.
+   The decisive rule is the width. The container carries .ogl_config .ogl_bigSettings .ogl_legacyInline
+   together, and .ogl_bigSettings pins width:1000px !important for the centered popup - so inside a
+   385px drawer the cards stayed 1000px wide and every control, pinned to the right of its row, landed
+   roughly 600px past the drawer's edge and was clipped. That, not the column count, is what made the
+   rows look like bare labels with nothing on them. Measured before the fix: cards 984px, all 21
+   controls outside the drawer.
+   The card, header and row styling from .ogl_bigSettings is deliberately reused rather than restated -
+   it is already the shape these screenshots show - so only width, column count and the field sizes
+   that assume a 1000px canvas are overridden here. */
+.ogl_config.ogl_bigSettings.ogl_legacyInline { width:100% !important; max-width:100% !important; min-width:0 !important; max-height:none !important; overflow:visible !important; }
+.ogl_legacyInline .ogl_settingsGrid { columns:1 !important; column-gap:0 !important; width:100% !important; }
+.ogl_legacyInline [data-container] { box-sizing:border-box; max-width:100% !important; }
+.ogl_legacyInline [data-container] > label { padding:3px 10px !important; }
+.ogl_legacyInline [data-container] > label:before { min-width:0; overflow-wrap:anywhere; }
+.ogl_legacyInline [data-container] > label input[type=text],
+.ogl_legacyInline [data-container] > label input[type=password],
+.ogl_legacyInline [data-container] > label select { width:104px !important; }
+/* the secondary panels keep the middle of the screen, where they have room */
+.ogl_legacyDetail { min-width:min(460px, 80vw); max-height:76vh; overflow-y:auto; }
+.ogl_legacyDetail > h2 { display:flex; align-items:center; justify-content:center; gap:6px; margin:2px 0 14px; padding-bottom:10px; border-bottom:1px solid var(--syl-border); color:var(--syl-ink); font-size:15px; font-weight:700; text-transform:capitalize; }
+.ogl_side .ogl_settingsFooter { margin-top:12px; }
 .ogl_limiterSettings .ogl_limiterRowLabel { display:flex; align-items:center; justify-content:center; }
 .ogl_limiterSettings .ogl_limiterRowLabel .ogl_icon { width:24px; height:24px; }
 .ogl_limiterSettings .ogl_limiterGrid .ogl_inputField { box-sizing:border-box; width:100% !important; text-align:right; padding:6px 9px !important; background:var(--syl-bg) !important; border:1px solid var(--syl-border) !important; border-radius:var(--syl-radius); color:var(--syl-ink) !important; font-size:12px; outline:none; }
@@ -6089,33 +6097,13 @@ class TopbarManager extends Manager
 
         if(_legacySide)
         {
-            // The original OGLight surface, and it is a different SHAPE, not the same panel narrowed:
-            // the drawer carries a vertical index of the setting groups, and a group's controls open
-            // as a centered popup. Dropping the wide three-column layout into a 385px drawer would just
-            // squash it - the point of this mode is one column of headings you scan top to bottom, with
-            // the actual options given the middle of the screen where they have room to breathe.
-            const nav = Util.addDom('div', { class:'ogl_legacyNav', child:'<h2>Settings<i class="material-icons">settings</i></h2>' });
-
-            [...grid.children].forEach(section =>
-            {
-                const heading = section.querySelector('h3');
-                const label = (heading?.textContent || '').trim() || 'Options';
-                // the heading is the drawer entry now, so it does not repeat inside the popup
-                heading?.remove();
-
-                Util.addDom('div', { class:'ogl_legacyNavItem ogl_button', parent:nav, child:`<span>${label}</span><i class="material-icons">chevron_right</i>`, onclick:() =>
-                {
-                    const groupPopup = Util.addDom('div', { class:'ogl_config ogl_legacyGroup', child:`<h2>${label}<i class="material-icons">settings</i></h2>` });
-                    // the live section is moved in, not cloned, so every control keeps the listeners
-                    // and the state it was built with; reopening moves the same node back again
-                    groupPopup.appendChild(section);
-                    this.ogl._popup.open(groupPopup);
-                    groupPopup.querySelectorAll('.ogl_inputCheck').forEach(e => Util.formatInput(e));
-                }});
-            });
-
-            nav.appendChild(settingsFooter);
-            this.ogl._ui.openSide(nav, 'settings', buttonSource);
+            // The original OGLight surface: EVERY option lives in the drawer, grouped into cards you
+            // scroll through, and only the secondary panels - keyboard, limiters, fleet-save preset,
+            // data - open in the middle of the screen (see openDetail above). An index of group names
+            // was the wrong read of this: nothing here is one click deeper than it used to be, the
+            // groups are simply stacked in one column and styled as cards for the 385px width.
+            container.classList.add('ogl_legacyInline');
+            this.ogl._ui.openSide(container, 'settings', buttonSource);
             return;
         }
 

@@ -2,6 +2,33 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.4.3-v13
+
+### Changed
+
+- **Legacy settings: every option now lives in the drawer, only the secondary panels open centered.**
+  0.4.2 turned the drawer into an index of group names, so reaching any option took a click it never
+  used to. That was the wrong read: the original puts all the options inline in the drawer, grouped
+  into cards, and reserves the middle of the screen for the sub-panels (keyboard, limiters, fleet-save
+  preset, data). The drawer is inline again — the card, header and row styling already used by the big
+  settings page is reused rather than restated, so it is the same shape, just one column wide.
+
+### Fixed
+
+- **The real reason the drawer looked like a list of bare labels.** The container carries
+  `.ogl_config .ogl_bigSettings .ogl_legacyInline` together, and `.ogl_bigSettings` pins
+  `width:1000px !important` for the centered popup. Inside a 385px drawer the cards therefore stayed
+  1000px wide, and every control — pinned to the right of its row — landed some 600px past the drawer's
+  edge and was clipped. It was never the column count, which is what 0.4.1 and 0.4.2 both tried to fix.
+  Measured before: cards 984px, all 21 controls outside the drawer. After: container 348px, cards 332px
+  in one column, 0 controls outside, every control right-aligned and all icon pickers visible.
+
+- **A stray backtick had silently truncated the new CSS.** A comment quoted a CSS declaration in
+  backticks, which ends the `GM_addStyle(\`...\`)` template literal: every rule after it disappears
+  while the file still parses, so `node --check` stays green and only the browser shows the damage.
+  This is the second time it has happened here, so `bump-version.mjs` now fails the release if any
+  `GM_addStyle` block does not close.
+
 ## 0.4.2-v13
 
 ### Changed
