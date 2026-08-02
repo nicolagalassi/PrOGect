@@ -2,6 +2,29 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.4.2-v13
+
+### Changed
+
+- **Legacy settings rebuilt as an actual vertical menu.** 0.4.1 took the wide three-column settings
+  panel and dropped it into the drawer with a CSS rule collapsing it to one column. That is a transfer,
+  not a redesign: the result was a squashed panel whose controls ran off the side.
+  The drawer is now a vertical **index** — one row per setting group — and a group's controls open as a
+  centered popup with room to breathe. Sub-configs (limiter, fleet-save preset, keyboard, data) open
+  centered too instead of unfolding inside a drawer that has nowhere to unfold. Sections are *moved*
+  into their popup rather than cloned, so every control keeps the listeners and state it was built
+  with. Measured: 7 index rows stacked in one column, none overflowing the 385px drawer, no clipped
+  labels, and the group popup 460px wide centered to the pixel with all its controls inside it.
+
+### Fixed
+
+- **The legacy settings drawer came back empty after a refresh.** `openSide` stores `currentSide =
+  'settings'`, and the shell reopens whenever `currentSide` is set — but the restore path only knew how
+  to redraw a pinned player, the pinned list and the tagged list, so nothing repainted the settings and
+  the drawer returned as a blank column. It now restores that view too, guarded on the option: with the
+  popup surface `currentSide` is never `'settings'`, and restoring it unguarded would pop the settings
+  open on every page load.
+
 ## 0.4.1-v13
 
 ### Changed
