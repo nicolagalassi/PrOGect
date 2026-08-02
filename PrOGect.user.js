@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.5.0-v13
+// @version         0.5.1-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.5.0-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.5.1-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -6881,6 +6881,35 @@ class FleetManager extends Manager
                 {
                     fleetDispatcher.mission = 3;
                 }
+
+                // Never leave the dispatcher holding a mission the target does not offer. Every branch
+                // above can do it: the mission is zeroed at the top of this handler, so if no case
+                // matches it simply stays 0, and the !ownPlanet branch falls back to 1 (attack) without
+                // ever checking that attack is on offer - at an expedition slot it is not. Either way
+                // the game answers "no mission selected" while the icon still looks lit, which is the
+                // reported fault exactly: the choice looks right and the send is refused.
+                const _fixMission = () =>
+                {
+                    const avail = (fleetDispatcher.getAvailableMissions() || []).map(Number);
+                    if(!avail.length) return false;
+                    if(avail.indexOf(Number(fleetDispatcher.mission)) > -1) return true;
+
+                    // choose by intent, not by whatever happens to be first: position 16 is the
+                    // expedition slot, otherwise the last order given, then the configured default.
+                    const wanted = [Number(fleetDispatcher.targetPlanet?.position) === 16 ? 15 : 0,
+                                    Number(this.lastMissionOrder),
+                                    Number(this.ogl.db.options.defaultMission)]
+                                   .find(m => m && avail.indexOf(m) > -1);
+
+                    fleetDispatcher.mission = wanted || avail[0];
+                    return true;
+                };
+
+                // the list of available missions can still be empty this soon after the response, so
+                // give it one more frame rather than leaving the player unable to send. One retry, not
+                // a loop, and it only reads state the response already produced - no request, no timer
+                // driving a game action.
+                if(!_fixMission()) requestAnimationFrame(() => { _fixMission(); fleetDispatcher.refresh(); });
 
                 fleetDispatcher.refresh();
             }, 50);
