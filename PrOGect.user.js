@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.2.6-v13
+// @version         0.2.7-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.2.6-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.2.7-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -478,6 +478,40 @@ GM_addStyle(`
 .ogl_battle { box-shadow:0 0 6px -2px #000; }
 .ogl_battle .ogl_icon:before { vertical-align:bottom; }
 .ogl_oldScore em { border-radius:2px; font-style:normal; }
+/* PrOGect: event list ("Eventi"). Two fixes inside the row grid the tool already owns.
+   1. Times were half-eaten. The arrival-time track was a hard 62px while its cell is centred and every
+      cell sets overflow:hidden, so a time wider than the track lost characters at BOTH ends at once -
+      hence ":40:01 Orolo", missing the hour AND the tail rather than being cut on one side. That track
+      now sizes to its content: measured 131px for "14:40:01 Orologio" against the old 62px. The single
+      flexible track becomes minmax(0,1fr) instead of auto so the extra width is taken from slack it
+      already carried - at the real dialog width that column still keeps ~540px, and the row stops
+      shrinking at 652px total, well below any width this box is used at.
+   2. Colours were not aligned. The base already maps [data-mission-type] onto --mission* for
+      .detailsFleet (the ship count), but the countdown kept one colour whatever the mission was. These
+      rules extend the SAME mapping to the timer instead of introducing a second convention, so a blue
+      expedition now reads blue in its timer as well as its count. Missions 11-14 and 16 are listed for
+      parity with the base: the palette has no entry for them upstream, so they resolve to no colour
+      exactly as .detailsFleet already does today. The arrival clock keeps its neutral --time colour so
+      the two time columns stay tellable apart. */
+#eventboxContent .eventFleet, #eventboxContent .allianceAttack { grid-template-columns:82px max-content 23px 70px 87px minmax(0,1fr) 19px 87px 70px 20px 21px 20px !important; }
+#eventboxContent .eventFleet > td { min-width:0; }
+[data-mission-type="1"]:not(.fleetDetails) .countDown{color:var(--mission1)!important}
+[data-mission-type="2"]:not(.fleetDetails) .countDown{color:var(--mission2)!important}
+[data-mission-type="3"]:not(.fleetDetails) .countDown{color:var(--mission3)!important}
+[data-mission-type="4"]:not(.fleetDetails) .countDown{color:var(--mission4)!important}
+[data-mission-type="5"]:not(.fleetDetails) .countDown{color:var(--mission5)!important}
+[data-mission-type="6"]:not(.fleetDetails) .countDown{color:var(--mission6)!important}
+[data-mission-type="7"]:not(.fleetDetails) .countDown{color:var(--mission7)!important}
+[data-mission-type="8"]:not(.fleetDetails) .countDown{color:var(--mission8)!important}
+[data-mission-type="9"]:not(.fleetDetails) .countDown{color:var(--mission9)!important}
+[data-mission-type="10"]:not(.fleetDetails) .countDown{color:var(--mission10)!important}
+[data-mission-type="11"]:not(.fleetDetails) .countDown{color:var(--mission11)!important}
+[data-mission-type="12"]:not(.fleetDetails) .countDown{color:var(--mission12)!important}
+[data-mission-type="13"]:not(.fleetDetails) .countDown{color:var(--mission13)!important}
+[data-mission-type="14"]:not(.fleetDetails) .countDown{color:var(--mission14)!important}
+[data-mission-type="15"]:not(.fleetDetails) .countDown{color:var(--mission15)!important}
+[data-mission-type="17"]:not(.fleetDetails) .countDown{color:var(--mission17)!important}
+[data-mission-type="18"]:not(.fleetDetails) .countDown{color:var(--mission18)!important}
 `);
 
 // ===== PrOGect THEME — minimal graphite + soft violet =====================================
@@ -2125,65 +2159,6 @@ class DomManager extends Manager
             planet._ogl.sideIcon = Util.addDom('div', { class:'ogl_sideIconTop', parent:sideIcons });
             planet._ogl.sideIconBack = Util.addDom('div', { class:'ogl_sideIconBottom', parent:sideIcons });
             planet._ogl.sideInfo = Util.addDom('div', { class:'ogl_sideIconInfo', parent:sideIcons });
-
-            // [SYL-GEO DIAG] temporary local probe. The previous version measured on the first frame
-            // after loadBase, before OGame's banner had even been inserted, so its numbers described a
-            // layout that never reaches the screen. This one waits for the banner rect to stop moving,
-            // then asks the browser who actually paints on top via elementFromPoint - the only thing
-            // that settles whether our opaque list covers the ad or the ad covers us. Never shipped.
-            if(!DomManager._sylGeoProbed)
-            {
-                DomManager._sylGeoProbed = true;
-                const _r = el => { if(!el) return null; const b = el.getBoundingClientRect(); return { l:Math.round(b.left), r:Math.round(b.right), w:Math.round(b.width), t:Math.round(b.top), h:Math.round(b.height) }; };
-                const _tag = el => { if(!el) return null; let s = el.tagName.toLowerCase(); if(el.id) s += '#' + el.id; if(el.className && typeof el.className === 'string') s += '.' + el.className.trim().split(/\s+/).slice(0, 3).join('.'); return s; };
-                const _chain = el => { const out = []; let n = el; while(n && n !== document.body && out.length < 5) { out.push(_tag(n)); n = n.parentElement; } return out.join(' < '); };
-                const _findBanner = () => document.querySelector('#bannerSkyscrapercomponent');
-                let _still = 0, _prev = '', _frames = 0;
-                const _settle = () =>
-                {
-                    _frames++;
-                    const b = _findBanner();
-                    const key = b ? JSON.stringify(_r(b)) : 'none';
-                    if(b && key === _prev) _still++; else _still = 0;
-                    _prev = key;
-                    // stable for 30 straight frames, or give up after ~10s of frames
-                    if(_still < 30 && _frames < 600) { requestAnimationFrame(_settle); return; }
-                    try
-                    {
-                        const banner = _findBanner();
-                        const list = document.querySelector('#planetList');
-                        const row = document.querySelector('#planetList .smallplanet');
-                        const strips = [...document.querySelectorAll('.ogl_sideIcons')].filter(s => s.getBoundingClientRect().width > 0);
-                        const widest = strips.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right)[0] || null;
-                        const rB = _r(banner), rL = _r(list), rW = _r(widest);
-                        // who paints on top, sampled inside any horizontal overlap
-                        let hitAtBannerEdge = null, hitAtStripEnd = null;
-                        if(rB && rL)
-                        {
-                            const y = Math.round(rL.t + Math.min(60, rL.h / 2));
-                            hitAtBannerEdge = _chain(document.elementFromPoint(rB.l + 4, y));
-                        }
-                        if(rW) hitAtStripEnd = _chain(document.elementFromPoint(rW.r - 2, Math.round(rW.t + rW.h / 2)));
-                        console.warn('[SYL-GEO2] ' + JSON.stringify({
-                            settledAfterFrames: _frames,
-                            viewportW: window.innerWidth,
-                            devicePixelRatio: window.devicePixelRatio,
-                            list: rL,
-                            row: _r(row),
-                            banner: rB,
-                            bannerFound: !!banner,
-                            widestStrip: rW,
-                            listOverlapsBannerBand: (rB && rL) ? rL.r > rB.l : null,
-                            stripOverlapsBannerBand: (rB && rW) ? rW.r > rB.l : null,
-                            overlapPx: (rB && rL) ? Math.max(0, rL.r - rB.l) : null,
-                            whoPaintsAtBannerLeftEdge: hitAtBannerEdge,
-                            whoPaintsAtStripEnd: hitAtStripEnd
-                        }));
-                    }
-                    catch(e) { console.warn('[SYL-GEO2] err ' + String(e)); }
-                };
-                requestAnimationFrame(_settle);
-            }
 
             this.planet[planetID] = planet;
 

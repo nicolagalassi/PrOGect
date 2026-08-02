@@ -2,6 +2,34 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.2.7-v13
+
+### Fixed
+
+- **Lifeform building and research costs could render as 0.** The lifeform bonus terms multiplied a
+  per-planet level straight out of storage, e.g. `planetData[12108] * getTech(12108).bonus1BaseValue`.
+  Before that planet's levels are hydrated the lookup is `undefined`, and `undefined * number` is
+  `NaN`, which then propagated through `tech.bonus.price`/`duration` into every computed cost and
+  printed as `0` — every cell at once, which is what made it look like missing data rather than an
+  arithmetic fault. All 15 exposed sites now coerce a missing level to 0 (and a missing tech entry to
+  0), so an unhydrated planet yields no bonus instead of poisoning the whole calculation. Diagnosed
+  from a live probe: the DOM level read and the base cost table were both fine, ruling out the
+  selector-rename explanation that the symptom suggested.
+
+- **Event list: arrival times were cut off at both ends.** The row grid gave the arrival-time column a
+  hard 62px while the cell is centred and every cell sets `overflow:hidden`, so a longer time lost
+  characters at the start *and* the end simultaneously — reported as `:40:01 Orolo`. That column now
+  sizes to its content (131px measured for `14:40:01 Orologio`), and the one flexible column became
+  `minmax(0,1fr)` so the width comes out of slack it already had rather than widening the row.
+
+### Changed
+
+- **Event list: the countdown now carries its mission's colour.** The stylesheet already mapped
+  `[data-mission-type]` onto the `--mission*` palette for the ship-count column; the timer was left on
+  a single colour regardless of mission. The same mapping now covers the countdown, so an expedition
+  reads blue end to end. Verified the countdown's computed colour matches the ship count's for every
+  mission tested, and that the times stay unclipped from 1191px down to 760px.
+
 ## 0.2.6-v13
 
 ### Fixed
