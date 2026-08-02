@@ -2,6 +2,41 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.3.0-v13
+
+### Added
+
+- **Per-planet and per-moon limiters.** A body can now run a limiter that differs from the global
+  profile for its type. The limiter panel grows a fourth column for the body you are standing on, with
+  one switch in its header: off, the column shows the global values it inherits, greyed out and not
+  editable; on, the body gets its own profile seeded from those same values, so nothing jumps when you
+  flip it. Switching back off deletes the override and the body follows the global profile again.
+  An override **replaces** the global profile rather than merging with it, so a 0 means "keep nothing
+  here" instead of the ambiguous "unset, ask the global".
+  Resolution lives in one place, `Util.limiterFor(db, bodyId, isMoon)`, and all five consumers go
+  through it: fleet dispatch (`updateLimiter`), the held-resource badges, `selectSiblingShips`, the
+  night `fleetSave` and the empire-page jumpgate shortcut. Two of those were easy to miss — `fleetSave`
+  resolved its own profile through a differently named local, so a first pass that searched for the
+  obvious name left it reading the global profile while the panel showed the per-body one, which is
+  exactly the drift this helper exists to prevent. The jumpgate shortcut previously read the global
+  *planet* profile through a hard-coded `fleetLimiter.data`; it now resolves the body it was given,
+  which returns the same profile as before when no override exists.
+  Everything that still touches a profile directly does so deliberately: the panel's "copy from" chips
+  and the override seed write to one named global profile, and the jumpgate keeps its own global
+  profile by design.
+
+### Changed
+
+- **Billions now print as `B`, not `G`.** The inherited code mapped the French compact unit "Md" onto
+  the SI letter G (kilo/mega/giga/tera). Both ladders are internally consistent, but B is what OGame
+  players read as a billion while G reads as a unit of data. `Util.formatInput` accepts `b` **and**
+  keeps accepting `g`, so typing either into a limiter or fleet-save field still means 10⁹ — the
+  display letter and the parser were coupled, and changing only the display would have broken typing
+  what you see.
+
+- **Editing the planet column of the limiter panel now refreshes immediately.** Only the moon and
+  jumpgate columns triggered a refresh; planet edits waited for something else to redraw.
+
 ## 0.2.9-v13
 
 ### Fixed

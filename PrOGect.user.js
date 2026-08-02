@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.2.9-v13
+// @version         0.3.0-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.2.9-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.3.0-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -353,6 +353,12 @@ GM_addStyle(`
 .ogl_limiterSettings .ogl_syncLimiter { display:inline-flex; align-items:center; justify-content:center; width:26px; height:22px; background:var(--syl-bg); border:1px solid var(--syl-border); border-radius:var(--syl-radius); color:var(--syl-muted); cursor:pointer; transition:border-color .15s ease-out, color .15s ease-out; }
 .ogl_limiterSettings .ogl_syncLimiter i { font-size:14px; }
 .ogl_limiterSettings .ogl_syncLimiter:hover { border-color:var(--syl-accent); color:var(--syl-accent); }
+/* the fourth column only exists while standing on a planet or moon, so the track count follows the
+   number of columns the panel actually built rather than being fixed at three */
+.ogl_limiterSettings .ogl_limiterGrid[data-cols="4"] { grid-template-columns:30px repeat(4, minmax(0, 1fr)); gap:5px 7px; }
+.ogl_limiterSettings .ogl_limiterGrid[data-cols="4"] .ogl_limiterTitle { font-size:11px; text-transform:none; }
+/* the body column's switch: lit while that body runs its own limiter */
+.ogl_limiterSettings .ogl_bodyToggle.ogl_active { border-color:var(--syl-accent); background:var(--syl-accent-weak); color:var(--syl-accent); }
 .ogl_limiterSettings .ogl_limiterRowLabel { display:flex; align-items:center; justify-content:center; }
 .ogl_limiterSettings .ogl_limiterRowLabel .ogl_icon { width:24px; height:24px; }
 .ogl_limiterSettings .ogl_limiterGrid .ogl_inputField { box-sizing:border-box; width:100% !important; text-align:right; padding:6px 9px !important; background:var(--syl-bg) !important; border:1px solid var(--syl-border) !important; border-radius:var(--syl-radius); color:var(--syl-ink) !important; font-size:12px; outline:none; }
@@ -883,6 +889,8 @@ class PrOGect
         this.db.tags = Object.assign({}, dbDefaults.tags, this.db.tags || {});
 
         this.db.fleetLimiter.moonData = this.db.fleetLimiter.moonData || this.db.fleetLimiter.data;
+        // per-body limiter overrides, keyed by planet/moon id; absent means "follow the global profile"
+        this.db.fleetLimiter.byBody = this.db.fleetLimiter.byBody || {};
         this.db.options.expeditionShipRatio = Math.min(this.db.options.expeditionShipRatio, 100);
         this.db.options.tooltipDelay = this.db.options.tooltipDelay !== false ? Math.max(this.db.options.tooltipDelay, 100) : 400;
 
@@ -4233,20 +4241,72 @@ class UIManager extends Manager
         const iconKey = { planet:'planet', moon:'bedtime', jumpgate:'door_back' };
         const types = ['planet', 'moon', 'jumpgate'];
 
-        // header row: empty corner + one head per body (icon + name + "copy from" chips for the OTHER
-        // two bodies — the self chip is dropped, which declutters the old 3-button row).
+        // The body we are standing on gets a fourth column, so its limiter can differ from the global
+        // profile for its type. It is absent on pages with no current body, which is why the grid's
+        // column count is driven by data-cols rather than hard-coded in the stylesheet.
+        const body = this.ogl.currentPlanet?.obj;
+        const bodyId = body?.id;
+        const bodyIsMoon = body?.type == 'moon';
+        const bodyOverride = () => this.ogl.db.fleetLimiter.byBody?.[bodyId];
+
+        // one descriptor per column: where it reads from, where it writes to, and whether it is
+        // editable right now. The three global columns are always editable; the body column only once
+        // it has its own profile, and until then it displays the global values it inherits.
+        const columns = types.map(type => (
+        {
+            id:type,
+            icon:iconKey[type],
+            label:type,
+            read:key => this.ogl.db.fleetLimiter?.[dataKey[type]]?.[key] || 0,
+            write:(key, value) => { this.ogl.db.fleetLimiter[dataKey[type]][key] = value; },
+            editable:() => true,
+            greyed:key => type == 'jumpgate' && resourceKeys.includes(key),
+        }));
+
+        if(bodyId) columns.push(
+        {
+            id:'body',
+            icon:bodyIsMoon ? 'bedtime' : 'language',
+            label:body.coords || 'here',
+            read:key => Util.limiterFor(this.ogl.db, bodyId, bodyIsMoon)[key] || 0,
+            write:(key, value) => { if(bodyOverride()) bodyOverride()[key] = value; },
+            editable:() => Boolean(bodyOverride()),
+            greyed:() => false,
+        });
+
+        grid.setAttribute('data-cols', columns.length);
+
+        // header row: empty corner + one head per column (icon + name + "copy from" chips for the OTHER
+        // global bodies — the self chip is dropped, which declutters the old 3-button row).
         Util.addDom('div', { class:'ogl_limiterCorner', parent:grid });
-        types.forEach(type =>
+        columns.forEach(col =>
         {
             const head = Util.addDom('div', { class:'ogl_limiterHead', parent:grid });
-            Util.addDom('span', { class:'ogl_limiterTitle', parent:head, child:`<i class="material-icons">${iconKey[type]}</i>${type}` });
+            Util.addDom('span', { class:'ogl_limiterTitle', parent:head, child:`<i class="material-icons">${col.icon}</i>${col.label}` });
             const sync = Util.addDom('div', { class:'ogl_limiterSync', parent:head });
 
-            types.filter(t => t !== type).forEach(syncFrom =>
+            if(col.id == 'body')
+            {
+                // one switch: give this body its own profile, or hand it back to the global one.
+                // Turning it on seeds from the global profile so the values you see do not jump.
+                const on = Boolean(bodyOverride());
+                Util.addDom('div', { class:`ogl_syncLimiter ogl_bodyToggle ogl_button tooltip${on ? ' ogl_active' : ''}`, parent:sync, title:on ? 'Using its own limiter — click to follow the global one again' : 'Give this body its own limiter, starting from the global values', child:`<i class="material-icons">${on ? 'link_off' : 'link'}</i>`, onclick:() =>
+                {
+                    if(on) delete this.ogl.db.fleetLimiter.byBody[bodyId];
+                    else this.ogl.db.fleetLimiter.byBody[bodyId] = JSON.parse(JSON.stringify(this.ogl.db.fleetLimiter[bodyIsMoon ? 'moonData' : 'data'] || {}));
+
+                    this.ogl._fleet.updateLimiter();
+                    Util.runAsync(() => this.openFleetProfile(fromSettings)).then(e => this.ogl._popup.open(e));
+                }});
+
+                return;
+            }
+
+            types.filter(t => t !== col.id).forEach(syncFrom =>
             {
                 Util.addDom('div', { class:'ogl_syncLimiter ogl_button tooltip', parent:sync, title:`Same as ${syncFrom}`, child:`<i class="material-icons">${iconKey[syncFrom]}</i>`, onclick:() =>
                 {
-                    this.ogl.db.fleetLimiter[dataKey[type]] = JSON.parse(JSON.stringify(this.ogl.db.fleetLimiter[dataKey[syncFrom]]));
+                    this.ogl.db.fleetLimiter[dataKey[col.id]] = JSON.parse(JSON.stringify(this.ogl.db.fleetLimiter[dataKey[syncFrom]]));
 
                     // jumpgate never limits resources
                     delete this.ogl.db.fleetLimiter[dataKey['jumpgate']].metal;
@@ -4262,28 +4322,39 @@ class UIManager extends Manager
             });
         });
 
-        // one grid row per key (label icon + 3 inputs) so labels and inputs always line up; a full-width
-        // separator divides resources from ships.
+        // one grid row per key (label icon + one input per column) so labels and inputs always line up;
+        // a full-width separator divides resources from ships.
         const addRow = key =>
         {
             Util.addDom('div', { class:'ogl_limiterRowLabel tooltip', parent:grid, title:this.ogl._lang.find(key), child:`<div class="ogl_icon ogl_${key}"></div>` });
 
-            types.forEach(type =>
+            columns.forEach(col =>
             {
-                const input = Util.addDom('input', { class:`ogl_inputCheck ogl_inputField ogl_${key}`, parent:grid, value:this.ogl.db.fleetLimiter?.[dataKey[type]]?.[key] || 0, oninput:() =>
+                const input = Util.addDom('input', { class:`ogl_inputCheck ogl_inputField ogl_${key}`, parent:grid, value:col.read(key), oninput:() =>
                 {
                     setTimeout(() =>
                     {
-                        this.ogl.db.fleetLimiter[dataKey[type]][key] = parseInt(input.value.replace(/\D/g, '')) || 0;
-                        if(type == 'moon') this.ogl._fleet.updateLimiter();
-                        else if(type == 'jumpgate') this.ogl._jumpgate.updateLimiter();
+                        col.write(key, parseInt(input.value.replace(/\D/g, '')) || 0);
+
+                        // refresh both consumers regardless of which column was edited: updateLimiter
+                        // returns immediately when its page is not open, and leaving the planet column
+                        // out (as before) meant edits there did not show until something else redrew.
+                        if(col.id == 'jumpgate') this.ogl._jumpgate.updateLimiter();
+                        else this.ogl._fleet.updateLimiter();
                     }, 200);
                 }});
 
-                if(type == 'jumpgate' && (key == 'metal' || key == 'crystal' || key == 'deut' || key == 'food'))
+                if(col.greyed(key))
                 {
                     input.classList.add('ogl_disabled');
                     input.value = 0;
+                }
+
+                // the body column shows what it inherits until it is switched to its own profile
+                if(!col.editable())
+                {
+                    input.classList.add('ogl_disabled');
+                    input.disabled = true;
                 }
 
                 Util.formatInput(input);
@@ -7278,7 +7349,9 @@ class FleetManager extends Manager
     {
         if(!unsafeWindow.fleetDispatcher) return;
 
-        const dataKey = this.ogl.currentPlanet.obj.type == 'moon' ? 'moonData' : 'data';
+        // resolved once here: this body's own profile when it has one, the global planet/moon
+        // profile otherwise (Util.limiterFor)
+        const keep = Util.limiterFor(this.ogl.db, this.ogl.currentPlanet.obj.id, this.ogl.currentPlanet.obj.type == 'moon');
 
         this.totalCapacity = 0;
 
@@ -7292,7 +7365,7 @@ class FleetManager extends Manager
                 forced = this.shipsForResources(entry.id);
             }
 
-            if(this.ogl.db.fleetLimiter.shipActive && this.ogl.db.fleetLimiter[dataKey][entry.id]) entry.number = Math.max(0, this.initialShipsOnPlanet.find(e => e.id == entry.id).number - Math.max(this.ogl.db.fleetLimiter[dataKey][entry.id], forced));
+            if(this.ogl.db.fleetLimiter.shipActive && keep[entry.id]) entry.number = Math.max(0, this.initialShipsOnPlanet.find(e => e.id == entry.id).number - Math.max(keep[entry.id], forced));
             else entry.number = this.initialShipsOnPlanet.find(e => e.id == entry.id).number - forced;
 
             if(fleetDispatcher.shipsToSend.find(e => e.id == entry.id)?.number >= entry.number)
@@ -7305,7 +7378,7 @@ class FleetManager extends Manager
             {
                 techDom.querySelector('.ogl_maxShip')?.remove();
                 const text = Util.addDom('div', { class:'ogl_maxShip', parent:techDom });
-                text.innerHTML = `<b>-${Util.formatToUnits(this.ogl.db.fleetLimiter.shipActive ? Math.max(this.ogl.db.fleetLimiter[dataKey][entry.id], forced) : forced)}</b>`;
+                text.innerHTML = `<b>-${Util.formatToUnits(this.ogl.db.fleetLimiter.shipActive ? Math.max(keep[entry.id] || 0, forced) : forced)}</b>`;
                 text.addEventListener('click', () => { Util.runAsync(() => this.ogl._ui.openFleetProfile()).then(e => this.ogl._popup.open(e)); });
 
                 if(!this.ogl.db.fleetLimiter.shipActive && this.ogl.db.keepEnoughCapacityShip != entry.id) text.classList.add('ogl_hidden');
@@ -7330,7 +7403,7 @@ class FleetManager extends Manager
         {
             if(this.ogl.db.fleetLimiter.resourceActive)
             {
-                fleetDispatcher[this.resOnPlanet[resourceName]] = Math.max(0, this.initialResOnPlanet[resourceName] - (this.ogl.db.fleetLimiter[dataKey][resourceName] || 0));
+                fleetDispatcher[this.resOnPlanet[resourceName]] = Math.max(0, this.initialResOnPlanet[resourceName] - (keep[resourceName] || 0));
             }
             else
             {
@@ -7342,7 +7415,7 @@ class FleetManager extends Manager
             fleetDispatcher[this.cargo[resourceName]] = Math.min(fleetDispatcher[this.cargo[resourceName]], fleetDispatcher[this.resOnPlanet[resourceName]]);
 
             // same "-X not selected" badge for the limiter's held resources (shared helper)
-            this.showResourceHeldBadge(resourceName, this.ogl.db.fleetLimiter.resourceActive ? (this.ogl.db.fleetLimiter[dataKey][resourceName] || 0) : 0, () => { Util.runAsync(() => this.ogl._ui.openFleetProfile()).then(e => this.ogl._popup.open(e)); });
+            this.showResourceHeldBadge(resourceName, this.ogl.db.fleetLimiter.resourceActive ? (keep[resourceName] || 0) : 0, () => { Util.runAsync(() => this.ogl._ui.openFleetProfile()).then(e => this.ogl._popup.open(e)); });
         });
 
         fleetDispatcher.refresh();
@@ -7535,8 +7608,8 @@ class FleetManager extends Manager
     // only picks the mission (deployment) and the ships; the picked body stays fixed while sources cycle.
     selectSiblingShips()
     {
-        const dataKey = this.ogl.currentPlanet.obj.type == 'moon' ? 'moonData' : 'data';
-        const keep = this.ogl.db.fleetLimiter[dataKey] || {};
+        // same resolution as updateLimiter, so the saved fleet always agrees with the limiter shown
+        const keep = Util.limiterFor(this.ogl.db, this.ogl.currentPlanet.obj.id, this.ogl.currentPlanet.obj.type == 'moon');
 
         fleetDispatcher.selectMission(4);   // deployment: move the fleet to the linked body
         fleetDispatcher.resetShips();
@@ -7677,8 +7750,10 @@ class FleetManager extends Manager
         //    loading (onPlanet - leave) left the reserve short by exactly the consumption - very visible
         //    on a fleet save, which sends the whole fleet. Ships, target, mission and speed are all set
         //    above, so getConsumption() is final here and the fuel can be reserved properly.
-        const limiterKey = this.ogl.currentPlanet?.obj?.type == 'moon' ? 'moonData' : 'data';
-        const limiterHold = this.ogl.db.fleetLimiter.resourceActive ? (this.ogl.db.fleetLimiter[limiterKey] || {}) : {};
+        // resolved through Util.limiterFor like every other consumer, so a body running its own
+        // limiter holds the same amounts here as the fleet page shows: reading the global profile
+        // directly is precisely how the save and the limiter drifted apart before.
+        const limiterHold = this.ogl.db.fleetLimiter.resourceActive ? Util.limiterFor(this.ogl.db, this.ogl.currentPlanet?.obj?.id, this.ogl.currentPlanet?.obj?.type == 'moon') : {};
         const leaveMap = { metal:parseInt(opt.fsLeaveMetal) || 0, crystal:parseInt(opt.fsLeaveCrystal) || 0, deut:parseInt(opt.fsLeaveDeut) || 0 };
         const fsConso = parseInt(parseFloat(fleetDispatcher.getConsumption() || 0)) || 0;
 
@@ -14303,10 +14378,13 @@ class EmpireManager extends Manager
 
                 if(this.ogl.db.fleetLimiter.resourceActive)
                 {
-                    resources[0] = Math.max(0, resources[0] - (this.ogl.db.fleetLimiter.data.metal || 0));
-                    resources[1] = Math.max(0, resources[1] - (this.ogl.db.fleetLimiter.data.crystal || 0));
-                    resources[2] = Math.max(0, resources[2] - (this.ogl.db.fleetLimiter.data.deut || 0));
-                    resources[3] = Math.max(0, resources[3] - (this.ogl.db.fleetLimiter.data.food || 0));
+                    // planetData is the planet clicked in the empire view, so resolve that body's
+                    // profile; with no override this returns fleetLimiter.data, exactly as before
+                    const jgKeep = Util.limiterFor(this.ogl.db, planetData.planetID, false);
+                    resources[0] = Math.max(0, resources[0] - (jgKeep.metal || 0));
+                    resources[1] = Math.max(0, resources[1] - (jgKeep.crystal || 0));
+                    resources[2] = Math.max(0, resources[2] - (jgKeep.deut || 0));
+                    resources[3] = Math.max(0, resources[3] - (jgKeep.food || 0));
                 }
 
                 const total = resources[0] + resources[1] + resources[2] + resources[3];
@@ -14714,6 +14792,21 @@ class Util
         return Math.round((entry?.bonus || 0) * 10);
     }
 
+    // Single source of truth for "which limiter profile applies to this body".
+    // A planet or moon may carry its own profile in fleetLimiter.byBody, keyed by the body id; when it
+    // does, that profile REPLACES the global planet/moon one for that body rather than merging with it,
+    // so a value of 0 means "keep nothing here" instead of the ambiguous "unset, ask the global". With
+    // no override the global profile is returned, which is exactly what every caller read before this
+    // existed. Every consumer resolves through here - fleet dispatch, the held-resource badges, the
+    // night fleet-save and the empire jumpgate shortcut - because the moment two of them resolve the
+    // profile independently they drift, and a fleet-save that disagrees with the limiter it is shown
+    // next to is the exact bug this codebase has already had once.
+    static limiterFor(db, bodyId, isMoon)
+    {
+        const own = bodyId ? db?.fleetLimiter?.byBody?.[bodyId] : null;
+        return own || db?.fleetLimiter?.[isMoon ? 'moonData' : 'data'] || {};
+    }
+
     static formatToUnits(value, forced, colored)
     {
         value = Math.round(value || 0);
@@ -14728,9 +14821,15 @@ class Util
         else if(forced === 1 || (value < 1000000 && value > -1000000)) precision = 1;
         else precision = 2;
 
+        // fr-FR compact notation is used for the thresholds, then its French unit names are mapped onto
+        // the letters we show: "Md" (milliard) and "Bn" (French long-scale billion = 10^12).
+        // The billion letter is B, not the SI "G" this inherited from. Both ladders are internally
+        // consistent - k/M/G/T is SI, k/M/B/T is the short scale - but B is what OGame players read as
+        // a billion, and G reads as a unit of data. Util.formatInput accepts both letters on the way
+        // back in, so typing the old "g" keeps working.
         const split = Intl.NumberFormat('fr-FR', { notation:'compact', minimumFractionDigits:precision, maximumFractionDigits:precision }).format(value).match(/[a-zA-Z]+|[0-9,-]+/g);
         const result = split[0].replace(/,/g, '.');
-        const suffix = split[1]?.replace('Md', 'G').replace('Bn', 'T') || '';
+        const suffix = split[1]?.replace('Md', 'B').replace('Bn', 'T') || '';
 
         const resultDom = Util.addDom('span', { class:'ogl_unit', child:`<span>${result}</span><span class="ogl_suffix">${suffix}</span>` });
         if(value < 0 && colored) resultDom.classList.add('ogl_danger');
@@ -14791,7 +14890,9 @@ class Util
             let mult = 1;
             if(input.value.toLowerCase().indexOf('k') >= 0) mult = 1000;
             else if(input.value.toLowerCase().indexOf('m') >= 0) mult = 1000000;
-            else if(input.value.toLowerCase().indexOf('g') >= 0) mult = 1000000000;
+            // accept both billion letters: "b" is what the UI now prints, "g" is what it printed
+            // before and what long-time users have in their fingers
+            else if(input.value.toLowerCase().indexOf('b') >= 0 || input.value.toLowerCase().indexOf('g') >= 0) mult = 1000000000;
 
             let cursorPosition = input.selectionStart;
             let formattedValue;
