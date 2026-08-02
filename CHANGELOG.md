@@ -2,6 +2,28 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.2.9-v13
+
+### Fixed
+
+- **The per-fleet notification buttons disappeared from the event list.** Each button was attached
+  inside a `if(parent)` guard, where `parent` came from `document.querySelector('#eventRow-<id>')` in
+  the live page. On v13 that lookup always misses for the reason `load()` already documents: v13 does
+  not pre-render the event rows the way v12 did, so `#eventboxContent` is still empty at that moment —
+  OGame only fills it later, when the player opens the event list. The guard then skipped the whole
+  block without a trace. The button data is now kept and attached by a new `decorateEventRow()` as
+  soon as its row exists, driven by a `MutationObserver` on the event box, so the buttons are back on
+  v13. What they do is unchanged: one button per fleet, armed only by an explicit click from the
+  player, never registered automatically. Verified against the shipped method source in a harness:
+  nothing is attached while the box is empty, exactly one button appears once rows render, repeat
+  mutations do not duplicate it, rows without data stay untouched, and zero notifications exist until
+  the button is actually clicked.
+
+### Notes
+
+- The observer watches the DOM only. It issues no request, runs no timer and polls nothing; it reacts
+  to markup the player's own click made the game render, so it sits outside AGENTS.md §1.3 and §4.
+
 ## 0.2.8-v13
 
 ### Fixed
