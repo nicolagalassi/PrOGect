@@ -2,6 +2,36 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.5.0-v13
+
+### Changed
+
+- **Colorblind mode became a palette picker, and now actually does something.** It was a boolean that
+  recoloured exactly two things — the `v` and `o` letters in the galaxy view — and left every other
+  hue-carried signal alone. Most importantly it never touched the mission colours, where attack sits
+  on red (`#ef5f5f`) and transport on green (`#66cd3d`): the precise pair red-green deficiency erases.
+  Worth naming: 0.2.8 extended that mission colouring to the event countdown, so the tool had *grown*
+  its reliance on that pair without the mode covering it.
+  The setting is now a select with four palettes — deuteranopia, protanopia, tritanopia and
+  achromatopsia — each redefining the same CSS variables the normal theme uses, so no component logic
+  changes and nothing needs to know a palette is active. An existing `true` migrates to deuteranopia,
+  the closest named equivalent of the old red-green palette; `false` becomes off.
+  One palette could not serve all three: deuteranopia and protanopia both confuse red with green but
+  differ in how dark long wavelengths read, while tritanopia *keeps* red/green and confuses blue with
+  green instead, so its palette leans on the axis the other two avoid. Achromatopsia has no hue, so it
+  separates on an even CIE L\* grey ramp with levels assigned by priority.
+
+### Notes
+
+- The palettes were measured, not eyeballed. Each colour pair was pushed through a Viénot simulation of
+  its own deficiency and scored as a CIE Lab distance, reading the values back out of the shipped file
+  rather than from the values used to write it. All eight meaning-carrying pairs clear ΔE 20 on all
+  four palettes. Two rounds of tuning came out of that: ACS-defend had to leave the orange axis, where
+  darkening it had parked it beside attack (ΔE 18), and the grey ramp had to be re-assigned off
+  adjacent steps (transport vs recycle was ΔE 8).
+- Honest limit: this fixes hue collisions. It does not fix the deeper issue that some states are
+  signalled by colour alone — text or shape would be the real answer there.
+
 ## 0.4.4-v13
 
 ### Fixed
