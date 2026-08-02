@@ -2,6 +2,33 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.5.1-v13
+
+### Fixed
+
+- **"No mission selected" on sends that looked correctly set up.** Reported as the destination planet
+  or moon not being taken, with a manual re-select as the workaround. The destination was not the
+  problem: the *mission* was being left in a state the target does not accept, while its icon still
+  rendered as chosen — so the form looked right and the send was refused.
+  Every fleet check response zeroes `fleetDispatcher.mission` and a 50 ms timer restores it through a
+  ladder of cases. Two holes in that ladder: if no case matches the mission simply stays `0`, and the
+  branch for targets that are not your own falls back to `1` (attack) **without checking that attack is
+  on offer** — at an expedition slot (position 16) it is not. Both end as an invalid mission.
+  A final guard now runs after the ladder and never leaves a mission the target does not offer. It
+  picks by intent rather than by list order: the expedition slot wants an expedition, otherwise the
+  last order given, then the configured default, and only then whatever is on offer. If the available
+  list has not been populated yet — the other half of the intermittency, since it is read 50 ms after
+  the response — it retries once on the next frame instead of leaving the player unable to send.
+  Verified by running the shipped guard against eight cases: expedition slot recovering from both the
+  attack fallback and a zeroed mission, a still-valid last order, an unavailable last order falling to
+  the default, neither available falling to what is on offer, an already-valid mission left untouched,
+  a debris field with only recycle, and the empty list correctly reporting that it must retry.
+
+### Notes
+
+- A probe was added first to test the destination hypothesis and produced no data, so it was not the
+  evidence for this fix; the screenshot of the failure was. The probe is kept out of the release.
+
 ## 0.5.0-v13
 
 ### Changed
