@@ -2,6 +2,50 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.4.0-v13
+
+### Added
+
+- **Limiter button in the fleet bar.** The limiter is the setting you retune most while dispatching, and
+  the only ways in were the settings popup or clicking a "-X" badge, which is only there once the
+  limiter already holds something. There is now a button right after the game's own "all resources" /
+  "none" buttons. Purely additive: nothing of the game's is moved, resized or hidden, and it opens our
+  own panel rather than triggering any game action.
+
+- **Per-planet and per-moon night fleet-save presets.** A body can now carry its own fleet-save preset
+  — destination, mission, speed and the three "leave" reserves — instead of following the global one.
+  The fleet-save panel gained a scope banner showing which preset it is editing, with one switch to
+  give the body its own (seeded from the global, so nothing jumps) or hand it back.
+  Bodies running their own preset show a `bedtime` marker in the planet list, and that marker **is** the
+  shortcut: clicking it opens that body's preset without travelling there first. Only configured bodies
+  get a marker, so every other row is untouched. It hangs in the body's own build-icon list rather than
+  the side strip, because a planet and its moon share that strip and a marker there could not say which
+  of the two it belonged to.
+  Resolution goes through one helper, `Util.fsFor(db, bodyId)`, which `fleetSave()` uses for all seven
+  preset reads — so a body cannot end up sending to its own coordinates while keeping the global's
+  reserves. Like the limiter, an override **replaces** the global rather than merging: a blank
+  coordinate stays blank and a 0 reserve stays 0 instead of inheriting.
+  Storage follows OGLight 5.4.2's shape (`myPlanets[id].fsData`). Its `redirect` / `oglmode=6` chain
+  was deliberately **not** adopted — see Notes.
+
+- **Legacy menu placement** (`options.legacyMenu`, off by default). The old OGLight had no button strip:
+  it put its controls in a compact icon grid inside the game's colony-count box above the planet list.
+  With this on, the same buttons render there as a 4-column grid instead of the strip. Toggling it
+  rebuilds the bar in place, no reload needed.
+  One thing from the legacy script was deliberately not copied: it blanked the game's own colony counter
+  with `#countColonies { color:transparent }` and `p { display:none }` to make room. Hiding game text is
+  not something we do, so the counter stays visible and the box grows instead.
+
+### Notes
+
+- The night fleet-save's existing `oglmode=6` behaviour is unchanged by this release, but it deserves a
+  flag now that the feature is being extended: after a send it navigates on its own to the next body and
+  pre-fills the preset there, so one initial click starts a chain that walks the empire. Every **send**
+  is still a separate manual confirmation, and OGLight 5.4.2 ships the same design, but the automatic
+  navigation and pre-fill are exactly the kind of chained behaviour a reviewer may read as automation.
+  This is a grey area worth a ToolDev's written opinion before publishing (AGENTS.md §3). Nothing was
+  built on top of that chain here: per-body presets work identically without it.
+
 ## 0.3.0-v13
 
 ### Added

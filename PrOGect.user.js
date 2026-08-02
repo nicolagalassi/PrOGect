@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.3.0-v13
+// @version         0.4.0-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.3.0-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.4.0-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -359,6 +359,30 @@ GM_addStyle(`
 .ogl_limiterSettings .ogl_limiterGrid[data-cols="4"] .ogl_limiterTitle { font-size:11px; text-transform:none; }
 /* the body column's switch: lit while that body runs its own limiter */
 .ogl_limiterSettings .ogl_bodyToggle.ogl_active { border-color:var(--syl-accent); background:var(--syl-accent-weak); color:var(--syl-accent); }
+/* PrOGect: the limiter shortcut sitting in the fleet bar next to OGame's own resource buttons.
+   Sized to sit on the same line without changing anything around it. */
+.ogl_limiterShortcut { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; width:34px; height:30px; margin-left:5px; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:var(--syl-radius); color:var(--syl-muted); font-size:18px !important; line-height:1 !important; cursor:pointer; transition:border-color .15s ease-out, color .15s ease-out, background .15s ease-out; }
+.ogl_limiterShortcut:hover { border-color:var(--syl-accent); background:var(--syl-raised); color:var(--syl-accent); }
+/* PrOGect: marker + shortcut for a body running its own night fleet-save preset. It lives in the
+   body's own build-icon list, which is pointer-events:none, so the click target is re-enabled here. */
+.ogl_fsMarker { pointer-events:auto !important; cursor:pointer; color:var(--syl-accent); font-size:12px !important; line-height:12px !important; opacity:.85; transition:opacity .15s ease-out, transform .15s ease-out; }
+.ogl_fsMarker:hover { opacity:1; transform:scale(1.15); }
+/* the scope banner at the top of the fleet-save panel: which preset you are editing */
+.ogl_fsScope { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 10px; padding:8px 10px; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:8px; color:var(--syl-muted); font-size:12px; }
+.ogl_fsScope.ogl_active { border-color:var(--syl-accent); background:var(--syl-accent-weak); color:var(--syl-ink); }
+.ogl_fsScope .ogl_fsScopeLabel { min-width:0; overflow-wrap:anywhere; }
+.ogl_fsScope .ogl_button { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:28px; height:24px; background:var(--syl-bg); border:1px solid var(--syl-border); border-radius:var(--syl-radius); color:var(--syl-muted); cursor:pointer; transition:border-color .15s ease-out, color .15s ease-out; }
+.ogl_fsScope .ogl_button:hover { border-color:var(--syl-accent); color:var(--syl-accent); }
+.ogl_fsScope .ogl_button i { font-size:15px; }
+/* PrOGect: legacy menu placement (options.legacyMenu). Same buttons as the default strip, laid out as
+   the old OGLight's compact icon grid inside the game's colony-count box above the planet list.
+   The game's own colony text is left alone and the box simply grows to fit the grid underneath it -
+   the legacy script blanked that text to save room, which we do not do (AGENTS.md §1.7). */
+.ogl_topbar.ogl_legacyMenu { display:grid !important; grid-template-columns:repeat(4, 1fr); gap:3px; width:100%; box-sizing:border-box; margin:4px 0 0; padding:4px; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:6px; }
+.ogl_topbar.ogl_legacyMenu > * { display:inline-flex !important; align-items:center; justify-content:center; min-width:0; height:22px; margin:0 !important; border-radius:var(--syl-radius); font-size:15px !important; line-height:22px !important; }
+.ogl_topbar.ogl_legacyMenu > *:hover { background:var(--syl-raised); }
+/* the trailing text button spans the row so its label is not squeezed into a quarter column */
+.ogl_topbar.ogl_legacyMenu > .ogl_button:not(.material-icons) { grid-column:1 / -1; height:auto; padding:3px 0; font-size:11px !important; line-height:15px !important; }
 .ogl_limiterSettings .ogl_limiterRowLabel { display:flex; align-items:center; justify-content:center; }
 .ogl_limiterSettings .ogl_limiterRowLabel .ogl_icon { width:24px; height:24px; }
 .ogl_limiterSettings .ogl_limiterGrid .ogl_inputField { box-sizing:border-box; width:100% !important; text-align:right; padding:6px 9px !important; background:var(--syl-bg) !important; border:1px solid var(--syl-border) !important; border-radius:var(--syl-radius); color:var(--syl-ink) !important; font-size:12px; outline:none; }
@@ -834,6 +858,9 @@ class PrOGect
                 displaySpyTable: true,
                 shortcutsOnRight: false,
                 sidePanelOnLeft: false,
+                // render the tool's own button strip as the old OGLight's icon grid, inside the game's
+                // colony-count box above the planet list, instead of a strip over the planet list
+                legacyMenu: false,
                 spyTableRules: [],
                 spyTableMSU: false,
                 // PrOGect: Fleet Save (night fleet) preset — instant manual send, fleet travels overnight.
@@ -2084,6 +2111,7 @@ class DomManager extends Manager
     {
         this.loadBase();
         this.loadFleet();
+        this.updatePlanetFleetSaveIcons();
 
         this.updateRecap();
         this.updateLeftMenu();
@@ -2269,6 +2297,47 @@ class DomManager extends Manager
             Util.addDom('div', { class:'ogl_reverse material-icons', child:'contrast', parent:resourceIcon, onclick:() =>
             {
                 this.ogl._fleet.reverseResources(resourceIcon);
+            }});
+        });
+
+        // PrOGect: reach the limiter straight from the fleet bar. It is the setting you retune most
+        // while dispatching, and until now the only way in was the settings popup or clicking a "-X"
+        // badge that is only there when the limiter already holds something. Placed right after the
+        // game's own "all resources" / "none" buttons.
+        // Purely additive: nothing belonging to the game is moved, resized, hidden or restyled
+        // (AGENTS.md §1.7), and the button opens our own panel - it triggers no game action at all.
+        if(this.resetAll && !document.querySelector('.ogl_limiterShortcut'))
+        {
+            Util.addDom('div', { class:'ogl_limiterShortcut ogl_button tooltip material-icons', title:'Limiters', child:'tune', after:this.resetAll, onclick:() =>
+            {
+                Util.runAsync(() => this.ogl._ui.openFleetProfile()).then(e => this.ogl._popup.open(e));
+            }});
+        }
+    }
+
+    // PrOGect: a body running its own night fleet-save preset shows a marker in the planet list, and
+    // that marker IS the shortcut - clicking it opens the fleet-save panel scoped to that body, without
+    // having to travel there first. Only bodies that actually carry a preset get one, so every other
+    // row stays exactly as it was; the list is rebuilt on each call so dropping a preset removes its
+    // marker too. It hangs in the body's own .ogl_buildIconList, which already sits inside the row,
+    // rather than in the shared side strip: a planet and its moon share that strip, so a marker there
+    // could not say which of the two it belonged to.
+    updatePlanetFleetSaveIcons()
+    {
+        Object.values(this.planet || {}).forEach(bodyDom =>
+        {
+            const host = bodyDom?._ogl?.queue;
+            if(!host) return;
+
+            host.querySelector('.ogl_fsMarker')?.remove();
+            if(!this.ogl.db.myPlanets?.[bodyDom._ogl.id]?.fsData) return;
+
+            Util.addDom('div', { class:'material-icons ogl_fsMarker tooltip', title:'Own night fleet-save preset - click to edit', child:'bedtime', parent:host, onclick:event =>
+            {
+                // the row is a link to that body; opening a panel must not navigate
+                event.preventDefault();
+                event.stopPropagation();
+                Util.runAsync(() => this.ogl._ui.openFleetSaveConfig(bodyDom._ogl.id)).then(dom => this.ogl._popup.open(dom));
             }});
         });
     }
@@ -2637,6 +2706,7 @@ class LangManager extends Manager
             colorblindMode:"Colorblind mode",
             fleetQuickCollect:"Quick collect this planet resources",
             sidePanelOnLeft:"Side panel on left",
+            legacyMenu:"Legacy menu (icon grid above the planet list)",
             galaxyReload:"Reload galaxy",
             spyTableMSU:"Use MSU in the spy table",
         };
@@ -2757,6 +2827,7 @@ class LangManager extends Manager
             colorblindMode:"Mode daltonien",
             fleetQuickCollect:"Collecte rapide des ressources de cette planète",
             sidePanelOnLeft:"Panneau latéral à gauche",
+            legacyMenu:"Menu legacy (grille d'icônes au-dessus des planètes)",
             galaxyReload:"Recharger la galaxie",
             spyTableMSU:"Utiliser le MSU dans le tableau d'espio",
         };
@@ -5195,7 +5266,19 @@ class TopbarManager extends Manager
         this.ogl.db.lastAccountView = this.ogl.db.lastAccountView || 'summary';
         // v13 compat: #planetList may be renamed
         const _plistEl = document.querySelector('#planetList') || document.querySelector('[id*="planetList"]') || document.querySelector('.planet-list');
-        this.topbar = Util.addDom('div', {class:'ogl_topbar', prepend:_plistEl});
+
+        // PrOGect: optional legacy placement. The old OGLight did not have this strip - it put its
+        // controls as a compact icon grid inside the game's "Colonies x/y" box above the planet list.
+        // With options.legacyMenu on we render the SAME buttons into that box as a grid instead of the
+        // strip, so the layout is the old one without inventing controls we do not have.
+        // Deliberately NOT copied from the legacy script: it blanked the game's own colony counter with
+        // `#countColonies { color:transparent }` and `#countColonies p { display:none }` to make room.
+        // Hiding game text is not something we do (AGENTS.md §1.7), so the counter stays visible and the
+        // grid sits under it; the box grows instead.
+        const _legacyHost = this.ogl.db.options.legacyMenu ? this.ogl._dom.countColonies : null;
+        this.topbar = _legacyHost
+            ? Util.addDom('div', { class:'ogl_topbar ogl_legacyMenu', parent:_legacyHost })
+            : Util.addDom('div', { class:'ogl_topbar', prepend:_plistEl });
 
         Util.addDom('i', {class:'material-icons tooltip ogl_tbHarvest', child:'conversion_path', title:this.ogl._lang.find('collectResources'),parent:this.topbar, onclick:e =>
         {
@@ -5585,7 +5668,7 @@ class TopbarManager extends Manager
         [
             'defaultShip', 'defaultMission', 'profileButton', 'fleetSaveConfig', 'cargoFallback',
             'resourceTreshold', 'msu', 'sim', 'converter', 'useClientTime', 'keyboardActions',
-            'showMenuResources', /*'tooltipDelay',*/ 'shortcutsOnRight', 'sidePanelOnLeft', 'disablePlanetTooltips', 'reduceLargeImages', 'colorblindMode', 'displayPlanetTimers', 'importExportItem',
+            'showMenuResources', /*'tooltipDelay',*/ 'shortcutsOnRight', 'sidePanelOnLeft', 'legacyMenu', 'disablePlanetTooltips', 'reduceLargeImages', 'colorblindMode', 'displayPlanetTimers', 'importExportItem',
             'expeditionValue', 'expeditionHoldTime', 'expeditionRandomSystem', 'expeditionRedirect', 'expeditionBigShips',
             'expeditionShipRatio', 'ignoreExpeShipsLoss', 'ignoreConsumption',
             'displaySpyTable', 'autoCleanReports', 'autoCleanCounterSpies', 'boardTab', 'spyTableMSU', 'spyTableRules',
@@ -5801,6 +5884,13 @@ class TopbarManager extends Manager
                         localStorage.setItem('syl_sidepanelleft', this.ogl.db.options[opt]);
                         document.body.setAttribute('data-sidepanel', this.ogl.db.options[opt]);
                     }
+                    else if(opt == 'legacyMenu')
+                    {
+                        // the strip and the grid are the same buttons in a different host, so rebuild
+                        // the bar in place rather than making the player reload to see the change
+                        document.querySelector('.ogl_topbar')?.remove();
+                        this.ogl._topbar.load(true);
+                    }
                     else if(opt == 'spyTableMSU')
                     {
                         this.ogl._message.loadSpyTable();
@@ -5989,12 +6079,44 @@ class TopbarManager extends Manager
     // PrOGect: dedicated config popup for the Fleet Save (night fleet) preset — destination,
     // mission, speed, resources to leave. Mirrors the OGame-One "Fleet Save" panel. Values persist
     // in db.options and are consumed by _fleet.fleetSave() (manual send; the player confirms).
-    openFleetSaveConfig()
+    // `forBodyId` lets the planet-list shortcut open the preset of the body it sits on; called without
+    // it (topbar, settings) the panel edits the body you are currently standing on.
+    openFleetSaveConfig(forBodyId)
     {
-        const opt = this.ogl.db.options;
+        // Which preset this panel edits: the global one, or one body's own. A body's preset fully
+        // replaces the global for that body (Util.fsFor), so the panel edits exactly one of the two at
+        // a time rather than showing a confusing half-inherited mix.
+        const bodyId = forBodyId || this.ogl.currentPlanet?.obj?.id;
+        const body = this.ogl.db.myPlanets?.[bodyId] || this.ogl.currentPlanet?.obj || {};
+        const fsKeys = ['fsGalaxy', 'fsSystem', 'fsPosition', 'fsMission', 'fsSpeed', 'fsLeaveMetal', 'fsLeaveCrystal', 'fsLeaveDeut'];
+        const own = () => bodyId ? this.ogl.db.myPlanets?.[bodyId]?.fsData : null;
+        const opt = own() || this.ogl.db.options;
+
         const container = Util.addDom('div', { class:'ogl_config', child:'<h2>Fleet save<i class="material-icons">bedtime</i></h2>' });
 
-        Util.addDom('div', { parent:container, class:'ogl_fsHint', child:'Instant send, the fleet travels overnight. Destination: leave blank to use the current planet\'s coords (set a different system/position from the departure planet).' });
+        if(bodyId)
+        {
+            const isOwn = Boolean(own());
+            const scope = Util.addDom('div', { parent:container, class:`ogl_fsScope${isOwn ? ' ogl_active' : ''}` });
+            Util.addDom('span', { parent:scope, class:'ogl_fsScopeLabel', child:isOwn ? `Editing this body only — <b>${body.coords || ''}</b>` : 'Editing the global preset, used by every body without its own' });
+            Util.addDom('div', { parent:scope, class:'ogl_button tooltip', title:isOwn ? 'Drop this body\'s preset and follow the global one again' : 'Give this body its own preset, starting from the global values', child:`<i class="material-icons">${isOwn ? 'link_off' : 'link'}</i>`, onclick:() =>
+            {
+                if(isOwn) delete this.ogl.db.myPlanets[bodyId].fsData;
+                else
+                {
+                    // seed from the global so nothing jumps the moment it is switched on
+                    const seed = {};
+                    fsKeys.forEach(key => seed[key] = this.ogl.db.options[key]);
+                    this.ogl.db.myPlanets[bodyId] = this.ogl.db.myPlanets[bodyId] || {};
+                    this.ogl.db.myPlanets[bodyId].fsData = seed;
+                }
+
+                this.ogl._dom.updatePlanetFleetSaveIcons?.();
+                Util.runAsync(() => this.openFleetSaveConfig(bodyId)).then(e => this.ogl._popup.open(e));
+            }});
+        }
+
+        Util.addDom('div', { parent:container, class:'ogl_fsHint', child:'Instant send, the fleet travels overnight. Destination: leave blank to use the departure body\'s own coords (set a different system/position from it).' });
 
         const numRow = (key, labelText, ph) =>
         {
@@ -7702,7 +7824,10 @@ class FleetManager extends Manager
     {
         if(fleetDispatcher.currentPage != 'fleet1') return;
 
-        const opt = this.ogl.db.options;
+        // the body's own preset when it has one, the global preset otherwise (Util.fsFor). Every fs*
+        // value below - destination, mission, speed and the three "leave" amounts - comes from this
+        // one object, so a body cannot end up with its own coordinates but the global's reserves.
+        const opt = Util.fsFor(this.ogl.db, this.ogl.currentPlanet?.obj?.id);
         const cur = fleetDispatcher.currentPlanet;
 
         fleetDispatcher.resetShips();
@@ -14805,6 +14930,21 @@ class Util
     {
         const own = bodyId ? db?.fleetLimiter?.byBody?.[bodyId] : null;
         return own || db?.fleetLimiter?.[isMoon ? 'moonData' : 'data'] || {};
+    }
+
+    // The same idea as limiterFor, for the night fleet-save preset. A body may carry its own preset in
+    // myPlanets[id].fsData (the shape OGLight 5.4.2 uses), which REPLACES the global one held in
+    // db.options rather than merging with it - so a blank coordinate on an override means "use this
+    // body's own coordinate", exactly as a blank does globally, instead of silently inheriting the
+    // global's value. Both sources use the same fs* key names, so the caller reads one flat shape and
+    // never needs to know which of the two answered.
+    static fsFor(db, bodyId)
+    {
+        const keys = ['fsGalaxy', 'fsSystem', 'fsPosition', 'fsMission', 'fsSpeed', 'fsLeaveMetal', 'fsLeaveCrystal', 'fsLeaveDeut'];
+        const from = (bodyId ? db?.myPlanets?.[bodyId]?.fsData : null) || db?.options || {};
+        const out = {};
+        keys.forEach(key => out[key] = from[key]);
+        return out;
     }
 
     static formatToUnits(value, forced, colored)
