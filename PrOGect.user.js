@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.4.1-v13
+// @version         0.4.2-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.4.1-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.4.2-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -374,15 +374,21 @@ GM_addStyle(`
 .ogl_fsScope .ogl_button { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:28px; height:24px; background:var(--syl-bg); border:1px solid var(--syl-border); border-radius:var(--syl-radius); color:var(--syl-muted); cursor:pointer; transition:border-color .15s ease-out, color .15s ease-out; }
 .ogl_fsScope .ogl_button:hover { border-color:var(--syl-accent); color:var(--syl-accent); }
 .ogl_fsScope .ogl_button i { font-size:15px; }
-/* PrOGect: settings rendered in the side panel, OGLight's original surface (options.legacySettings).
-   The drawer is ~385px wide, so the three-column layout the centered popup uses has to collapse to a
-   single column, and the inline detail body takes the drawer's own scroll instead of a slice of the
-   viewport height it no longer has. */
-.ogl_side .ogl_settingsGrid { columns:1 !important; column-gap:0 !important; }
-.ogl_side .ogl_config { line-height:22px; }
-.ogl_side .ogl_config > h2 { font-size:15px; }
-.ogl_side .ogl_settingsDetailBody { max-height:none !important; padding-right:0; }
-.ogl_side .ogl_settingsFooter { margin-top:10px; }
+/* PrOGect: legacy settings (options.legacySettings). The drawer is a vertical INDEX - one row per
+   setting group - and the controls themselves open as a centered popup. This is deliberately not the
+   wide panel squeezed into 385px: it is a different shape, which is the whole point of the mode. */
+.ogl_legacyNav { display:flex; flex-direction:column; gap:2px; }
+.ogl_legacyNav > h2 { display:flex; align-items:center; justify-content:center; gap:6px; margin:2px 0 14px; padding-bottom:10px; border-bottom:1px solid var(--syl-border); color:var(--syl-ink); font-size:15px; font-weight:700; }
+.ogl_legacyNavItem { display:flex !important; align-items:center; justify-content:space-between; gap:10px; box-sizing:border-box; width:100%; padding:10px 12px; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:8px; color:var(--syl-ink); font-size:13px; font-weight:600; text-align:left; cursor:pointer; transition:border-color .12s ease-out, background .12s ease-out; }
+.ogl_legacyNavItem:hover { border-color:var(--syl-accent); background:var(--syl-accent-weak); }
+.ogl_legacyNavItem > span { min-width:0; overflow-wrap:anywhere; text-transform:capitalize; }
+.ogl_legacyNavItem i { flex:0 0 auto; color:var(--syl-accent); font-size:18px; }
+/* the group popup gets the middle of the screen, so it keeps the normal two-column comfort */
+.ogl_legacyGroup { min-width:min(460px, 80vw); max-height:70vh; overflow-y:auto; }
+.ogl_legacyGroup > h2, .ogl_legacyDetail > h2 { display:flex; align-items:center; justify-content:center; gap:6px; margin:2px 0 14px; padding-bottom:10px; border-bottom:1px solid var(--syl-border); color:var(--syl-ink); font-size:15px; font-weight:700; text-transform:capitalize; }
+.ogl_legacyGroup [data-container] { display:block !important; }
+.ogl_legacyDetail { min-width:min(460px, 80vw); }
+.ogl_side .ogl_settingsFooter { margin-top:14px; }
 .ogl_limiterSettings .ogl_limiterRowLabel { display:flex; align-items:center; justify-content:center; }
 .ogl_limiterSettings .ogl_limiterRowLabel .ogl_icon { width:24px; height:24px; }
 .ogl_limiterSettings .ogl_limiterGrid .ogl_inputField { box-sizing:border-box; width:100% !important; text-align:right; padding:6px 9px !important; background:var(--syl-bg) !important; border:1px solid var(--syl-border) !important; border-radius:var(--syl-radius); color:var(--syl-ink) !important; font-size:12px; outline:none; }
@@ -5317,6 +5323,11 @@ class TopbarManager extends Manager
             if(!isNaN(this.ogl.db.currentSide)) this.openPinnedDetail(this.ogl.db.currentSide);
             else if(this.ogl.db.currentSide == 'pinned') this.openPinned();
             else if(this.ogl.db.currentSide == 'tagged') this.openTagged();
+            // the legacy surface stores 'settings' like any other side view, so it has to be restored
+            // too: without this the drawer reopened on refresh (currentSide is truthy) but stayed empty,
+            // since nothing knew how to redraw it. Guarded on the option because with the popup surface
+            // currentSide is never 'settings', and restoring it would pop the settings open every load.
+            else if(this.ogl.db.currentSide == 'settings' && this.ogl.db.options.legacySettings) this.openSettings();
         }
 
         Util.addDom('button', { class:'ogl_button', child:this.ogl._lang.find('siblingPlanetMoon'), parent:this.topbar, onclick:() =>
@@ -5647,6 +5658,19 @@ class TopbarManager extends Manager
         const openDetail = (node, title) =>
         {
             if(!node) return;
+
+            // Legacy surface: the drawer holds the index, so a sub-config has nowhere to unfold inside
+            // it - it opens as a centered popup instead, which is also where these panels read best.
+            if(_legacySide)
+            {
+                const detailPopup = Util.addDom('div', { class:'ogl_config ogl_legacyDetail' });
+                if(title) Util.addDom('h2', { parent:detailPopup, child:title });
+                detailPopup.appendChild(node);
+                this.ogl._popup.open(detailPopup);
+                detailPopup.querySelectorAll('.ogl_inputCheck').forEach(e => Util.formatInput(e));
+                return;
+            }
+
             detail.innerText = '';
             Util.addDom('button', { class:'ogl_settingsBack ogl_button', parent:detail, child:'<i class="material-icons">arrow_back</i>', onclick:() => container.classList.remove('ogl_showDetail') });
             const body = Util.addDom('div', { class:'ogl_settingsDetailBody', parent:detail });
@@ -6065,10 +6089,33 @@ class TopbarManager extends Manager
 
         if(_legacySide)
         {
-            // the original OGLight surface: the settings live in the right-hand drawer, which brings
-            // its own close button, its own toggle-when-already-open behaviour and formats the numeric
-            // fields itself - so none of the popup bookkeeping below applies here.
-            this.ogl._ui.openSide(container, 'settings', buttonSource);
+            // The original OGLight surface, and it is a different SHAPE, not the same panel narrowed:
+            // the drawer carries a vertical index of the setting groups, and a group's controls open
+            // as a centered popup. Dropping the wide three-column layout into a 385px drawer would just
+            // squash it - the point of this mode is one column of headings you scan top to bottom, with
+            // the actual options given the middle of the screen where they have room to breathe.
+            const nav = Util.addDom('div', { class:'ogl_legacyNav', child:'<h2>Settings<i class="material-icons">settings</i></h2>' });
+
+            [...grid.children].forEach(section =>
+            {
+                const heading = section.querySelector('h3');
+                const label = (heading?.textContent || '').trim() || 'Options';
+                // the heading is the drawer entry now, so it does not repeat inside the popup
+                heading?.remove();
+
+                Util.addDom('div', { class:'ogl_legacyNavItem ogl_button', parent:nav, child:`<span>${label}</span><i class="material-icons">chevron_right</i>`, onclick:() =>
+                {
+                    const groupPopup = Util.addDom('div', { class:'ogl_config ogl_legacyGroup', child:`<h2>${label}<i class="material-icons">settings</i></h2>` });
+                    // the live section is moved in, not cloned, so every control keeps the listeners
+                    // and the state it was built with; reopening moves the same node back again
+                    groupPopup.appendChild(section);
+                    this.ogl._popup.open(groupPopup);
+                    groupPopup.querySelectorAll('.ogl_inputCheck').forEach(e => Util.formatInput(e));
+                }});
+            });
+
+            nav.appendChild(settingsFooter);
+            this.ogl._ui.openSide(nav, 'settings', buttonSource);
             return;
         }
 
