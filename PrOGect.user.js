@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.4.3-v13
+// @version         0.4.4-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.4.3-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.4.4-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -359,10 +359,13 @@ GM_addStyle(`
 .ogl_limiterSettings .ogl_limiterGrid[data-cols="4"] .ogl_limiterTitle { font-size:11px; text-transform:none; }
 /* the body column's switch: lit while that body runs its own limiter */
 .ogl_limiterSettings .ogl_bodyToggle.ogl_active { border-color:var(--syl-accent); background:var(--syl-accent-weak); color:var(--syl-accent); }
-/* PrOGect: the limiter shortcut sitting in the fleet bar next to OGame's own resource buttons.
-   Sized to sit on the same line without changing anything around it. */
-.ogl_limiterShortcut { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; width:34px; height:30px; margin-left:5px; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:var(--syl-radius); color:var(--syl-muted); font-size:18px !important; line-height:1 !important; cursor:pointer; transition:border-color .15s ease-out, color .15s ease-out, background .15s ease-out; }
-.ogl_limiterShortcut:hover { border-color:var(--syl-accent); background:var(--syl-raised); color:var(--syl-accent); }
+/* PrOGect: limiter shortcut in the fleet page's .secondcol, built like the neighbouring tool buttons
+   so it inherits the game's button chrome. Only the glyph is ours: an inline SVG sized to match the
+   Material icons beside it and stroked in white, with the stroke following currentColor so the hover
+   state tracks the others. */
+.ogl_limiterShortcut { display:flex !important; align-items:center; justify-content:center; cursor:pointer; color:#fff; }
+.ogl_limiterShortcut svg { width:20px; height:20px; display:block; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+.ogl_limiterShortcut:hover { color:var(--syl-accent); }
 /* PrOGect: marker + shortcut for a body running its own night fleet-save preset. It lives in the
    body's own build-icon list, which is pointer-events:none, so the click target is re-enabled here. */
 .ogl_fsMarker { pointer-events:auto !important; cursor:pointer; color:var(--syl-accent); font-size:12px !important; line-height:12px !important; opacity:.85; transition:opacity .15s ease-out, transform .15s ease-out; }
@@ -2313,20 +2316,6 @@ class DomManager extends Manager
                 this.ogl._fleet.reverseResources(resourceIcon);
             }});
         });
-
-        // PrOGect: reach the limiter straight from the fleet bar. It is the setting you retune most
-        // while dispatching, and until now the only way in was the settings popup or clicking a "-X"
-        // badge that is only there when the limiter already holds something. Placed right after the
-        // game's own "all resources" / "none" buttons.
-        // Purely additive: nothing belonging to the game is moved, resized, hidden or restyled
-        // (AGENTS.md §1.7), and the button opens our own panel - it triggers no game action at all.
-        if(this.resetAll && !document.querySelector('.ogl_limiterShortcut'))
-        {
-            Util.addDom('div', { class:'ogl_limiterShortcut ogl_button tooltip material-icons', title:'Limiters', child:'tune', after:this.resetAll, onclick:() =>
-            {
-                Util.runAsync(() => this.ogl._ui.openFleetProfile()).then(e => this.ogl._popup.open(e));
-            }});
-        }
     }
 
     // PrOGect: a body running its own night fleet-save preset shows a marker in the planet list, and
@@ -5911,9 +5900,23 @@ class TopbarManager extends Manager
                     }
                     else if(opt == 'legacySettings')
                     {
-                        // re-render the settings in the surface just chosen, so the switch shows its
-                        // own effect immediately instead of only on the next open
+                        // The two surfaces are mutually exclusive, so hand the settings over cleanly:
+                        // whichever one we are leaving has to be dismissed first. The drawer especially -
+                        // it keeps currentSide = 'settings' and stays open, so switching back to the
+                        // popup left an empty column standing there next to it.
                         this.ogl._popup.close();
+
+                        const _side = document.querySelector('.ogl_side');
+                        if(_side && this.ogl.db.currentSide == 'settings')
+                        {
+                            _side.classList.remove('ogl_active');
+                            delete this.ogl.db.currentSide;
+                            this.ogl._shortcut.load();
+                            this.ogl._shortcut.updateShortcutsPosition();
+                        }
+
+                        // then re-render in the surface just chosen, so the switch shows its own effect
+                        // straight away instead of only on the next open
                         Util.runAsync(() => this.openSettings()).then(() => {});
                     }
                     else if(opt == 'spyTableMSU')
@@ -7288,6 +7291,30 @@ class FleetManager extends Manager
             Util.addDom('div', { title:this.ogl._lang.find('fleetQuickCollect'), child:'local_shipping', class:'material-icons tooltip ogl_quickCollectBtn', parent:this.ogl._dom.secondCol, onclick:() =>
             {
                 this.ogl._dom.requiredShips.querySelector(`.ogl_${this.ogl.db.options.defaultShip}`)?.click();
+            }});
+
+            // PrOGect: the limiter is the setting most often retuned while dispatching, and the only
+            // ways in were the settings panel or a "-X" badge that only exists once the limiter already
+            // holds something. This button sits with the other tool buttons in .secondcol and is built
+            // exactly like them, so it inherits the game's button chrome instead of inventing its own.
+            // The glyph is inline SVG rather than an icon-font ligature: it is a stopwatch with a rules
+            // bubble, which no single Material icon says. It strokes with currentColor so it takes the
+            // button's colour like every neighbour.
+            // Purely additive - nothing of the game's is moved, resized, hidden or restyled
+            // (AGENTS.md §1.7) - and it opens our own panel, triggering no game action.
+            // Label: reuse the existing translated 'profileButton' string ("Limiters settings"). _lang
+            // .find returns the literal 'TEXT_NOT_FOUND' for an unknown key, not a falsy value, so an
+            // invented key with a `|| fallback` would have shown that string instead of the fallback.
+            Util.addDom('div', { title:this.ogl._lang.find('profileButton'), class:'tooltip ogl_limiterShortcut', child:`
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M2.4 3.4h7.3c.6 0 1 .4 1 1v3.4c0 .6-.4 1-1 1H7.3l-1.5 2-1-2H2.4c-.6 0-1-.4-1-1V4.4c0-.6.4-1 1-1z"/>
+                    <path d="M3.7 5.4h.1M5.4 5.4h3.3M3.7 7.2h.1M5.4 7.2h3.3"/>
+                    <circle cx="14.8" cy="15" r="6.9"/>
+                    <path d="M12.6 2.4h4.4M14.8 2.4v2.3M19.9 8.3l1.5-1.5M14.8 8.1v1.1M14.8 20.9V22M21.7 15h-1.1M9 15H7.9"/>
+                    <path d="M17 11.6l-3.3 2.5-.5 2.2 2.2-.5z"/>
+                </svg>`, parent:this.ogl._dom.secondCol, onclick:() =>
+            {
+                Util.runAsync(() => this.ogl._ui.openFleetProfile()).then(e => this.ogl._popup.open(e));
             }});
 
             // todo
