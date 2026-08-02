@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.2.8-v13
+// @version         0.2.9-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.2.8-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.2.9-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -11421,6 +11421,55 @@ class MovementManager extends Manager
         if(!emptyData) this.ogl._time.updateMovements();
     }
 
+    // Attach the per-fleet notification button to a live event row, if that row exists yet and has
+    // not been decorated already. Split out of check() because on v13 the rows are not in the page
+    // when check() runs - see the note there.
+    decorateEventRow(id)
+    {
+        const data = this.pendingEventNotif?.[id];
+        if(!data) return;
+
+        const parent = document.querySelector(`[id="eventRow-${id}"]`);
+        if(!parent || parent.querySelector('.ogl_clockNotif')) return;
+
+        const notifIcon = Util.addDom('div', { parent:parent, class:this.ogl.db.browserNotificationList[data.fleetID] ? 'ogl_clockNotif ogl_button ogl_active': 'ogl_clockNotif ogl_button', onclick:e =>
+        {
+            const browserNotification = {};
+            browserNotification.id = data.fleetID;
+            browserNotification.arrivalTime = data.arrival;
+            browserNotification.message = `[${data.coords}] ${data.isMoon ? 'moon' : 'planet'} : Your fleet is ready`;
+
+            this.ogl._notification.addNotification(browserNotification, e.target);
+        }});
+
+        if(this.ogl.db.browserNotificationList[data.fleetID] && Math.abs(this.ogl.db.browserNotificationList[data.fleetID].arrivalTime - data.arrival) > 5000)
+        {
+            notifIcon.classList.add('ogl_altered');
+        }
+
+        // the row carries a freshly rendered arrival time; bring it onto the configured clock
+        this.ogl._time.update();
+    }
+
+    // Watch the event box for the rows OGame renders when the player opens the event list, and
+    // decorate them as they appear. This observes the DOM only - no timer, no polling loop and no
+    // request of any kind, so it does not touch AGENTS.md §1.3 or §4: nothing here reaches the
+    // server, it only reacts to markup the player's own click caused the game to render.
+    watchEventBox()
+    {
+        if(this._eventBoxObserver) return;
+
+        const box = document.querySelector('#eventboxContent');
+        if(!box) return;
+
+        this._eventBoxObserver = new MutationObserver(() =>
+        {
+            Object.keys(this.pendingEventNotif || {}).forEach(id => this.decorateEventRow(id));
+        });
+
+        this._eventBoxObserver.observe(box, { childList:true, subtree:true });
+    }
+
     check(xml)
     {
         let movements = {};
@@ -11468,27 +11517,19 @@ class MovementManager extends Manager
             const fleetID = `fleetEvent-${movement.id}`;
             const timeObj = this.ogl._time.getObj(movement.arrivalTime, 'client');
             const arrival = timeObj.server;
-            const parent = document.querySelector(`#eventRow-${movement.id}`);
 
-            if(parent)
-            {
-                this.ogl._time.update(parent.querySelector('arrivalTime'));
-
-                const notifIcon = Util.addDom('div', { parent:parent, class:this.ogl.db.browserNotificationList[fleetID] ? 'ogl_clockNotif ogl_button ogl_active': 'ogl_clockNotif ogl_button', onclick:e =>
-                {
-                    const browserNotification = {};
-                    browserNotification.id = fleetID;
-                    browserNotification.arrivalTime = arrival;
-                    browserNotification.message = `[${movement.to.coords}] ${movement.to.isMoon ? 'moon' : 'planet'} : Your fleet is ready`;
-
-                    this.ogl._notification.addNotification(browserNotification, e.target);
-                }});
-
-                if(this.ogl.db.browserNotificationList[fleetID] && Math.abs(this.ogl.db.browserNotificationList[fleetID].arrivalTime - arrival) > 5000)
-                {
-                    notifIcon.classList.add('ogl_altered');
-                }
-            }
+            // The per-fleet notification button used to be attached here, guarded by
+            // document.querySelector(`#eventRow-${id}`). On v13 that lookup always misses: as load()
+            // already notes, #eventboxContent is empty at this point because v13 does not pre-render
+            // the rows the way v12 did - OGame fills the box later, when the player opens the event
+            // list. The guard then skipped the whole block silently and the buttons simply vanished.
+            // So keep the data and let decorateEventRow() attach the button whenever its row shows up.
+            // Behaviour is unchanged: still one button per fleet, still armed only by an explicit
+            // click from the player, never registered automatically (AGENTS.md §1.4).
+            this.pendingEventNotif = this.pendingEventNotif || {};
+            this.pendingEventNotif[movement.id] = { fleetID:fleetID, arrival:arrival, coords:movement.to.coords, isMoon:movement.to.isMoon };
+            this.decorateEventRow(movement.id);
+            this.watchEventBox();
             
             if(ignored.indexOf(movement.id) > -1) return;
 
