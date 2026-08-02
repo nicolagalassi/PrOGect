@@ -2,6 +2,20 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.2.8-v13
+
+### Fixed
+
+- **Event list: the countdown stayed green instead of taking its mission's colour.** 0.2.7 hooked the
+  colour onto `.countDown`, mirroring how the base stylesheet colours `.detailsFleet`. In game that
+  selector matched nothing — v13 paints the countdown cell through some other name — so the rule
+  silently did nothing while looking correct in review. Each rule now carries a positional hook beside
+  the class one: the row's first cell is the countdown at every width, and a trailing `*` reaches a
+  nested element carrying its own colour, so the mapping holds whether the colour sits on the cell or
+  inside it. Checked against four shapes (v12 class, renamed cell, renamed cell with a coloured inner
+  span, v12 class with inner span) with the game's own green applied on top; all four resolve to the
+  mission colour.
+
 ## 0.2.7-v13
 
 ### Fixed
