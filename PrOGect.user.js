@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.5.1-v13
+// @version         0.5.2-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.5.1-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.5.2-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -7182,15 +7182,39 @@ class FleetManager extends Manager
         });
     }
     
+    // Sending to the body you are already standing on is a no-op, so the destination is flipped to its
+    // sibling: planet to moon, moon to planet. A planet always exists, a moon does not - and the flip
+    // never checked. On a planet with no moon it pointed the fleet at a body that is not there, which
+    // the server resolves to nothing: distance NaN, no missions on offer, and the game answering "no
+    // mission selected" while the form still looked correctly filled in. That is the intermittent
+    // failure reported for expeditions and resource collection, and a probe caught it 35 times with the
+    // same signature every time: we asked for type 1, the response came back type 3, coordinates
+    // identical, 1-3 ms apart - our own request, not a stale one.
     switchSelfTargetType()
     {
-        if(JSON.stringify(fleetDispatcher.realTarget) == JSON.stringify(fleetDispatcher.currentPlanet))
-        {
-            if(this.ogl.db.options.defaultMission != 1 || (fleetDispatcher.cargoMetal + fleetDispatcher.cargoCrystal + fleetDispatcher.cargoDeuterium > 0) || this.ogl.mode === 2 || this.ogl.mode === 3)
-            {
-                this.setRealTarget(fleetDispatcher.realTarget, { type:fleetDispatcher.realTarget.type == 1 ? 3 : 1 });
-            }
-        }
+        if(JSON.stringify(fleetDispatcher.realTarget) != JSON.stringify(fleetDispatcher.currentPlanet)) return;
+        if(!(this.ogl.db.options.defaultMission != 1 || (fleetDispatcher.cargoMetal + fleetDispatcher.cargoCrystal + fleetDispatcher.cargoDeuterium > 0) || this.ogl.mode === 2 || this.ogl.mode === 3)) return;
+
+        const toMoon = fleetDispatcher.realTarget.type == 1;
+
+        if(toMoon && !this.currentBodyHasMoon()) return;   // nothing to flip to
+
+        this.setRealTarget(fleetDispatcher.realTarget, { type:toMoon ? 3 : 1 });
+    }
+
+    // Does the body we are standing on have a moon? The planet list is asked first because it is what
+    // the game just rendered: a colony founded this session is in the list before it reaches our stored
+    // copy, so trusting the store alone would answer "no moon" for a body whose moon is on screen, and
+    // "moon" for one that was lost. The store is only the fallback for when the row cannot be found.
+    currentBodyHasMoon()
+    {
+        const activeRow = document.querySelector('#planetList .smallplanet:has(.planetlink.active), #planetList .smallplanet:has(.moonlink.active)')
+            || document.querySelector('.smallplanet:has(a.active)');
+
+        if(activeRow) return Boolean(activeRow.querySelector('.moonlink') || activeRow.querySelector('a[href*="cp="][class*="moon"]'));
+
+        const obj = this.ogl.currentPlanet?.obj;
+        return Boolean(obj?.type == 'moon' ? obj?.relatedID : obj?.moonID);
     }
 
     init()
@@ -7419,6 +7443,7 @@ class FleetManager extends Manager
         fleetDispatcher.targetPlanet.system = fleetDispatcher.realTarget.system;
         fleetDispatcher.targetPlanet.position = fleetDispatcher.realTarget.position;
         fleetDispatcher.targetPlanet.type = fleetDispatcher.realTarget.type;
+
 
         // update the flag icon
         document.querySelectorAll('.smallplanet').forEach(planet =>
