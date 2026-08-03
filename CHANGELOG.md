@@ -2,6 +2,36 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.5.3-v13
+
+### Fixed
+
+- **The check response could change the destination's body type behind the coordinates.** The response
+  is adopted wholesale, type included. A probe measured 35 cases where we ask for the planet (type 1)
+  and the answer names the moon (type 3) at identical coordinates, 1–3 ms later — our own request, not a
+  stale one. Because a planet and its moon share coordinates, adopting that moves the destination to the
+  other body with nothing on screen changing. When the answer names the same coordinates and disagrees
+  only about the type, the requested type now wins. Forcing a *moon* is deliberately not done: a moon
+  can be absent, and there the server's correction is the right one.
+
+### Corrected
+
+- **0.5.2 attributed those 35 probe entries to the wrong cause.** It shipped a guard against flipping
+  the destination onto a non-existent moon and presented it as the cause. It is not: `setRealTarget`
+  applies the forced type *before* the probe records its intent, so a flip to the moon logs intent
+  type 3 — while all 35 entries logged intent type 1. The flip produced none of them. The guard is kept
+  as a defensive change, correctly labelled in the source now, and the real handling is in the response
+  handler above.
+
+### Still open
+
+- **The reported expedition failure is NOT fixed by this release**, and the fix above cannot address it.
+  That fault is a *coordinate* divergence — the form reading 4:264:8 while the target reads [4:105:16],
+  distance `NaN`, "no mission selected" — and this guard only acts when the coordinates match and only
+  the type differs. It is reported as v13-only, which points at how the coordinate inputs are written or
+  how v13 handles the position-16 slot rather than at anything type-related. A probe for it is in the
+  local build only; no claim will be made about it until an actual expedition on v13 is measured.
+
 ## 0.5.2-v13
 
 ### Fixed
