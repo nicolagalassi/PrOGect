@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.5.2-v13
+// @version         0.5.3-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.5.2-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.5.3-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -6833,6 +6833,29 @@ class FleetManager extends Manager
             fleetDispatcher.setTargetPlayerRankIcon(data.targetPlayerRankIcon);
             fleetDispatcher.setPlayerIsOutlaw(data.playerIsOutlaw);
 
+            // The check response is adopted wholesale here, type included. A probe measured 35 cases
+            // where we ask for the planet (type 1) and the answer names the moon (type 3) with identical
+            // coordinates, 1-3 ms later - our own request, not a stale one arriving late. Since a planet
+            // and its moon share coordinates, adopting that moves the destination to the other body with
+            // nothing on screen changing. So when the answer names the same coordinates and disagrees
+            // only about the type, the type we asked for wins.
+            // Forcing a moon is deliberately NOT done: a moon can be absent, and there the server's
+            // correction is the right one. Every measured case was the other direction.
+            // SCOPE, because this was twice mislabelled: this guard fixes a TYPE divergence at equal
+            // coordinates. It cannot and does not address the reported expedition failure, where the
+            // coordinates themselves disagree - the form showing 4:264:8 while the target reads
+            // [4:105:16], with a NaN distance. Coordinates differing means the equality checks below are
+            // false and this code does nothing. That bug is still open and is v13-only.
+            if(this.requestedTarget
+                && this.requestedTarget.type != 3
+                && this.requestedTarget.galaxy == data.targetPlanet.galaxy
+                && this.requestedTarget.system == data.targetPlanet.system
+                && this.requestedTarget.position == data.targetPlanet.position
+                && this.requestedTarget.type != data.targetPlanet.type)
+            {
+                data.targetPlanet.type = this.requestedTarget.type;
+            }
+
             fleetDispatcher.targetPlanet.galaxy = data.targetPlanet.galaxy;
             fleetDispatcher.targetPlanet.system = data.targetPlanet.system;
             fleetDispatcher.targetPlanet.position = data.targetPlanet.position;
@@ -7184,12 +7207,12 @@ class FleetManager extends Manager
     
     // Sending to the body you are already standing on is a no-op, so the destination is flipped to its
     // sibling: planet to moon, moon to planet. A planet always exists, a moon does not - and the flip
-    // never checked. On a planet with no moon it pointed the fleet at a body that is not there, which
-    // the server resolves to nothing: distance NaN, no missions on offer, and the game answering "no
-    // mission selected" while the form still looked correctly filled in. That is the intermittent
-    // failure reported for expeditions and resource collection, and a probe caught it 35 times with the
-    // same signature every time: we asked for type 1, the response came back type 3, coordinates
-    // identical, 1-3 ms apart - our own request, not a stale one.
+    // never checked, so on a planet with no moon it aimed the fleet at a body that is not there.
+    // Defensive only: this was NOT the cause of the reported failed sends. It was first shipped as if it
+    // were, on a misreading of probe output - the probe records its intent AFTER this flip has already
+    // been applied, so a flip to the moon logs intent type 3, while every recorded case logged intent
+    // type 1. The flip therefore produced none of them. The real cause is handled in the response
+    // handler (see the note next to data.targetPlanet being adopted).
     switchSelfTargetType()
     {
         if(JSON.stringify(fleetDispatcher.realTarget) != JSON.stringify(fleetDispatcher.currentPlanet)) return;
@@ -7444,6 +7467,12 @@ class FleetManager extends Manager
         fleetDispatcher.targetPlanet.position = fleetDispatcher.realTarget.position;
         fleetDispatcher.targetPlanet.type = fleetDispatcher.realTarget.type;
 
+        // Remember the target we just asked for, so the check response cannot quietly change it. Only
+        // the four fields that identify a body - anything else the server sends about it is welcome.
+        this.requestedTarget = {
+            galaxy:fleetDispatcher.realTarget.galaxy, system:fleetDispatcher.realTarget.system,
+            position:fleetDispatcher.realTarget.position, type:fleetDispatcher.realTarget.type
+        };
 
         // update the flag icon
         document.querySelectorAll('.smallplanet').forEach(planet =>
