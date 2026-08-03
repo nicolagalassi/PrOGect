@@ -2,6 +2,32 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.5.2-v13
+
+### Fixed
+
+- **The root cause of the failed sends: the destination was flipped onto a moon that does not exist.**
+  Sending to the body you are already standing on is a no-op, so `switchSelfTargetType` flips the
+  destination to its sibling — planet to moon, moon to planet. A planet always exists; a moon does not,
+  and the flip never checked. On a planet with no moon it pointed the fleet at a body that is not there,
+  which the server resolves to nothing: distance `NaN`, no missions on offer, and the game answering
+  "no mission selected" while the form still looked correctly filled in.
+  The flip now only happens when there is something to flip to. Moon to planet is unaffected.
+  This is the same failure 0.5.1 addressed from the other end. That fix stands and is still worth
+  having — it stops an invalid mission being left set for any reason — but it treated the symptom;
+  this is the cause.
+
+### Notes
+
+- Diagnosed from data, not inference. A probe recorded 35 occurrences with an identical signature every
+  time: intent `type:1` (planet), response `type:3` (moon), coordinates the same, 1–3 ms apart — our own
+  request, so not a stale response as first suspected. Two earlier hypotheses (a race between responses,
+  URL parameters carried along the collect chain) were wrong and were dropped rather than "fixed".
+- The moon check asks the planet list before our stored copy, deliberately: a colony founded during the
+  session appears in the list before it reaches the store, so trusting the store alone would answer
+  "no moon" for a body whose moon is on screen — and "moon" for one that was lost. Verified across seven
+  cases including both of those staleness directions.
+
 ## 0.5.1-v13
 
 ### Fixed
