@@ -2,6 +2,56 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.6.1-v13
+
+### Fixed
+
+- **Fleets could not be sent to debris fields — a regression from 0.5.3.** That release added a guard so
+  the check response could not change the destination's body type behind unchanged coordinates. But it
+  only knew what *we* last asked for, not that the player had since picked a debris field through the
+  game's own controls: the live target had already moved to type 2 while our record still said 1, so the
+  guard read a deliberate choice as a disagreement and forced the target back to the planet — "it takes
+  the mission, then re-selects the planet and will not send".
+  The guard now also requires the live target to still equal what we asked for. If it does, nobody has
+  changed it since and the response is the one disagreeing; if it does not, something after us set it on
+  purpose and we keep our hands off. Verified across eight cases including debris and moon picked by the
+  player, both directions of our own request, differing coordinates and no request recorded.
+
+- **The fleet-save button in the bar did nothing.** `openFleetSaveConfig` lives on `TopbarManager`, not
+  `UIManager` — the same split that already caught `openSettings` once. Calling it through `_ui` threw,
+  `Util.runAsync` swallowed the error, and the button silently did nothing. All three call sites are
+  routed through the real owner now, which also fixes the planet-list marker and the held-resource badge.
+
+- **The game's submit button was squeezed.** Our four buttons each claimed a slot on the game's own row.
+  They now sit in one block of their own, two by two: 67px instead of 137px, so 70px go back to the
+  submit button. Only our footprint changed — the game's controls keep their place and size, and the
+  fleet-template selects were left alone.
+  Their button skin comes from `.secondcol>[class*=ogl_]`, a direct-child selector, so wrapping them made
+  the wrapper inherit the skin while the children lost it. The skin is taken off the wrapper and put back
+  on the children, measured at 32×26 each with the wrapper unstyled.
+
+### Changed
+
+- **Clean planet list refinements**, from the first look at it: 7px between rows instead of the framed
+  spacing, planet and moon images centred on the row and sized to sit inside it so they show whole
+  (38px and 26px), and the selection moved off the row. A filled rectangle around the whole row could
+  not say *which* of the two bodies it meant; the glow now sits on the selected body's own image, so
+  planet and moon are told apart at a glance.
+
+### Notes
+
+- **A backtick in one of my own comments silently deleted a third of the stylesheet**, for the third time
+  in this project. Quoting a CSS selector as `` `.secondcol>...` `` inside a `GM_addStyle` template ends
+  the literal, so every rule after it never reaches the browser — while `node --check` stays green.
+  Both the button block and the theme refinements above were dead on arrival, and the first round of
+  measurements "confirming" them was measuring CSS that did not exist.
+  The release guard has been strengthened: it previously only asked whether the blocks *close*, which
+  this case passed happily — an early backtick closes one block while the intended closer opens another,
+  so the count stays balanced. It now checks each block for balanced braces and that it ends on a closing
+  brace or comment. Verified by reintroducing the fault on purpose: the guard fails the release and names
+  the block.
+
+
 ## 0.6.0-v13
 
 ### Added

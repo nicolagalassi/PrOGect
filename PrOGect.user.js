@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.6.0-v13
+// @version         0.6.1-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.6.0-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.6.1-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -402,6 +402,16 @@ GM_addStyle(`
 .ogl_extraRow .value { text-align:right; white-space:nowrap; }
 .ogl_satNeed .value.ogl_satLink { cursor:pointer; text-decoration:underline dotted; }
 .ogl_satNeed .value.ogl_satLink:hover { color:var(--syl-accent); }
+/* PrOGect: our four fleet-page buttons in one block, two by two. Individually they each claimed a slot
+   on the game's own row and together they pushed its submit button into a corner; stacked they take half
+   the width. Only our own footprint changes - the game's controls keep their place and size.
+   The button skin comes from .secondcol>[class*=ogl_], a DIRECT-child selector, so wrapping them meant
+   the wrapper inherited the skin and its children lost it - they measured 32x26 as one button instead of
+   four. The skin is therefore taken off the wrapper and put back on its children verbatim, and the
+   wrapper is laid out as the grid. */
+.secondcol > .ogl_fleetTools { display:grid !important; grid-template-columns:repeat(2, auto); gap:3px; align-content:center; background:none !important; width:auto !important; height:auto !important; border-radius:0 !important; }
+.secondcol .ogl_fleetTools > * { color:#fff; cursor:pointer; background:linear-gradient(#424e5e 50%,#222f3c 50%); justify-content:center; align-items:center; display:inline-flex; text-align:center !important; text-shadow:1px 1px #000 !important; border-radius:3px !important; width:32px !important; height:26px !important; font-size:20px !important; line-height:26px !important; text-decoration:none !important; margin:0 !important; }
+.secondcol .ogl_fleetTools > *:hover { filter:brightness(1.2); }
 /* PrOGect: clean planet list (options.cleanPlanetList). An antigame-style reading of the list: no cards,
    no button chrome, no frames - just the planet and moon images with their text, on the page background.
    What it deliberately keeps is everything the tool adds: available resources, refresh timers, build and
@@ -424,6 +434,19 @@ body[data-cleanlist="true"] .smallplanet .planet-koords { filter:none !important
 /* our own figures stay, just without their plate */
 body[data-cleanlist="true"] .smallplanet .ogl_available:before { display:none !important; }
 body[data-cleanlist="true"] .smallplanet .ogl_refreshTimer { background:none !important; }
+/* --- refinements asked for after the first look at this theme --- */
+/* room to breathe: the rows were as tight as the framed version, where the frames did the separating */
+body[data-cleanlist="true"] #planetList { grid-gap:7px !important; padding:4px 0 !important; }
+body[data-cleanlist="true"] .smallplanet { height:44px !important; }
+/* the images were pinned to the top of a row shorter than they are, so they were cropped. Centred on
+   the row's middle and sized to fit inside it, they show whole. */
+body[data-cleanlist="true"] .smallplanet .planetPic { width:38px !important; height:38px !important; top:50% !important; left:3px !important; transform:translateY(-50%) !important; }
+body[data-cleanlist="true"] .smallplanet .icon-moon { width:26px !important; height:26px !important; top:50% !important; bottom:auto !important; transform:translateY(-50%) !important; }
+/* Selection: a filled rectangle around the whole row could not say WHICH of the two bodies it meant.
+   The glow goes on the selected body's own image instead, so planet and moon are told apart at a glance. */
+body[data-cleanlist="true"] .smallplanet:has(.planetlink.active), body[data-cleanlist="true"] .smallplanet:has(.moonlink.active) { box-shadow:none !important; background:transparent !important; }
+body[data-cleanlist="true"] .planetlink.active .planetPic, body[data-cleanlist="true"] .moonlink.active .icon-moon { box-shadow:0 0 0 2px var(--syl-accent), 0 0 12px 2px var(--syl-accent) !important; }
+body[data-cleanlist="true"] .planetlink.active .planet-name { color:var(--syl-accent) !important; }
 /* PrOGect: marker + shortcut for a body running its own night fleet-save preset. It lives in the
    body's own build-icon list, which is pointer-events:none, so the click target is re-enabled here. */
 .ogl_fsMarker { pointer-events:auto !important; cursor:pointer; color:var(--syl-accent); font-size:12px !important; line-height:12px !important; opacity:.85; transition:opacity .15s ease-out, transform .15s ease-out; }
@@ -2428,7 +2451,7 @@ class DomManager extends Manager
                 // the row is a link to that body; opening a panel must not navigate
                 event.preventDefault();
                 event.stopPropagation();
-                Util.runAsync(() => this.ogl._ui.openFleetSaveConfig(bodyDom._ogl.id)).then(dom => this.ogl._popup.open(dom));
+                Util.runAsync(() => this.ogl._topbar.openFleetSaveConfig(bodyDom._ogl.id)).then(dom => this.ogl._popup.open(dom));
             }});
         });
     }
@@ -6950,19 +6973,30 @@ class FleetManager extends Manager
             // and its moon share coordinates, adopting that moves the destination to the other body with
             // nothing on screen changing. So when the answer names the same coordinates and disagrees
             // only about the type, the type we asked for wins.
-            // Forcing a moon is deliberately NOT done: a moon can be absent, and there the server's
-            // correction is the right one. Every measured case was the other direction.
+            //
+            // The last condition is the one that matters, and its absence broke sending to debris fields.
+            // requestedTarget only records what WE last asked for; it knows nothing about the player then
+            // picking a debris field or a moon through the game's own controls. In that case the live
+            // targetPlanet.type has already moved on (2 for debris) while requestedTarget still says 1,
+            // so the guard read a legitimate choice as a disagreement and forced the target back to the
+            // planet - "it takes the mission, then re-selects the planet and will not send".
+            // Comparing against the live target tells the two apart: if it still equals what we asked
+            // for, nobody has changed it since and the response is the one disagreeing; if it does not,
+            // something after us set it deliberately and we must not touch it.
+            //
+            // Forcing a moon is deliberately NOT done either: a moon can be absent, and there the
+            // server's correction is the right one. Every measured case was the other direction.
             // SCOPE, because this was twice mislabelled: this guard fixes a TYPE divergence at equal
-            // coordinates. It cannot and does not address the reported expedition failure, where the
-            // coordinates themselves disagree - the form showing 4:264:8 while the target reads
-            // [4:105:16], with a NaN distance. Coordinates differing means the equality checks below are
-            // false and this code does nothing. That bug is still open and is v13-only.
+            // coordinates. It does not address the open v13 expedition failure, where the coordinates
+            // themselves disagree - the form reading 4:264:8 while the target reads [4:105:16] with a NaN
+            // distance. Coordinates differing means these equality checks are false and this does nothing.
             if(this.requestedTarget
                 && this.requestedTarget.type != 3
                 && this.requestedTarget.galaxy == data.targetPlanet.galaxy
                 && this.requestedTarget.system == data.targetPlanet.system
                 && this.requestedTarget.position == data.targetPlanet.position
-                && this.requestedTarget.type != data.targetPlanet.type)
+                && this.requestedTarget.type != data.targetPlanet.type
+                && String(fleetDispatcher.targetPlanet?.type) === String(this.requestedTarget.type))
             {
                 data.targetPlanet.type = this.requestedTarget.type;
             }
@@ -7445,6 +7479,13 @@ class FleetManager extends Manager
 
         if(this.ogl._dom.secondCol)
         {
+            // PrOGect: our own buttons live in a block of their own inside .secondcol, laid out two by
+            // two. Individually they each claimed a slot on the game's row and together they squeezed the
+            // game's submit button. All four are ours, so the footprint to shrink is ours - the game's
+            // controls are left exactly where they are (AGENTS.md 1.7).
+            const _tools = this.ogl._dom.secondCol.querySelector('.ogl_fleetTools')
+                || Util.addDom('div', { class:'ogl_fleetTools', parent:this.ogl._dom.secondCol });
+
             requestAnimationFrame(() =>
             {
                 // v13 compat: sendAll/resetAll may be null
@@ -7452,7 +7493,7 @@ class FleetManager extends Manager
                 if(this.ogl._dom.resetAll) { this.ogl._dom.resetAll.classList.add('material-icons'); this.ogl._dom.resetAll.innerText = 'exposure_zero'; }
             });
     
-            const sender = Util.addDom('div', { title:'loading...', child:'cube-send', class:'material-icons tooltipRight tooltipClose tooltipClick tooltipUpdate', parent:this.ogl._dom.secondCol, ontooltip:() =>
+            const sender = Util.addDom('div', { title:'loading...', child:'cube-send', class:'material-icons tooltipRight tooltipClose tooltipClick tooltipUpdate', parent:_tools, ontooltip:() =>
             {
                 const container = Util.addDom('div', { class:'ogl_resourcesPreselection' });
                 const resources = ['metal', 'crystal', 'deut', 'food'];
@@ -7517,7 +7558,7 @@ class FleetManager extends Manager
                 setTimeout(() => container.querySelector('input').focus(), 100);
             }});
 
-            Util.addDom('div', { title:this.ogl._lang.find('fleetQuickCollect'), child:'local_shipping', class:'material-icons tooltip ogl_quickCollectBtn', parent:this.ogl._dom.secondCol, onclick:() =>
+            Util.addDom('div', { title:this.ogl._lang.find('fleetQuickCollect'), child:'local_shipping', class:'material-icons tooltip ogl_quickCollectBtn', parent:_tools, onclick:() =>
             {
                 this.ogl._dom.requiredShips.querySelector(`.ogl_${this.ogl.db.options.defaultShip}`)?.click();
             }});
@@ -7541,7 +7582,7 @@ class FleetManager extends Manager
                     <circle cx="14.8" cy="15" r="6.9"/>
                     <path d="M12.6 2.4h4.4M14.8 2.4v2.3M19.9 8.3l1.5-1.5M14.8 8.1v1.1M14.8 20.9V22M21.7 15h-1.1M9 15H7.9"/>
                     <path d="M17 11.6l-3.3 2.5-.5 2.2 2.2-.5z"/>
-                </svg>`, parent:this.ogl._dom.secondCol, onclick:() =>
+                </svg>`, parent:_tools, onclick:() =>
             {
                 Util.runAsync(() => this.ogl._ui.openFleetProfile()).then(e => this.ogl._popup.open(e));
             }});
@@ -7551,13 +7592,16 @@ class FleetManager extends Manager
             // the body it configures - opened without an argument it edits the body you are standing on.
             // Same construction as its neighbours, so it inherits the game's button chrome. Opens a
             // panel only: no fleet is set up and nothing is sent (AGENTS.md §1.1).
-            Util.addDom('div', { title:this.ogl._lang.find('fleetSaveConfig'), child:'bedtime', class:'material-icons tooltip ogl_fsShortcut', parent:this.ogl._dom.secondCol, onclick:() =>
+            Util.addDom('div', { title:this.ogl._lang.find('fleetSaveConfig'), child:'bedtime', class:'material-icons tooltip ogl_fsShortcut', parent:_tools, onclick:() =>
             {
-                Util.runAsync(() => this.ogl._ui.openFleetSaveConfig()).then(e => this.ogl._popup.open(e));
+                // openFleetSaveConfig lives on TopbarManager, NOT UIManager - the same split that already
+                // caught openSettings. Calling it through _ui threw, Util.runAsync swallowed the error, and
+                // the button silently did nothing.
+                Util.runAsync(() => this.ogl._topbar.openFleetSaveConfig()).then(e => this.ogl._popup.open(e));
             }});
 
             // todo
-            /*Util.addDom('div', { title:this.ogl._lang.find('fleetQuickCollect'), child:'REC <span class="material-icons">fiber_manual_record</span>', class:'tooltip ogl_recordBtn', parent:this.ogl._dom.secondCol, onclick:() =>
+            /*Util.addDom('div', { title:this.ogl._lang.find('fleetQuickCollect'), child:'REC <span class="material-icons">fiber_manual_record</span>', class:'tooltip ogl_recordBtn', parent:_tools, onclick:() =>
             {
                 
             }});*/
@@ -8199,7 +8243,7 @@ class FleetManager extends Manager
             const fuel = resourceName == 'deut' ? fsConso : 0;
             fleetDispatcher[this.resOnPlanet[resourceName]] = Math.max(0, onPlanet - leave);
             fleetDispatcher[this.cargo[resourceName]] = Math.max(0, fleetDispatcher[this.resOnPlanet[resourceName]] - fuel);
-            this.showResourceHeldBadge(resourceName, leave, () => { Util.runAsync(() => this.ogl._ui.openFleetSaveConfig()).then(e => this.ogl._popup.open(e)); });
+            this.showResourceHeldBadge(resourceName, leave, () => { Util.runAsync(() => this.ogl._topbar.openFleetSaveConfig()).then(e => this.ogl._popup.open(e)); });
         });
 
         fleetDispatcher.refresh();
