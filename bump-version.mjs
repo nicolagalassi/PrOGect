@@ -60,25 +60,45 @@ if (h !== next || l !== next) {
   process.exit(1);
 }
 
-// A stray backtick inside a GM_addStyle(`...`) block silently ENDS the CSS template literal: every
-// rule after it vanishes while the file still parses, so `node --check` stays green and the breakage
-// only shows up in the browser as unstyled UI. It has bitten this project twice, both times from a
-// comment quoting a CSS declaration in backticks. Cheap to detect, so check it on every release.
+// A stray backtick inside a GM_addStyle(`...`) block silently ENDS the CSS template literal: every rule
+// after it vanishes while the file still parses, so `node --check` stays green and the damage only shows
+// in the browser as unstyled UI. It has now bitten this project three times, every time from a comment
+// quoting a CSS selector or declaration in backticks.
+//
+// The first version of this check only asked whether the blocks CLOSE, which the third case passed
+// happily: an early backtick closes one block and the intended closer opens another, so the count stays
+// balanced while a third of the stylesheet is gone. What actually identifies the fault is a block whose
+// content does not look like CSS - so each block is now checked for balanced braces and for ending on a
+// closing brace or comment. A CSS block never legitimately needs a backtick inside it.
 const cssBlocks = [...check.matchAll(/GM_addStyle\(\s*`/g)];
-let openBlocks = 0;
+const broken = [];
 for (const m of cssBlocks) {
   let i = m.index + m[0].length;
+  let body = '';
   while (i < check.length) {
-    if (check[i] === '\\') { i += 2; continue; }
+    if (check[i] === '\\') { body += check[i] + check[i + 1]; i += 2; continue; }
     if (check[i] === '`') break;
+    body += check[i];
     i++;
   }
-  if (i >= check.length) openBlocks++;
+  const line = check.slice(0, m.index).split('\n').length;
+  if (i >= check.length) { broken.push(`block at line ${line} never closes`); continue; }
+
+  const opens = (body.match(/\{/g) || []).length;
+  const closes = (body.match(/\}/g) || []).length;
+  if (opens !== closes) broken.push(`block at line ${line} has ${opens} '{' against ${closes} '}' - it is cut off mid-rule`);
+
+  const tail = body.trimEnd().slice(-2);
+  if (body.trim() && !tail.endsWith('}') && !tail.endsWith('*/')) {
+    broken.push(`block at line ${line} ends on "${tail}" instead of a closing brace or comment - a stray backtick closed it early`);
+  }
 }
-if (openBlocks) {
-  console.error(`${openBlocks} GM_addStyle block(s) never close - a stray backtick is truncating the CSS.`);
+if (broken.length) {
+  console.error('css blocks are damaged:');
+  broken.forEach(b => console.error('  - ' + b));
+  console.error('a backtick inside a GM_addStyle block ends the CSS silently; quote selectors without them.');
   process.exit(1);
 }
-console.log(`css: ${cssBlocks.length} GM_addStyle blocks, all closed`);
+console.log(`css: ${cssBlocks.length} GM_addStyle blocks, all closed and brace-balanced`);
 console.log(`${header[2]} -> ${next}  (header + pgVersion both updated)`);
 console.log('next: add a CHANGELOG.md entry, then commit and push.');
