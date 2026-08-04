@@ -2,6 +2,32 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.5.6-v13
+
+### Added
+
+- **A fleet-save preset button in the fleet bar**, next to the limiter one. The preset is per-body now,
+  so the useful place to reach it is the fleet page of the body it configures. Built like its neighbours
+  so it inherits the game's button chrome — measured 36×30, identical to the quick-collect button — and
+  carrying the same white glyph as the limiter so the pair reads together. It opens a panel only.
+
+### Fixed
+
+- **The limiter panel had no icon in its title.** It now carries the same stopwatch glyph as the
+  fleet-bar button.
+
+### Notes
+
+- A wrong fix was nearly shipped here. The blank was assumed to be the "planet" column header, on the
+  theory that `planet` is not a Material Icons ligature, and it was swapped for `public`. Rendering every
+  ligature this file references to a canvas and counting ink showed the opposite: `planet` draws 252
+  pixels, `public` draws **zero**. The embedded font is OGame/OGLight's own and carries custom glyphs
+  such as `planet`, `ptre` and `genetics`. The swap would have replaced one gap with another; it is
+  reverted, with the reasoning left in the source.
+- For the record, the ligatures referenced in this file that draw nothing in that font are `alert`,
+  `arrow_right_alt`, `done`, `group` and `jump_to_element`. None is used by the limiter panel.
+
+
 ## 0.5.5-v13
 
 ### Fixed
