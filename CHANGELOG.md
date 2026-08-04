@@ -2,6 +2,23 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.5.5-v13
+
+### Fixed
+
+- **A planet with no moon no longer looks like it has one.** The row is painted as a card across its
+  full width while the planet and moon links carry their own backgrounds, so on a moonless row the third
+  of the card nobody fills stayed visible and read as one very long button continuing past the planet.
+  That painting is dropped for those rows: the planet's own button is all that is left and the moon's
+  half is simply not there. The planet button deliberately does **not** stretch to fill the row — the
+  ask was for that half to stop existing, not to grow.
+  The row keeps its width, so the list stays aligned and the side icons, positioned from the row's right
+  edge, do not shift. The selected state still reads, since it shows on the planet button itself.
+  Measured with the shipped stylesheet: a row with a moon stays painted with 138px planet + 66px moon
+  and only the 4px gap unpainted; a moonless row reports a transparent background and border with 70px
+  unpainted and its planet button still 138px, the same as every other row.
+
+
 ## 0.5.4-v13
 
 ### Fixed

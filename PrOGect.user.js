@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.5.4-v13
+// @version         0.5.5-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.5.4-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.5.5-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -670,6 +670,16 @@ GM_addStyle(`
 .smallplanet:hover { border-color:#39454f !important; }
 .smallplanet:has(.planetlink.active), .smallplanet:has(.moonlink.active) { border-color:var(--syl-accent) !important; background:var(--syl-accent-weak) !important; box-shadow:0 0 0 1px var(--syl-accent) !important; }
 .smallplanet .planetPic, .smallplanet .icon-moon { background:#161c22 !important; box-shadow:none !important; }
+/* PrOGect: a planet with no moon must not look like it has one. The row is painted as a card across
+   its full width while the planet and moon links carry their own background, so on a moonless row the
+   third of the card nobody fills stayed visible and read as one very long button continuing past the
+   planet. Painting is dropped for those rows - the planet's own button is all that remains, and the
+   moon's half simply is not there. The row keeps its width, so the list stays aligned and the side
+   icons, which are positioned from the row's right edge, do not move. */
+.smallplanet:not(:has(.moonlink)):not(:has(a[href*="cp="][class*="moon"])) { background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
+.smallplanet:not(:has(.moonlink)):not(:has(a[href*="cp="][class*="moon"])):hover { border-color:transparent !important; }
+/* the selected state still has to read, so it moves onto the planet button itself */
+.smallplanet:not(:has(.moonlink)):has(.planetlink.active) { background:transparent !important; box-shadow:none !important; }
 
 /* ---- tooltips ---- */
 .tippy-box { background:var(--syl-surface) !important; border:1px solid var(--syl-border) !important; border-radius:8px !important; box-shadow:0 10px 30px -8px rgba(0,0,0,.6) !important; }
