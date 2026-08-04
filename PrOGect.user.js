@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.5.5-v13
+// @version         0.5.6-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.5.5-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.5.6-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -387,6 +387,13 @@ GM_addStyle(`
 .ogl_limiterShortcut { display:flex !important; align-items:center; justify-content:center; cursor:pointer; color:#fff; }
 .ogl_limiterShortcut svg { width:20px; height:20px; display:block; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
 .ogl_limiterShortcut:hover { color:var(--syl-accent); }
+/* the fleet-save preset button sits in the same bar, so it carries the same white glyph as the limiter
+   rather than the dimmer default its neighbours use - the two belong together */
+.ogl_fsShortcut { color:#fff !important; cursor:pointer; }
+.ogl_fsShortcut:hover { color:var(--syl-accent) !important; }
+/* the same stopwatch glyph inside the limiter panel's title, so the panel and the button that opens it
+   are recognisably one feature */
+.ogl_limiterGlyph { width:17px; height:17px; margin-left:7px; vertical-align:-3px; fill:none; stroke:var(--syl-accent); stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
 /* PrOGect: marker + shortcut for a body running its own night fleet-save preset. It lives in the
    body's own build-icon list, which is pointer-events:none, so the click target is re-enabled here. */
 .ogl_fsMarker { pointer-events:auto !important; cursor:pointer; color:var(--syl-accent); font-size:12px !important; line-height:12px !important; opacity:.85; transition:opacity .15s ease-out, transform .15s ease-out; }
@@ -4351,7 +4358,9 @@ class UIManager extends Manager
         const resourceKeys = ['metal', 'crystal', 'deut', 'food'];
         const shipKeys = [...this.ogl.shipsList];
         const container = Util.addDom('div', { class:'ogl_limiterSettings' });
-        Util.addDom('h2', { child:'Limiters settings', parent:container });
+        // the panel had no icon at all; it carries the same glyph as the fleet-bar limiter button so the
+        // two are recognisably the same feature
+        Util.addDom('h2', { child:'Limiters settings<svg class="ogl_limiterGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.4 3.4h7.3c.6 0 1 .4 1 1v3.4c0 .6-.4 1-1 1H7.3l-1.5 2-1-2H2.4c-.6 0-1-.4-1-1V4.4c0-.6.4-1 1-1z"/><path d="M3.7 5.4h.1M5.4 5.4h3.3M3.7 7.2h.1M5.4 7.2h3.3"/><circle cx="14.8" cy="15" r="6.9"/><path d="M12.6 2.4h4.4M14.8 2.4v2.3M19.9 8.3l1.5-1.5M14.8 8.1v1.1M14.8 20.9V22M21.7 15h-1.1M9 15H7.9"/><path d="M17 11.6l-3.3 2.5-.5 2.2 2.2-.5z"/></svg>', parent:container });
 
         // Back button only when opened from the settings popup (not the fleet-page badges): returns to the
         // main settings. Opened as a standalone popup so it stays compact instead of stretching in the
@@ -4359,6 +4368,11 @@ class UIManager extends Manager
         if(fromSettings) Util.addDom('div', { class:'ogl_panelBack ogl_button tooltip', title:'Back to settings', parent:container, child:'<i class="material-icons">arrow_back</i>', onclick:() => this.ogl._topbar.openSettings() });
         const grid = Util.addDom('div', { class:'ogl_limiterGrid', parent:container });
         const dataKey = { planet:'data', moon:'moonData', jumpgate:'jumpgateData' };
+        // Keep 'planet': the embedded icon font is OGame/OGLight's own and does carry it, verified by
+        // rendering every ligature this file references to a canvas and counting ink - 'planet' draws,
+        // while 'public' draws nothing at all, so swapping to it would have replaced one gap with
+        // another. The five that genuinely draw nothing in this font are alert, arrow_right_alt, done,
+        // group and jump_to_element; none of them is used here.
         const iconKey = { planet:'planet', moon:'bedtime', jumpgate:'door_back' };
         const types = ['planet', 'moon', 'jumpgate'];
 
@@ -7454,6 +7468,16 @@ class FleetManager extends Manager
                 </svg>`, parent:this.ogl._dom.secondCol, onclick:() =>
             {
                 Util.runAsync(() => this.ogl._ui.openFleetProfile()).then(e => this.ogl._popup.open(e));
+            }});
+
+            // PrOGect: the night fleet-save preset, reachable from the same bar as the limiter. It is
+            // per-body now (myPlanets[id].fsData), so the useful place to reach it is the fleet page of
+            // the body it configures - opened without an argument it edits the body you are standing on.
+            // Same construction as its neighbours, so it inherits the game's button chrome. Opens a
+            // panel only: no fleet is set up and nothing is sent (AGENTS.md §1.1).
+            Util.addDom('div', { title:this.ogl._lang.find('fleetSaveConfig'), child:'bedtime', class:'material-icons tooltip ogl_fsShortcut', parent:this.ogl._dom.secondCol, onclick:() =>
+            {
+                Util.runAsync(() => this.ogl._ui.openFleetSaveConfig()).then(e => this.ogl._popup.open(e));
             }});
 
             // todo
