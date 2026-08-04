@@ -2,6 +2,24 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.6.0-v13
+
+### Added
+
+- **Clean planet list** (`options.cleanPlanetList`, off by default) — an antigame-style reading of the
+  list: no cards, no button chrome, no frames, round unframed planet and moon images, the current body
+  marked by a hairline instead of a filled block. Text carries the hierarchy that the frames used to.
+  What it deliberately keeps is every figure the tool adds: available resources, refresh timers, the
+  build and fleet-save markers, the side-icon strip. The point is to remove the furniture, not the
+  information — verified by measuring both states of the same list, where all seven data elements stay
+  visible while the row background, border and button gradients go transparent and the images become
+  round.
+  Only the tool's own styling is undone. Nothing belonging to the game is hidden, moved or resized: the
+  planet links stay where the game put them and stay clickable.
+  Like the other appearance options it is applied from a body attribute written at startup, so it takes
+  effect on the first frame rather than flashing the default first, and the toggle applies it live.
+
+
 ## 0.5.7-v13
 
 ### Added

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.5.7-v13
+// @version         0.6.0-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.5.7-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.6.0-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -55,6 +55,7 @@ const updateOGLBody = () =>
     document.body.dataset.minipics = localStorage.getItem('syl_minipics') || false;
     document.body.dataset.menulayout = localStorage.getItem('syl_menulayout') || 0;
     document.body.dataset.colorblind = localStorage.getItem('syl_colorblind') || '';
+    document.body.dataset.cleanlist = localStorage.getItem('syl_cleanlist') || false;
     document.body.dataset.sidepanel = localStorage.getItem('syl_sidepanelleft') || false;
 }
 
@@ -401,6 +402,28 @@ GM_addStyle(`
 .ogl_extraRow .value { text-align:right; white-space:nowrap; }
 .ogl_satNeed .value.ogl_satLink { cursor:pointer; text-decoration:underline dotted; }
 .ogl_satNeed .value.ogl_satLink:hover { color:var(--syl-accent); }
+/* PrOGect: clean planet list (options.cleanPlanetList). An antigame-style reading of the list: no cards,
+   no button chrome, no frames - just the planet and moon images with their text, on the page background.
+   What it deliberately keeps is everything the tool adds: available resources, refresh timers, build and
+   fleet-save markers, the side-icon strip. The point is to remove the furniture, not the information.
+   Only the tool's own styling is undone here. Nothing belonging to the game is hidden, moved or resized
+   (AGENTS.md 1.7) - the planet links stay exactly where the game put them and stay clickable. */
+body[data-cleanlist="true"] #planetList { background:transparent !important; padding:2px 0 !important; grid-gap:1px !important; }
+body[data-cleanlist="true"] .smallplanet { background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
+body[data-cleanlist="true"] .smallplanet:hover { border-color:transparent !important; background:rgba(255,255,255,.03) !important; }
+body[data-cleanlist="true"] .planetlink, body[data-cleanlist="true"] .moonlink { background:none !important; border:0 !important; box-shadow:none !important; }
+body[data-cleanlist="true"] .planetlink:hover, body[data-cleanlist="true"] .moonlink:hover { background:rgba(255,255,255,.05) !important; }
+/* the current body is marked by a hairline rather than a filled block */
+body[data-cleanlist="true"] .smallplanet:has(.planetlink.active), body[data-cleanlist="true"] .smallplanet:has(.moonlink.active) { background:transparent !important; box-shadow:inset 0 0 0 1px var(--syl-accent) !important; border-color:transparent !important; }
+body[data-cleanlist="true"] .planetlink.active, body[data-cleanlist="true"] .moonlink.active { background:none !important; }
+/* round, unframed images - the single change that carries most of the look */
+body[data-cleanlist="true"] .smallplanet .planetPic, body[data-cleanlist="true"] .smallplanet .icon-moon { background:none !important; box-shadow:none !important; border-radius:50% !important; }
+/* text carries the hierarchy instead of the frames */
+body[data-cleanlist="true"] .smallplanet .planet-name { filter:none !important; text-shadow:0 1px 2px #000 !important; font-weight:600 !important; }
+body[data-cleanlist="true"] .smallplanet .planet-koords { filter:none !important; text-shadow:0 1px 2px #000 !important; }
+/* our own figures stay, just without their plate */
+body[data-cleanlist="true"] .smallplanet .ogl_available:before { display:none !important; }
+body[data-cleanlist="true"] .smallplanet .ogl_refreshTimer { background:none !important; }
 /* PrOGect: marker + shortcut for a body running its own night fleet-save preset. It lives in the
    body's own build-icon list, which is pointer-events:none, so the click target is re-enabled here. */
 .ogl_fsMarker { pointer-events:auto !important; cursor:pointer; color:var(--syl-accent); font-size:12px !important; line-height:12px !important; opacity:.85; transition:opacity .15s ease-out, transform .15s ease-out; }
@@ -924,6 +947,9 @@ class PrOGect
                 // render the settings in the side panel, the way OGLight originally did, instead of
                 // the centered popup this fork switched to
                 legacySettings: false,
+                // strip the planet list down to images and text - no cards, no buttons, no frames - while
+                // keeping every figure the tool adds. See the body[data-cleanlist] block in CSS.
+                cleanPlanetList: false,
                 spyTableRules: [],
                 spyTableMSU: false,
                 // PrOGect: Fleet Save (night fleet) preset — instant manual send, fleet travels overnight.
@@ -2807,6 +2833,7 @@ class LangManager extends Manager
             fleetQuickCollect:"Quick collect this planet resources",
             sidePanelOnLeft:"Side panel on left",
             legacySettings:"Legacy settings (in the side panel)",
+            cleanPlanetList:"Clean planet list (no frames)",
             galaxyReload:"Reload galaxy",
             spyTableMSU:"Use MSU in the spy table",
         };
@@ -2928,6 +2955,7 @@ class LangManager extends Manager
             fleetQuickCollect:"Collecte rapide des ressources de cette planète",
             sidePanelOnLeft:"Panneau latéral à gauche",
             legacySettings:"Réglages legacy (dans le panneau latéral)",
+            cleanPlanetList:"Liste des planètes épurée (sans cadres)",
             galaxyReload:"Recharger la galaxie",
             spyTableMSU:"Utiliser le MSU dans le tableau d'espio",
         };
@@ -5786,7 +5814,7 @@ class TopbarManager extends Manager
         [
             'defaultShip', 'defaultMission', 'profileButton', 'fleetSaveConfig', 'cargoFallback',
             'resourceTreshold', 'msu', 'sim', 'converter', 'useClientTime', 'keyboardActions',
-            'showMenuResources', /*'tooltipDelay',*/ 'shortcutsOnRight', 'sidePanelOnLeft', 'legacySettings', 'disablePlanetTooltips', 'reduceLargeImages', 'colorblindMode', 'displayPlanetTimers', 'importExportItem',
+            'showMenuResources', /*'tooltipDelay',*/ 'shortcutsOnRight', 'sidePanelOnLeft', 'legacySettings', 'cleanPlanetList', 'disablePlanetTooltips', 'reduceLargeImages', 'colorblindMode', 'displayPlanetTimers', 'importExportItem',
             'expeditionValue', 'expeditionHoldTime', 'expeditionRandomSystem', 'expeditionRedirect', 'expeditionBigShips',
             'expeditionShipRatio', 'ignoreExpeShipsLoss', 'ignoreConsumption',
             'displaySpyTable', 'autoCleanReports', 'autoCleanCounterSpies', 'boardTab', 'spyTableMSU', 'spyTableRules',
@@ -6017,6 +6045,11 @@ class TopbarManager extends Manager
                     {
                         localStorage.setItem('syl_sidepanelleft', this.ogl.db.options[opt]);
                         document.body.setAttribute('data-sidepanel', this.ogl.db.options[opt]);
+                    }
+                    else if(opt == 'cleanPlanetList')
+                    {
+                        localStorage.setItem('syl_cleanlist', this.ogl.db.options[opt]);
+                        document.body.setAttribute('data-cleanlist', this.ogl.db.options[opt]);
                     }
                     else if(opt == 'legacySettings')
                     {
