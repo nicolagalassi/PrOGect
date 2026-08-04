@@ -2,6 +2,34 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.5.7-v13
+
+### Added
+
+- **Mine panels now show what the upgrade buys and what it costs in energy**, the way antigame did. Two
+  rows join the game's own list: hourly **production** (gain and new total) and **solar satellites**
+  needed. The game already prints the energy delta itself, so that is not duplicated.
+  The satellite figure is a link when it is not zero: it opens the shipyard with the amount already in
+  the field. That is a prefill, not a build order — the count travels in `oglsat`, a parameter of ours
+  rather than an invented game endpoint, and the build stays the player's own click on the game's button.
+  The parameter is stripped from the URL afterwards so a later reload does not silently refill anything.
+
+### Notes
+
+- The production projection does not enumerate bonuses. The base hourly formula is published, but real
+  output also carries universe speed, officers, lifeform and class bonuses. Instead the multiplier is
+  **derived from the planet itself**: the production already stored for the current level, divided by the
+  base formula at that level. Whatever bonuses apply are inside that ratio, so the projection stays right
+  even when the game changes one of them, and with no stored production it falls back to the plain base
+  figure rather than a wrong one.
+  Verified against the shipped code: on a speed-8 universe a metal mine 30→31 projects a gain of 17,170
+  and a total of 142,805, both exact; with no stored production it returns the base figure; deuterium
+  output falls with temperature (1,937 cold vs 1,399 hot); and the satellite count is right across four
+  cases — surplus covering it, a full deficit, a partial surplus, and an exactly covered draw.
+- The satellite count reuses the same per-unit energy formula the satellite's own panel uses, so the two
+  cannot disagree.
+
+
 ## 0.5.6-v13
 
 ### Added
