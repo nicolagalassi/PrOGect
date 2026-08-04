@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.6.2-v13
+// @version         0.6.3-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.6.2-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.6.3-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -395,22 +395,19 @@ GM_addStyle(`
 /* the same stopwatch glyph inside the limiter panel's title, so the panel and the button that opens it
    are recognisably one feature */
 .ogl_limiterGlyph { width:17px; height:17px; margin-left:7px; vertical-align:-3px; fill:none; stroke:var(--syl-accent); stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
-/* PrOGect: the production and satellite rows in the building panel. They live in the vertical cost block
-   and reuse its row shape. Neither has a sprite on the game's icon sheet - there is no icon for output,
-   the metal sprite is already the metal COST row, and there is no ship sprite in this set - so both draw
-   a glyph instead. Both keep the sheet's 28px icon width, or their figures would not line up with the
-   metal, crystal and MSU rows above them. The glyphs are checked to exist in the embedded font: it is a
-   subset, and a missing name silently paints nothing at all. */
-/* the sheet's sprite classes each re-declare the whole box, so the shared values have to be repeated
-   here too - inheriting them is what left these two figures 10px adrift from the rows above */
-.ogl_icon.ogl_prodRow:before, .ogl_icon.ogl_satRow:before { background:none !important; font-family:'Material Icons'; font-size:17px; height:18px; width:28px; margin-right:10px; display:block; vertical-align:middle; line-height:18px; text-align:center; color:var(--syl-accent); }
-.ogl_icon.ogl_prodRow:before { content:'monitoring'; }
-/* a ship, which is what a solar satellite is and where the click leads. Not a lightning bolt: the panel
-   already has one on the game's own energy figure. Names in this font are not the standard Material set -
-   settings_input_antenna paints a cog here, and brightness_5 paints the digit 5. */
-.ogl_icon.ogl_satRow:before { content:'rocket'; }
-.ogl_satLink { cursor:pointer; text-decoration:underline dotted; }
-.ogl_satLink:hover { color:var(--syl-accent); }
+/* PrOGect: the production row in the building panel. The energy row beside it uses the game's own energy
+   sprite, but there is no icon for output on that sheet - the metal sprite is already the metal COST row -
+   so this one draws a glyph. It keeps the sheet's 28px width and 10px gap: every sprite class re-declares
+   the whole icon box rather than extending a shared one, so inheriting them is what left this figure 10px
+   adrift from the rows above. Colour is the panel's own label grey, not the accent - the accent marks
+   actions and selection here, and an icon is neither.
+   The glyph name is checked against the embedded font: it is a subset with OGame's own additions, so
+   settings_input_antenna paints a cog, brightness_5 paints the digit 5, and a name it lacks paints
+   nothing at all. */
+.ogl_icon.ogl_prodRow:before { content:'monitoring'; background:none !important; font-family:'Material Icons'; font-size:17px; height:18px; width:28px; margin-right:10px; display:block; vertical-align:middle; line-height:18px; text-align:center; color:#7c95ab; }
+/* the satellite figure is the row's action, so it gets the accent and a click affordance */
+.ogl_satLink { cursor:pointer; text-decoration:underline dotted; text-decoration-thickness:1px; text-underline-offset:2px; }
+.ogl_satLink:hover { color:var(--syl-accent) !important; }
 /* PrOGect: our four fleet-page buttons in one block, two by two. Individually they each claimed a slot
    on the game's own row and together they pushed its submit button into a corner; stacked they take half
    the width. Only our own footprint changes - the game's controls keep their place and size.
@@ -13411,50 +13408,80 @@ class TechManager extends Manager
             }
         }
 
-        // PrOGect: what the upgrade produces, and how many solar satellites would cover the extra energy
-        // it draws. The game already prints the energy delta, so only these two are added.
+        // PrOGect: two rows the mine panel did not have - what the upgrade produces per hour, and the
+        // planet's energy balance with the number of solar satellites that would cover a shortfall.
         //
         // They go in the VERTICAL cost block, next to metal, crystal and MSU - not in the row of chips
         // above it. That row is horizontal here, unlike the vertical list antigame had, so two more items
         // crowded it until they collided with the build button and cut the duration short.
-        // No text labels either: the row's meaning comes from the same sprite icon the panel already uses
-        // for that resource, and for the satellite its own ship icon. That also keeps _lang out of it -
-        // find() returns the literal TEXT_NOT_FOUND for a key that does not exist, which is exactly what
-        // ended up on screen when this asked for a 'production' string that was never defined.
-        const _costRow = (iconClass, firstHtml, secondHtml, tooltipText) =>
+        //
+        // No text labels: the energy row carries the game's own energy sprite, and production carries a
+        // glyph because the sheet has no icon for output. That also keeps _lang out of it - find() returns
+        // the literal TEXT_NOT_FOUND for a key that does not exist, which is what reached the screen when
+        // this asked for a 'production' string that was never defined.
+        //
+        // Both are built the way the panel's own cost rows are: plain cells with the colour carried by the
+        // cell's class, not by nested markup. The wrapper is already font-weight:700, so a <b> inside only
+        // made these figures heavier than their neighbours.
+        const _panelRow = (iconClass, cells, tooltipText) =>
         {
             const line = Util.addDom('div', { class:`ogl_icon ${iconClass}`, parent:costsFragment });
-            const cell = Util.addDom('div', { class:'tooltip', title:tooltipText || '', parent:line, child:firstHtml });
-            if(secondHtml != null) Util.addDom('div', { class:'ogl_text', parent:line, child:secondHtml });
-            return cell;
+            const made = [];
+
+            cells.forEach((cell, i) =>
+            {
+                if(cell == null) return;
+                made.push(Util.addDom('div', { class:cell.cls || (i ? 'ogl_text' : ''), parent:line, title:i ? '' : (tooltipText || ''), child:cell.html }));
+            });
+
+            if(tooltipText && made[0]) made[0].classList.add('tooltip');
+
+            return made;
         };
 
         if(data.target.prodGain)
         {
             const gain = data.target.prodGain;
             const total = data.target.prodTotal || 0;
-            // a distinct glyph, NOT the resource sprite: the cost block already has a metal row, and a
-            // second one would read as a duplicate cost rather than as output
 
-            _costRow('ogl_prodRow',
-                `<b class="${gain >= 0 ? 'ogl_ok' : 'ogl_danger'}">${gain >= 0 ? '+' : ''}${Util.formatToUnits(gain, 2)}</b>`,
-                Util.formatToUnits(total, 2),
-                `<div class="ogl_readableTooltip">Production per hour at level ${level}: <b>${Util.formatNumber(total)}</b><br>Added by this level: <b>${Util.formatNumber(gain)}</b></div>`);
+            // hourly output: what this level adds, then what the mine runs at afterwards - the same
+            // "this step, then the running total" reading as the cost rows above it
+            _panelRow('ogl_prodRow', [
+                { html:(gain >= 0 ? '+' : '') + Util.formatToUnits(gain, 2), cls:gain >= 0 ? 'ogl_ok' : 'ogl_danger' },
+                { html:Util.formatToUnits(total, 2) },
+            ], `<div class="ogl_readableTooltip">Hourly output at level ${level}: <b>${Util.formatNumber(total)}</b><br>Added by this level: <b>${Util.formatNumber(gain)}</b></div>`);
         }
 
-        if(data.target.satellites != null && data.target.conso > 0)
+        // The energy row. conso is negative by now - it is negated for display at the end of getTechData -
+        // so the presence of the satellite figure is what says this body draws energy, not conso's sign.
+        if(data.target.satellites != null)
         {
             const sats = data.target.satellites;
+            const now = data.target.energyNow || 0;
             const after = data.target.energyAfter || 0;
-            const cell = _costRow('ogl_satRow',
-                `<b class="${sats > 0 ? 'ogl_danger' : 'ogl_ok'}">${Util.formatNumber(sats)}</b>`,
-                null,
-                `<div class="ogl_readableTooltip">Energy left after this level: <b>${Util.formatNumber(after)}</b>${sats > 0 ? '<br>Solar satellites needed to cover it: <b>' + Util.formatNumber(sats) + '</b><br><i>click to open the shipyard with the amount filled in</i>' : ''}</div>`);
+            const perSat = data.target.energyPerSat || 0;
 
-            if(sats > 0)
+            // available now, where it lands after this level, and the shortfall's answer. Third cell is a
+            // green check when there is nothing to cover, exactly as the resource rows mark a cost the
+            // planet can already pay. Precision matches the argument those rows pass, so the unit ladder
+            // reads identically.
+            const cells = _panelRow('ogl_energy', [
+                { html:Util.formatToUnits(now, 2), cls:now < 0 ? 'ogl_danger' : '' },
+                { html:Util.formatToUnits(after, 2), cls:after < 0 ? 'ogl_danger' : 'ogl_text' },
+                sats > 0
+                    ? { html:Util.formatNumber(sats), cls:'ogl_danger ogl_satLink' }
+                    : { html:'check', cls:'ogl_ok material-icons' },
+            ], `<div class="ogl_readableTooltip">Energy available now: <b>${Util.formatNumber(now)}</b><br>After this level: <b>${Util.formatNumber(after)}</b>${sats > 0 ? `<br>Solar satellites to cover it: <b>${Util.formatNumber(sats)}</b><br>Each one gives: <b>${Util.formatNumber(perSat)}</b>` : ''}</div>`);
+
+            if(sats > 0 && cells[2])
             {
-                cell.classList.add('ogl_satLink');
-                cell.addEventListener('click', () =>
+                cells[2].classList.add('tooltip');
+                cells[2].title = `<div class="ogl_readableTooltip">${Util.formatNumber(sats)} solar satellites cover the shortfall<br><i>opens the shipyard with the amount filled in</i></div>`;
+
+                // one click, one navigation: the shipyard opens with the quantity filled in and the
+                // player still presses the game's own build button (AGENTS.md 1.1). oglsat is our own
+                // parameter, read on the shipyard page - never an invented game endpoint.
+                cells[2].addEventListener('click', () =>
                 {
                     window.location.href = `https://${window.location.host}/game/index.php?page=ingame&component=shipyard&oglsat=${sats}`;
                 });
@@ -14029,17 +14056,26 @@ class TechManager extends Manager
                 tech.target.prodGain = Math.floor((_baseAt(level) - _baseAt(level - 1)) * _scale);
             }
 
-            // How many solar satellites would cover the extra draw this upgrade adds, once the planet's
-            // current surplus is spent. Same per-unit formula the satellite's own panel uses (id 212), so
-            // the two can never disagree.
+            // The energy side of a mine upgrade: what the planet has spare now, where that lands after
+            // this level draws its share, and how many solar satellites would cover a shortfall.
+            //
+            // Per-satellite output is not recomputed here - it is read from the satellite's own entry
+            // (212), so this figure and the one the game shows on the satellite cannot drift apart.
+            //
+            // conso is still positive at this point: it is negated for display at the end of this method,
+            // which is why the reading side must not test it for a positive value.
             if(tech.target.conso > 0)
             {
-                const _perSat = Math.floor(((planetData.temperature + 40 + planetData.temperature) / 2 + 160) / 6);
+                // a planet can already be in deficit, so this is deliberately NOT clamped at zero:
+                // satellites then have to cover the existing shortfall as well as the new draw
                 const _spare = Math.floor(this.ogl.db.myPlanets?.[planetID]?.energy ?? this.ogl.currentPlanet?.obj?.energy ?? 0);
-                const _deficit = tech.target.conso - Math.max(0, _spare);
+                const _after = _spare - tech.target.conso;
+                const _perSat = Math.floor(this.getTechData(212, 1, planetID)?.target?.prodEnergy || 0);
 
-                tech.target.satellites = (_deficit > 0 && _perSat > 0) ? Math.ceil(_deficit / _perSat) : 0;
-                tech.target.energyAfter = Math.max(0, _spare) - tech.target.conso;
+                tech.target.energyNow = _spare;
+                tech.target.energyAfter = _after;
+                tech.target.energyPerSat = _perSat;
+                tech.target.satellites = (_after < 0 && _perSat > 0) ? Math.ceil(-_after / _perSat) : 0;
             }
 
             if(tech.isBaseBuilding) tech.target.duration = (rawMetal + rawCrystal) / (2500 * Math.max((id == 41 || id == 42 || id == 43 || id == 15) ? 1 : 4 - level / 2, 1) * (1 + (id == 14 ? this.initialLevel+this.levelOffset-1 : planetData[14]) || 0) * (Math.pow(2, (id == 15 ? this.initialLevel+this.levelOffset-1 : planetData[15]) || 0))) * 3600 * 1000;

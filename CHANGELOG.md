@@ -2,6 +2,39 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.6.3-v13
+
+### Fixed
+
+- **The satellite row never appeared at all.** The figures were computed correctly, but the reading side
+  asked for `conso > 0` and by then `conso` is negative: `getTechData` negates it on its last line, which
+  is how the panel shows `-3.6k`. The condition could never be true, so the row was never built. It now
+  keys off the satellite figure itself, which is only set when the body draws energy.
+- **The production figure was heavier than its neighbours.** The cost wrapper is already
+  `font-weight:700`, so the `<b>` wrapped around it rendered heavier still. Colour is carried by the
+  cell's class now, exactly as the game's own rows do it, and every figure in the block measures
+  `16px/700`.
+
+### Added
+
+- **The energy row is the whole question, not just the satellite count.** Three cells, in the shape the
+  cost rows already use: energy available now, where it lands after this level, and what covers a
+  shortfall. The third cell is a green check when nothing is needed, the same mark those rows use for a
+  cost the planet can already pay; when satellites are needed it is their count, and clicking it opens the
+  shipyard with the amount filled in. It carries the game's own energy sprite rather than an invented
+  glyph.
+- Per-satellite output is no longer a second copy of the formula: it is read from the satellite's own
+  entry (212), so this figure and the one the game shows on the satellite cannot drift apart.
+
+### Changed
+
+- **An already-negative planet is now covered in full.** The shortfall was measured against the current
+  surplus clamped at zero, which under-counted satellites on a planet that was in deficit before the
+  upgrade. Verified against the shipped code on eight cases: surplus, shortfall, existing deficit, exactly
+  covered, one unit short, rounding up at both ends of a unit, and a missing per-satellite figure.
+- The production glyph is the panel's label grey instead of the accent. The accent marks actions and
+  selection here, and an icon is neither; the satellite figure keeps it, because it is the row's action.
+
 ## 0.6.2-v13
 
 ### Fixed
