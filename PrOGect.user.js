@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.5.6-v13
+// @version         0.5.7-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.5.6-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.5.7-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -394,6 +394,13 @@ GM_addStyle(`
 /* the same stopwatch glyph inside the limiter panel's title, so the panel and the button that opens it
    are recognisably one feature */
 .ogl_limiterGlyph { width:17px; height:17px; margin-left:7px; vertical-align:-3px; fill:none; stroke:var(--syl-accent); stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+/* PrOGect: the production and satellite rows added to the building panel. They mirror the game's own
+   row structure (a strong label plus a span.value) so they inherit its list styling; only the clickable
+   satellite figure needs an affordance of its own. */
+.ogl_extraRow > strong { font-weight:400; }
+.ogl_extraRow .value { text-align:right; white-space:nowrap; }
+.ogl_satNeed .value.ogl_satLink { cursor:pointer; text-decoration:underline dotted; }
+.ogl_satNeed .value.ogl_satLink:hover { color:var(--syl-accent); }
 /* PrOGect: marker + shortcut for a body running its own night fleet-save preset. It lives in the
    body's own build-icon list, which is pointer-events:none, so the click target is re-enabled here. */
 .ogl_fsMarker { pointer-events:auto !important; cursor:pointer; color:var(--syl-accent); font-size:12px !important; line-height:12px !important; opacity:.85; transition:opacity .15s ease-out, transform .15s ease-out; }
@@ -2183,6 +2190,7 @@ class DomManager extends Manager
         this.loadBase();
         this.loadFleet();
         this.updatePlanetFleetSaveIcons();
+        this.prefillSatelliteAmount();
 
         this.updateRecap();
         this.updateLeftMenu();
@@ -2397,6 +2405,41 @@ class DomManager extends Manager
                 Util.runAsync(() => this.ogl._ui.openFleetSaveConfig(bodyDom._ogl.id)).then(dom => this.ogl._popup.open(dom));
             }});
         });
+    }
+
+    // PrOGect: the mine panel's satellite figure links here carrying the count in `oglsat`, our own
+    // parameter - never an invented game endpoint. Fill the quantity field and stop: the build itself is
+    // the player's click on the game's own button, so one click still causes at most one game action
+    // (AGENTS.md §1.1). Nothing is submitted, and the parameter is dropped from the URL afterwards so a
+    // later reload does not silently refill the field.
+    prefillSatelliteAmount()
+    {
+        if(this.ogl.page != 'shipyard') return;
+
+        const url = new URL(window.location.href);
+        const wanted = parseInt(url.searchParams.get('oglsat') || '', 10);
+        if(!wanted || wanted < 1) return;
+
+        const fill = () =>
+        {
+            // the solar satellite is tech 212; its amount field lives inside its own technology box
+            const box = document.querySelector('[data-technology="212"]') || document.querySelector('#button212');
+            const input = box?.querySelector('input[type="text"], input[type="number"], input.build_amount') || document.querySelector('#build_amount');
+            if(!input) return false;
+
+            input.value = wanted;
+            input.dispatchEvent(new Event('input', { bubbles:true }));
+            input.dispatchEvent(new Event('change', { bubbles:true }));
+            input.focus();
+            return true;
+        };
+
+        // the technology boxes are rendered by the game's own script, so the field can be absent on the
+        // first frame. One retry on the next frame, then give up rather than sit in a loop.
+        if(!fill()) requestAnimationFrame(() => fill());
+
+        url.searchParams.delete('oglsat');
+        history.replaceState(null, '', url.toString());
     }
 
     updateRecap(data)
@@ -13269,6 +13312,45 @@ class TechManager extends Manager
             }
         }
 
+        // PrOGect: the two lines antigame showed and this panel did not - what the upgrade actually
+        // produces, and how many solar satellites would cover the extra energy it draws. The game already
+        // prints the energy delta itself, so only these two are added.
+        // The satellite figure is a link. It carries the count to the shipyard in a parameter of OUR own
+        // (never an invented game endpoint) and the quantity field is filled there: a prefill, not a
+        // build order - the player still presses the button (AGENTS.md §1.1).
+        const _extraRow = (cls, label, valueHtml, tooltipText) =>
+        {
+            const li = Util.addDom('li', { class:'ogl_extraRow ' + cls, parent:narrowFragment, child:`<strong>${label}</strong>` });
+            return Util.addDom('span', { class:'value tooltip', title:tooltipText || '', parent:li, child:valueHtml });
+        };
+
+        if(data.target.prodGain)
+        {
+            const gain = data.target.prodGain;
+            const total = data.target.prodTotal || 0;
+            _extraRow('ogl_prodGain', this.ogl._lang.find('production'),
+                `<b class="${gain >= 0 ? 'ogl_ok' : 'ogl_danger'}">${gain >= 0 ? '+' : ''}${Util.formatNumber(gain)}</b> <span class="ogl_text">${Util.formatToUnits(total, 2)}</span>`,
+                `<div class="ogl_readableTooltip">Per hour at level ${level}: <b>${Util.formatNumber(total)}</b><br>Gained by this level: <b>${Util.formatNumber(gain)}</b></div>`);
+        }
+
+        if(data.target.satellites != null && data.target.conso > 0)
+        {
+            const sats = data.target.satellites;
+            const after = data.target.energyAfter || 0;
+            const cell = _extraRow('ogl_satNeed', this.ogl._lang.find(212),
+                `<b class="${sats > 0 ? 'ogl_danger' : 'ogl_ok'}">[min. ${Util.formatNumber(sats)}]</b>`,
+                `<div class="ogl_readableTooltip">Energy left after this level: <b>${Util.formatNumber(after)}</b>${sats > 0 ? `<br>Solar satellites to cover it: <b>${Util.formatNumber(sats)}</b><br><i>click to open the shipyard with the amount filled in</i>` : ''}</div>`);
+
+            if(sats > 0)
+            {
+                cell.classList.add('ogl_satLink');
+                cell.addEventListener('click', () =>
+                {
+                    window.location.href = `https://${window.location.host}/game/index.php?page=ingame&component=shipyard&oglsat=${sats}`;
+                });
+            }
+        }
+
         const msuValue = this.ogl.db.options.msu;
         const msuline = Util.addDom('div', { class:`ogl_icon ogl_msu`, parent:costsFragment });
         const msu = Util.getMSU(data.target.metal, data.target.crystal, data.target.deut, msuValue);
@@ -13806,6 +13888,49 @@ class TechManager extends Manager
             if(tech.id == 3) tech.target.conso = Math.ceil(20 * level * Math.pow(1.1, level)) - Math.ceil(20 * (level-1) * Math.pow(1.1, level-1));
             if(tech.id == 4) tech.target.prodEnergy = Math.floor(20 * level * Math.pow(1.1, level)) - Math.floor(20 * (level-1) * Math.pow(1.1, level-1));
             if(tech.id == 12) tech.target.prodEnergy = Math.floor(30 * level * Math.pow((1.05 + (planetData[113] || 0) * 0.01), level)) - Math.floor(30 * (level-1) * Math.pow((1.05 + (planetData[113] || 0) * 0.01), level-1));
+
+            // PrOGect: what a mine upgrade actually buys, and what it costs in energy - the figures
+            // antigame put in this panel and the reason people keep a calculator open.
+            //
+            // The base hourly output of a mine is a published formula, but the real output also carries
+            // universe speed, officers, lifeform and class bonuses. Rather than enumerate those and drift
+            // out of date, the multiplier is derived from the planet itself: the production we already
+            // store for the CURRENT level, divided by the base formula at that level. Whatever bonuses
+            // apply, they are in that ratio - so the projection stays right even when the game changes
+            // one of them. With no stored production yet the ratio falls back to 1, which is the plain
+            // base figure rather than a wrong one.
+            const _mineBase = { 1:30, 2:20, 3:10 }[tech.id];
+
+            if(_mineBase && level > 0)
+            {
+                // deuterium output falls with temperature; the others do not care
+                const _tMax = (planetData.temperature ?? 0) + 40;
+                const _tempFactor = tech.id == 3 ? Math.max(0, 1.44 - 0.004 * _tMax) : 1;
+                const _baseAt = lvl => lvl <= 0 ? 0 : _mineBase * lvl * Math.pow(1.1, lvl) * _tempFactor;
+
+                const _stored = { 1:'prodMetal', 2:'prodCrystal', 3:'prodDeut' }[tech.id];
+                const _currentLevel = planetData[tech.id] || 0;
+                // stored production is per SECOND (see the accountInfo unit note), the formula is hourly
+                const _currentHourly = (planetData[_stored] || 0) * 3600;
+                const _baseCurrent = _baseAt(_currentLevel);
+                const _scale = (_baseCurrent > 0 && _currentHourly > 0) ? _currentHourly / _baseCurrent : 1;
+
+                tech.target.prodTotal = Math.floor(_baseAt(level) * _scale);
+                tech.target.prodGain = Math.floor((_baseAt(level) - _baseAt(level - 1)) * _scale);
+            }
+
+            // How many solar satellites would cover the extra draw this upgrade adds, once the planet's
+            // current surplus is spent. Same per-unit formula the satellite's own panel uses (id 212), so
+            // the two can never disagree.
+            if(tech.target.conso > 0)
+            {
+                const _perSat = Math.floor(((planetData.temperature + 40 + planetData.temperature) / 2 + 160) / 6);
+                const _spare = Math.floor(this.ogl.db.myPlanets?.[planetID]?.energy ?? this.ogl.currentPlanet?.obj?.energy ?? 0);
+                const _deficit = tech.target.conso - Math.max(0, _spare);
+
+                tech.target.satellites = (_deficit > 0 && _perSat > 0) ? Math.ceil(_deficit / _perSat) : 0;
+                tech.target.energyAfter = Math.max(0, _spare) - tech.target.conso;
+            }
 
             if(tech.isBaseBuilding) tech.target.duration = (rawMetal + rawCrystal) / (2500 * Math.max((id == 41 || id == 42 || id == 43 || id == 15) ? 1 : 4 - level / 2, 1) * (1 + (id == 14 ? this.initialLevel+this.levelOffset-1 : planetData[14]) || 0) * (Math.pow(2, (id == 15 ? this.initialLevel+this.levelOffset-1 : planetData[15]) || 0))) * 3600 * 1000;
             else tech.target.duration = (rawMetal + rawCrystal) / (1000 * (1 + (planetData[31] || 0) + bestLabs)) * 3600 * 1000;
