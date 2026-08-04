@@ -2,6 +2,27 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.6.5-v13
+
+### Fixed
+
+- **Clicking a satellite figure also said "Price copied".** The cost block carries a click handler on the
+  whole container that copies the prices, so every click on a cell inside it reached that handler too. Both
+  satellite figures now stop the click there. Clicking anywhere else in the block still copies the price:
+  that behaviour was not ours to remove.
+- **On the solar satellite's own panel the figure did nothing but copy the price.** It now fills the amount
+  field beside it, which is what the figure is for. No navigation: this is already the page the mine
+  panel's link leads to.
+
+### Notes
+
+- Verified against the shipped code in a browser: `[min. N]` fills the field, the game's own input listener
+  receives it, no price is copied, a click on any other cell still copies, an already-positive planet shows
+  a green check with nothing clickable, the mine panel's figure navigates without copying, and a figure
+  beyond the field's ceiling clamps to 99999.
+- Both satellite actions carry the GRAY AREA marker: they need ToolDev sign-off before publishing
+  (AGENTS.md 3). Nothing is submitted; the build order is still the player pressing the game's own button.
+
 ## 0.6.4-v13
 
 ### Changed
