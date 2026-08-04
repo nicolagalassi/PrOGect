@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.6.3-v13
+// @version         0.6.4-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.6.3-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.6.4-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -2258,7 +2258,6 @@ class DomManager extends Manager
         this.loadBase();
         this.loadFleet();
         this.updatePlanetFleetSaveIcons();
-        this.prefillSatelliteAmount();
 
         this.updateRecap();
         this.updateLeftMenu();
@@ -2473,41 +2472,6 @@ class DomManager extends Manager
                 Util.runAsync(() => this.ogl._topbar.openFleetSaveConfig(bodyDom._ogl.id)).then(dom => this.ogl._popup.open(dom));
             }});
         });
-    }
-
-    // PrOGect: the mine panel's satellite figure links here carrying the count in `oglsat`, our own
-    // parameter - never an invented game endpoint. Fill the quantity field and stop: the build itself is
-    // the player's click on the game's own button, so one click still causes at most one game action
-    // (AGENTS.md §1.1). Nothing is submitted, and the parameter is dropped from the URL afterwards so a
-    // later reload does not silently refill the field.
-    prefillSatelliteAmount()
-    {
-        if(this.ogl.page != 'shipyard') return;
-
-        const url = new URL(window.location.href);
-        const wanted = parseInt(url.searchParams.get('oglsat') || '', 10);
-        if(!wanted || wanted < 1) return;
-
-        const fill = () =>
-        {
-            // the solar satellite is tech 212; its amount field lives inside its own technology box
-            const box = document.querySelector('[data-technology="212"]') || document.querySelector('#button212');
-            const input = box?.querySelector('input[type="text"], input[type="number"], input.build_amount') || document.querySelector('#build_amount');
-            if(!input) return false;
-
-            input.value = wanted;
-            input.dispatchEvent(new Event('input', { bubbles:true }));
-            input.dispatchEvent(new Event('change', { bubbles:true }));
-            input.focus();
-            return true;
-        };
-
-        // the technology boxes are rendered by the game's own script, so the field can be absent on the
-        // first frame. One retry on the next frame, then give up rather than sit in a loop.
-        if(!fill()) requestAnimationFrame(() => fill());
-
-        url.searchParams.delete('oglsat');
-        history.replaceState(null, '', url.toString());
     }
 
     updateRecap(data)
@@ -13097,6 +13061,28 @@ class TechManager extends Manager
             amount.setAttribute('onkeyup', 'checkIntInput(this, 1, 99999);event.stopPropagation();');
             if(amount.parentNode.querySelector('.maximum')) amount.parentNode.querySelector('.maximum').addEventListener('click', () => amount.dispatchEvent(new Event('input')));
 
+            // PrOGect: the amount a mine panel asked for, filled into the game's own field. This runs here
+            // because check() is called the moment the panel's content lands, so the field already exists -
+            // no timer waiting for it, and no loop (AGENTS.md 1.3). The parameter is dropped afterwards so
+            // a later reload does not silently refill it.
+            //
+            // GRAY AREA: requires ToolDev approval before publishing - see AGENTS.md 3. Nothing is
+            // submitted: the player still presses the game's own build button.
+            if(id == 212)
+            {
+                const url = new URL(window.location.href);
+                const wanted = parseInt(url.searchParams.get('oglsat') || '', 10);
+
+                if(wanted > 0)
+                {
+                    amount.value = Math.min(99999, wanted);
+                    amount.dispatchEvent(new Event('input', { bubbles:true }));
+
+                    url.searchParams.delete('oglsat');
+                    history.replaceState(null, '', url.toString());
+                }
+            }
+
             Util.addDom('div', { parent:actions, class:'material-icons ogl_button', child:'lists', onclick:e =>
             {
                 this.todoData = {};
@@ -13452,6 +13438,17 @@ class TechManager extends Manager
             ], `<div class="ogl_readableTooltip">Hourly output at level ${level}: <b>${Util.formatNumber(total)}</b><br>Added by this level: <b>${Util.formatNumber(gain)}</b></div>`);
         }
 
+        // A link that opens the solar satellite where the game itself builds it, with the amount filled in.
+        //
+        // GRAY AREA: requires ToolDev approval before publishing - see AGENTS.md 3. One click of ours
+        // leads to one page the player asked for, with a quantity typed into a field; the build order is
+        // still the player pressing the game's own button, and nothing is submitted on their behalf. It is
+        // a convenience that touches the game's flow, so it is a ToolDev's call, not ours.
+        //
+        // openTech is the game's own parameter, already honoured by this script's technologyDetails.show.
+        // oglsat is ours, read back in check() once the panel's own field exists.
+        const _satelliteLink = count => `https://${window.location.host}/game/index.php?page=ingame&component=supplies&openTech=212&oglsat=${count}`;
+
         // The energy row. conso is negative by now - it is negated for display at the end of getTechData -
         // so the presence of the satellite figure is what says this body draws energy, not conso's sign.
         if(data.target.satellites != null)
@@ -13469,23 +13466,32 @@ class TechManager extends Manager
                 { html:Util.formatToUnits(now, 2), cls:now < 0 ? 'ogl_danger' : '' },
                 { html:Util.formatToUnits(after, 2), cls:after < 0 ? 'ogl_danger' : 'ogl_text' },
                 sats > 0
-                    ? { html:Util.formatNumber(sats), cls:'ogl_danger ogl_satLink' }
+                    ? { html:`[min. ${Util.formatNumber(sats)}]`, cls:'ogl_danger ogl_satLink' }
                     : { html:'check', cls:'ogl_ok material-icons' },
             ], `<div class="ogl_readableTooltip">Energy available now: <b>${Util.formatNumber(now)}</b><br>After this level: <b>${Util.formatNumber(after)}</b>${sats > 0 ? `<br>Solar satellites to cover it: <b>${Util.formatNumber(sats)}</b><br>Each one gives: <b>${Util.formatNumber(perSat)}</b>` : ''}</div>`);
 
             if(sats > 0 && cells[2])
             {
                 cells[2].classList.add('tooltip');
-                cells[2].title = `<div class="ogl_readableTooltip">${Util.formatNumber(sats)} solar satellites cover the shortfall<br><i>opens the shipyard with the amount filled in</i></div>`;
-
-                // one click, one navigation: the shipyard opens with the quantity filled in and the
-                // player still presses the game's own build button (AGENTS.md 1.1). oglsat is our own
-                // parameter, read on the shipyard page - never an invented game endpoint.
-                cells[2].addEventListener('click', () =>
-                {
-                    window.location.href = `https://${window.location.host}/game/index.php?page=ingame&component=shipyard&oglsat=${sats}`;
-                });
+                cells[2].title = `<div class="ogl_readableTooltip">${Util.formatNumber(sats)} solar satellites cover the shortfall<br><i>opens the solar satellite with this amount filled in</i></div>`;
+                cells[2].addEventListener('click', () => { window.location.href = _satelliteLink(sats); });
             }
+        }
+
+        // The same question asked from the other side: standing on the solar satellite itself, how many
+        // would bring this planet's energy back to zero. No link here - this IS the page the link leads to.
+        if(data.target.satellitesToPositive != null)
+        {
+            const need = data.target.satellitesToPositive;
+            const now = data.target.energyNow || 0;
+            const perSat = data.target.energyPerSat || 0;
+
+            _panelRow('ogl_energy', [
+                { html:Util.formatToUnits(now, 2), cls:now < 0 ? 'ogl_danger' : '' },
+                need > 0
+                    ? { html:`[min. ${Util.formatNumber(need)}]`, cls:'ogl_danger' }
+                    : { html:'check', cls:'ogl_ok material-icons' },
+            ], `<div class="ogl_readableTooltip">Energy available now: <b>${Util.formatNumber(now)}</b><br>Each satellite gives: <b>${Util.formatNumber(perSat)}</b>${need > 0 ? `<br>Needed to reach zero: <b>${Util.formatNumber(need)}</b>` : ''}</div>`);
         }
 
         const msuValue = this.ogl.db.options.msu;
@@ -14113,6 +14119,22 @@ class TechManager extends Manager
         }
 
         tech.target.prodEnergy = Math.floor(tech.target.prodEnergy * (1 + tech.bonus.prodEnergy + tech.bonus.engineer)) || 0;
+
+        // PrOGect: on the satellite's OWN panel, how many of them would bring this planet's energy back
+        // to zero. It sits here rather than in the ship branch above because prodEnergy only becomes the
+        // real per-unit output on the line above this one, once the lifeform and engineer bonuses are in.
+        // Reading it before that is how a raw formula ends up disagreeing with the figure the game itself
+        // prints in the satellite's own description.
+        if(tech.id == 212)
+        {
+            const _perSat = Math.floor(tech.target.prodEnergy / (level || 1)) || 0;
+            const _spare = Math.floor(this.ogl.db.myPlanets?.[planetID]?.energy ?? this.ogl.currentPlanet?.obj?.energy ?? 0);
+
+            tech.target.energyNow = _spare;
+            tech.target.energyPerSat = _perSat;
+            tech.target.satellitesToPositive = (_spare < 0 && _perSat > 0) ? Math.ceil(-_spare / _perSat) : 0;
+        }
+
         tech.target.conso = -Math.ceil(tech.target.conso * (1 - tech.bonus.conso)) || 0;
         tech.target.duration = tech.target.duration / (this.ogl.server.economySpeed * (tech.isBaseResearch ? this.ogl.db.serverData.researchSpeed : 1)) * (1 - tech.bonus.eventDuration) * (1 - tech.bonus.classDuration) * (1 - tech.bonus.technocrat) * (1 - Math.min(tech.bonus.duration, .99));
         tech.target.duration = Math.max(tech.target.duration, 1000);

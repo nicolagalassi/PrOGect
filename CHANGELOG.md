@@ -2,6 +2,42 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.6.4-v13
+
+### Changed
+
+- **The satellite link goes to the solar satellite on the resources page, not the shipyard.** That is where
+  the game builds satellites, and where antigame pointed. It uses `openTech`, a parameter this script
+  already honours, so the satellite's own panel opens on arrival; the count rides along in `oglsat` and is
+  typed into the game's own `#build_amount` field.
+- **The prefill runs from the panel's own load hook instead of guessing at the DOM.** The old version ran
+  on the shipyard page and looked for `#button212`, a selector that does not exist: the game's elements are
+  `.technology[data-technology]`. It now fills the field inside `check()`, which is called the moment the
+  panel's content lands, so there is nothing to wait for - no timer, no retry loop. The event it fires is
+  the game's own `input`, so the game's clamp and recompute run exactly as if the number had been typed.
+  Verified in a browser: the field fills, the game's listener sees it, `oglsat` is dropped from the URL
+  while `openTech` stays, a reload refills nothing, another tech is ignored, and 250000 clamps to 99999.
+- The satellite count reads `[min. N]`, the form antigame used, in both places it appears.
+
+### Added
+
+- **The solar satellite's own panel now says how many would bring the planet's energy back to zero.** Same
+  row shape as everywhere else: energy available now, then `[min. N]`, or a green check when the planet is
+  already positive. No link on this one - it is the page the link leads to.
+- Per-satellite output is read after the lifeform and engineer bonuses are applied, not from the raw
+  formula. This is why the figure can differ from antigame's: on the planet in the reference screenshot the
+  game's own description states 38 energy per satellite, which needs 28 to clear a 1.056 deficit, while the
+  unbonused formula gives 33 and antigame therefore said 32. Ours agrees with the number the game prints.
+  Verified against the shipped code on eight cases, including exact multiples, one unit either side of a
+  multiple, and a missing output figure.
+
+### Compliance
+
+- **The satellite link and prefill are flagged as a gray area and need ToolDev sign-off before publishing**
+  (AGENTS.md 3). One click of ours opens one page the player asked for with a quantity in a field; nothing
+  is submitted and the build order is still the player pressing the game's own button. It is a convenience
+  that touches the game's flow, so a ToolDev decides, not us. Both code sites carry the marker.
+
 ## 0.6.3-v13
 
 ### Fixed
