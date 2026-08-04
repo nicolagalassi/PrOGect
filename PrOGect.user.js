@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.6.4-v13
+// @version         0.6.5-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.6.4-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.6.5-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -13474,24 +13474,53 @@ class TechManager extends Manager
             {
                 cells[2].classList.add('tooltip');
                 cells[2].title = `<div class="ogl_readableTooltip">${Util.formatNumber(sats)} solar satellites cover the shortfall<br><i>opens the solar satellite with this amount filled in</i></div>`;
-                cells[2].addEventListener('click', () => { window.location.href = _satelliteLink(sats); });
+                cells[2].addEventListener('click', event =>
+                {
+                    // the whole cost block copies the price on click, so this click must not reach it
+                    event.stopPropagation();
+                    window.location.href = _satelliteLink(sats);
+                });
             }
         }
 
         // The same question asked from the other side: standing on the solar satellite itself, how many
-        // would bring this planet's energy back to zero. No link here - this IS the page the link leads to.
+        // would bring this planet's energy back to zero. Clicking it fills the field on this page rather
+        // than navigating - this already IS the page the mine panel's link leads to.
         if(data.target.satellitesToPositive != null)
         {
             const need = data.target.satellitesToPositive;
             const now = data.target.energyNow || 0;
             const perSat = data.target.energyPerSat || 0;
 
-            _panelRow('ogl_energy', [
+            const cells = _panelRow('ogl_energy', [
                 { html:Util.formatToUnits(now, 2), cls:now < 0 ? 'ogl_danger' : '' },
                 need > 0
-                    ? { html:`[min. ${Util.formatNumber(need)}]`, cls:'ogl_danger' }
+                    ? { html:`[min. ${Util.formatNumber(need)}]`, cls:'ogl_danger ogl_satLink' }
                     : { html:'check', cls:'ogl_ok material-icons' },
             ], `<div class="ogl_readableTooltip">Energy available now: <b>${Util.formatNumber(now)}</b><br>Each satellite gives: <b>${Util.formatNumber(perSat)}</b>${need > 0 ? `<br>Needed to reach zero: <b>${Util.formatNumber(need)}</b>` : ''}</div>`);
+
+            // On this panel the figure fills the field beside it - no navigation, because this already IS
+            // the page the mine panel's link leads to.
+            //
+            // GRAY AREA: requires ToolDev approval before publishing - see AGENTS.md 3. A number typed
+            // into a field; the build order is still the player pressing the game's own button.
+            if(need > 0 && cells[1])
+            {
+                cells[1].classList.add('tooltip');
+                cells[1].title = `<div class="ogl_readableTooltip">Fill in <b>${Util.formatNumber(need)}</b><br><i>the amount needed to reach zero energy</i></div>`;
+
+                cells[1].addEventListener('click', event =>
+                {
+                    // the whole cost block copies the price on click, so this click must not reach it
+                    event.stopPropagation();
+
+                    const field = dom.querySelector('#build_amount');
+                    if(!field) return;
+
+                    field.value = Math.min(99999, need);
+                    field.dispatchEvent(new Event('input', { bubbles:true }));
+                });
+            }
         }
 
         const msuValue = this.ogl.db.options.msu;
