@@ -2,6 +2,39 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.6.2-v13
+
+### Fixed
+
+- **The mine panel's two new rows crowded the build button and printed `TEXT_NOT_FOUND`.** They were
+  added to the row of figures above the description, which in this panel is a horizontal strip, not the
+  vertical list the same information sat in elsewhere. Two more items in it pushed against the build
+  button and cut the duration short. They now go in the vertical cost block, beside metal, crystal and
+  MSU, which is a list and has room. The label was the second half of it: `_lang.find` returns the
+  literal string `TEXT_NOT_FOUND` for a key that does not exist, and `production` was never a key. There
+  are no text labels now - each row is identified by a glyph, the way every other row in that block is.
+- **Both new rows sat 10px left of the figures above them.** Every sprite class in the game's icon sheet
+  re-declares the whole icon box rather than adding to a shared one, so a rule that only sets what it
+  changes inherits nothing: the 28px width and 10px gap had to be repeated. All five figures now start
+  at the same x.
+- **The refresh timer in the clean planet list was unreadable.** Removing the row's chrome had taken its
+  plate with it, leaving dark digits on the sky. It gets a 17px disc with a hairline ring and a drop
+  shadow, so it reads as a badge sitting above the planet rather than paint on the background.
+- **The selection halo was clipped into a rectangle.** `.planetlink` and `.moonlink` carry
+  `overflow:hidden !important`, so the part of the glow outside the link's own box simply vanished. That
+  is opened up in this theme, and the halo is softer than the first attempt - a 1px ring with a wide
+  low-opacity bloom instead of a hard 2px outline.
+- **Planet name and coordinates now lift off the background** with a tight edge shadow plus a wider soft
+  one, instead of sitting flat on the sky.
+
+### Notes
+
+- The glyphs in this build are checked against the embedded font before use. It is a subset with OGame's
+  own additions, and the names do not always mean what they do in the standard Material set:
+  `settings_input_antenna` paints a cog, `brightness_5` paints the digit 5, and a name the subset lacks
+  paints nothing at all - which is how an earlier build ended up with an empty column header. Production
+  uses `monitoring` (a chart) and the satellite count uses `rocket`, both confirmed to draw.
+
 ## 0.6.1-v13
 
 ### Fixed
