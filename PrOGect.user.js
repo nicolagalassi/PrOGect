@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.5.3-v13
+// @version         0.5.4-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.5.3-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.5.4-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -1321,7 +1321,18 @@ class PrOGect
                 callback:data =>
                 {
                     let xml = new DOMParser().parseFromString(data, 'text/html');
-                    this.db.serverData.topScore = parseInt(Number(xml.querySelector('topscore').innerText));
+                    // topScore drives the expedition cap step. Its two sources are NOT equal in
+                    // authority: the in-game highscore is live, while serverData.xml is a snapshot the
+                    // public API republishes on its own schedule and can still report a score the top
+                    // player passed hours ago. Assigning it unconditionally is what made the cap drop
+                    // back to the previous step after the player had already corrected it by opening the
+                    // highscore - and why doing that once was never enough.
+                    // So the API may only ever RAISE it. The live highscore reading still assigns
+                    // exactly, which is what lets a genuine decrease - a vanished top account - through.
+                    // The digit-strip also removes a NaN trap: Number() on a formatted figure yields NaN,
+                    // and a NaN topScore matches no step at all.
+                    const _apiTop = parseInt((xml.querySelector('topscore')?.innerText || '').replace(/\D/g, ''), 10) || 0;
+                    if(_apiTop > (this.db.serverData.topScore || 0)) this.db.serverData.topScore = _apiTop;
                     this.db.serverData.probeCargo = parseInt(xml.querySelector('probeCargo').innerText);
                     this.db.serverData.debrisFactor = parseFloat(xml.querySelector('debrisFactor').innerText) * 100;
                     this.db.serverData.researchSpeed = parseInt(xml.querySelector('researchDurationDivisor').innerText);

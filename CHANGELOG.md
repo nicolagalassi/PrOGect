@@ -2,6 +2,26 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.5.4-v13
+
+### Fixed
+
+- **The expedition cap fell back to the previous step, and correcting it once never held.** The cap step
+  is chosen from `serverData.topScore`, and that value had two writers of unequal authority which both
+  assigned unconditionally: the in-game highscore, which is live, and `serverData.xml`, which is a
+  snapshot the public API republishes on its own schedule and can still report a score the top player
+  passed hours ago. So opening the highscore raised the cap correctly, and the next hourly API read
+  overwrote it with the older figure — which is exactly why the fix had to be repeated.
+  The API may now only ever *raise* it. The live highscore reading still assigns exactly, so a genuine
+  decrease — a vanished top account — is still picked up.
+  Reproduced against the shipped step table before fixing: API 24M → highscore 26M (cap 2.4M → 3.0M) →
+  API republishes 24M → cap back to 2.4M, twice, until the API caught up. After the change the cap holds
+  at 3.0M throughout, and a live reading of 900k still drops it to the 1.2M step.
+
+- **A NaN trap in the same line.** The score was parsed with `parseInt(Number(text))`, and `Number()` on
+  a figure carrying any separator yields `NaN`. A `NaN` top score matches no step at all, since the
+  table is scanned with `topScore >= value`. The digits are now stripped before parsing.
+
 ## 0.5.3-v13
 
 ### Fixed
