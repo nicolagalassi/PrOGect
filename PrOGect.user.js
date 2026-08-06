@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            PrOGect
 // @namespace       https://github.com/nicolagalassi/PrOGect
-// @version         0.6.5-v13
+// @version         0.7.0-v13
 // @description     OGame v13 companion tool: planet overview, fleet helpers, expeditions, statistics
 // @author          PrOGect contributors
 // @license         MIT
@@ -23,7 +23,7 @@
 // original behaviour, and rewriting them to say "PrOGect" would make them factually wrong.
 // Note: the PTRE integration keys (params.tool='oglight', the oglight_*.php endpoints) and the
 // 'oglight_simple' icon ligature are EXTERNAL contracts - renaming them would break them.
-let pgVersion = "0.6.5-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
+let pgVersion = "0.7.0-v13";   // keep in sync with @version above (npm-free helper: node bump-version.mjs <version>)
 let betaVersion = "-PrOGect";
 
 GM_addStyle(`
@@ -506,6 +506,34 @@ body[data-cleanlist="true"] .smallplanet .planet-name, body[data-cleanlist="true
 .ogl_limiterSettings .ogl_limiterGrid .ogl_inputField:focus { border-color:var(--syl-accent) !important; }
 .ogl_limiterSettings .ogl_limiterGrid .ogl_inputField.ogl_disabled { opacity:.4; }
 .ogl_limiterSettings .ogl_limiterSep { grid-column:1 / -1; height:1px; background:var(--syl-border); margin:5px 0; }
+/* PrOGect: the scrap merchant tab. It borrows the limiter panel's grid shape - one fixed icon column and
+   equal number columns - so a ship row reads the same in both places, and its ship icons are the game's
+   own, sized exactly as the limiter sizes them. */
+.ogl_scrape { gap:8px; }
+.ogl_scrape .ogl_scrapeHead { display:flex; align-items:center; gap:8px; padding:2px 0 9px; }
+.ogl_scrape .ogl_scrapeLabel { color:var(--syl-muted); font-size:12px; }
+.ogl_scrape input.ogl_scrapeRate { box-sizing:border-box; width:56px !important; text-align:right; padding:5px 8px !important; background:var(--syl-bg) !important; border:1px solid var(--syl-border) !important; border-radius:var(--syl-radius); color:var(--syl-ink) !important; font-size:12px; outline:none; }
+.ogl_scrape input.ogl_scrapeRate:focus { border-color:var(--syl-accent) !important; }
+.ogl_scrape .ogl_scrapeUnit { color:var(--syl-muted); margin-right:auto; }
+.ogl_scrape .ogl_scrapeFill { padding:4px 10px; font-size:11px; cursor:pointer; }
+/* the container inherits black from the popup, which left the Total column at 1.1:1 against this
+   background - unreadable, and it is the figure the whole tab exists to show. Ink is set here so every
+   cell starts readable, and only the supporting columns are dimmed back down. */
+.ogl_scrape, .ogl_scrape .ogl_scrapeTotal { color:var(--syl-ink); }
+.ogl_scrape .ogl_scrapeGrid { display:grid; grid-template-columns:34px minmax(0, 1.5fr) repeat(4, minmax(0, 1fr)); gap:5px 10px; align-items:center; }
+.ogl_scrape .ogl_scrapeHeader { color:var(--syl-muted); font-size:11px; text-align:right; padding-bottom:3px; }
+.ogl_scrape .ogl_scrapeNameHead { text-align:left; }
+.ogl_scrape .ogl_scrapeShip { display:flex; align-items:center; justify-content:center; }
+.ogl_scrape .ogl_scrapeShip .ogl_icon { width:24px; height:24px; }
+.ogl_scrape .ogl_scrapeName { font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ogl_scrape .ogl_scrapeGrid .ogl_inputField { box-sizing:border-box; width:100% !important; text-align:right; padding:5px 8px !important; background:var(--syl-bg) !important; border:1px solid var(--syl-border) !important; border-radius:var(--syl-radius); color:var(--syl-ink) !important; font-size:12px; outline:none; }
+.ogl_scrape .ogl_scrapeGrid .ogl_inputField:focus { border-color:var(--syl-accent) !important; }
+.ogl_scrape .ogl_scrapeGrid .ogl_inputField.ogl_disabled { opacity:.35; }
+.ogl_scrape .ogl_scrapeOwned, .ogl_scrape .ogl_scrapeUnitValue, .ogl_scrape .ogl_scrapeTotal { text-align:right; font-variant-numeric:tabular-nums; font-size:12px; }
+.ogl_scrape .ogl_scrapeOwned, .ogl_scrape .ogl_scrapeUnitValue { color:var(--syl-muted); }
+.ogl_scrape .ogl_scrapeTotal { font-weight:700; }
+.ogl_scrape .ogl_scrapeEmpty { color:var(--syl-muted); opacity:.5; font-weight:400; }
+.ogl_scrape .ogl_scrapeFooter { display:flex; align-items:center; justify-content:flex-end; gap:16px; margin-top:9px; padding-top:10px; border-top:1px solid var(--syl-border); font-weight:700; }
 .ogl_panelBack { position:absolute; top:0; left:0; display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; background:var(--syl-surface); border:1px solid var(--syl-border); border-radius:var(--syl-radius); color:var(--syl-muted); cursor:pointer; z-index:2; transition:border-color .15s ease-out, color .15s ease-out; }
 .ogl_panelBack:hover { border-color:var(--syl-accent); color:var(--syl-accent); }
 .ogl_panelBack .material-icons { font-size:18px; }
@@ -982,6 +1010,9 @@ class PrOGect
                 sim: false,
                 boardTab: true,
                 msu: '3:2:1',
+                // the scrap merchant's current offer, in percent. The game's own range is 35 to 100; the
+                // floor is the default because it is the conservative read of what a sale would return.
+                scrapeRate: 35,
                 disablePlanetTooltips: false,
                 displaySpyTable: true,
                 shortcutsOnRight: false,
@@ -9323,6 +9354,173 @@ class AccountManager extends Manager
         this.ogl._popup.open(container);
     }
 
+    // PrOGect: the scrap merchant tab. A calculator over the fleet this manager has ALREADY summed in
+    // calcCumul - nothing is fetched here and nothing is sold: it answers "what would the merchant give
+    // me", and the sale itself stays in the game's own merchant page (AGENTS.md 1.1).
+    //
+    // The quantities start at the whole fleet, so reading the total for everything needs no typing, and
+    // each one can be edited down to sell a part of it.
+    openScrape()
+    {
+        const container = Util.addDom('div', { class:'ogl_accountSummary' });
+        container.appendChild(this.addTabs('scrape'));
+
+        const content = Util.addDom('div', { class:'ogl_accountContainer ogl_scrape', parent:container });
+
+        // Ship costs come from the shared tech table, not from getTechData: that applies a body's own
+        // lifeform discounts, and a fleet spans bodies with different ones. The standard cost is the
+        // figure the merchant's percentage applies to.
+        const costOf = id =>
+        {
+            const tech = Datafinder.getTech(id) || {};
+            return { metal:tech.metal || 0, crystal:tech.crystal || 0, deut:tech.deut || 0 };
+        };
+
+        // account-wide fleet, planets and moons together
+        const owned = {};
+        const chosen = {};
+        this.ogl.shipsList.forEach(id =>
+        {
+            owned[id] = (this.cumul.planet?.[id] || 0) + (this.cumul.moon?.[id] || 0);
+            chosen[id] = owned[id];
+        });
+
+        const msuRatio = this.ogl.db.options.msu;
+        const clampRate = value => Math.min(100, Math.max(35, parseInt(value) || 0)) || 35;
+        let rate = clampRate(this.ogl.db.options.scrapeRate);
+
+        const head = Util.addDom('div', { class:'ogl_scrapeHead', parent:content });
+        Util.addDom('div', { class:'ogl_scrapeLabel tooltip', parent:head, title:'What the merchant is offering right now. The game\'s own range is 35% to 100%.', child:'Merchant offer' });
+        const rateInput = Util.addDom('input', { class:'ogl_inputCheck ogl_inputField ogl_scrapeRate', type:'text', value:rate, parent:head });
+        Util.addDom('div', { class:'ogl_scrapeUnit', parent:head, child:'%' });
+        const fillAll = Util.addDom('div', { class:'ogl_button ogl_scrapeFill', parent:head, child:'all' });
+        const fillNone = Util.addDom('div', { class:'ogl_button ogl_scrapeFill', parent:head, child:'none' });
+
+        const grid = Util.addDom('div', { class:'ogl_scrapeGrid', parent:content });
+        // the ship's name is a column, not just a tooltip: with fifteen rows and the game's own dark
+        // thumbnails as the only marker, picking what to sell means hovering every line to find it
+        ['', 'Ship', 'Owned', 'To sell', 'Per unit', 'Total'].forEach((label, index) =>
+        {
+            Util.addDom('div', { class:'ogl_scrapeHeader' + (index == 1 ? ' ogl_scrapeNameHead' : ''), parent:grid, child:label });
+        });
+
+        const rows = {};
+
+        this.ogl.shipsList.forEach(id =>
+        {
+            const cost = costOf(id);
+            const row = rows[id] = {};
+
+            Util.addDom('div', { class:'ogl_scrapeShip', parent:grid, child:`<div class="ogl_icon ogl_${id}"></div>` });
+            Util.addDom('div', { class:'ogl_scrapeName', parent:grid, child:this.ogl._lang.find(id) });
+
+            // exact, not rounded to units: this figure sits beside an input holding the same number, and
+            // a fleet of 1500 reading "2k" next to a field saying 1500 looks like a bug
+            row.owned = Util.addDom('div', { class:'ogl_scrapeOwned', parent:grid, child:Util.formatNumber(owned[id]) });
+
+            row.input = Util.addDom('input', { class:'ogl_inputCheck ogl_inputField', type:'text', value:chosen[id], parent:grid, oninput:() =>
+            {
+                const typed = parseInt(row.input.value.replace(/\D/g, '')) || 0;
+                chosen[id] = Math.min(owned[id], typed);
+                if(chosen[id] != typed) row.input.value = chosen[id];
+                refresh();
+            }});
+
+            row.unit = Util.addDom('div', { class:'ogl_scrapeUnitValue', parent:grid });
+            row.total = Util.addDom('div', { class:'ogl_scrapeTotal', parent:grid });
+
+            // nothing to sell means nothing to type: the same greying the limiter panel uses
+            if(!owned[id])
+            {
+                row.input.classList.add('ogl_disabled');
+                row.input.setAttribute('readonly', 'readonly');
+            }
+
+            row.cost = cost;
+        });
+
+        const footer = Util.addDom('div', { class:'ogl_scrapeFooter', parent:content });
+        const sums = {};
+        ['metal', 'crystal', 'deut'].forEach(resource =>
+        {
+            sums[resource] = Util.addDom('div', { class:`ogl_icon ogl_${resource}`, parent:footer });
+        });
+        sums.msu = Util.addDom('div', { class:'ogl_icon ogl_msu', parent:footer });
+
+        const refresh = () =>
+        {
+            const cumul = { metal:0, crystal:0, deut:0 };
+
+            this.ogl.shipsList.forEach(id =>
+            {
+                const row = rows[id];
+                const count = chosen[id] || 0;
+
+                // the rate is applied to the whole batch, then rounded down once - rounding every single
+                // unit first would quietly lose resources on a large fleet
+                const line =
+                {
+                    metal:Math.floor(row.cost.metal * count * rate / 100),
+                    crystal:Math.floor(row.cost.crystal * count * rate / 100),
+                    deut:Math.floor(row.cost.deut * count * rate / 100),
+                };
+
+                const unit = Util.getMSU(row.cost.metal * rate / 100, row.cost.crystal * rate / 100, row.cost.deut * rate / 100, msuRatio);
+                const total = Util.getMSU(line.metal, line.crystal, line.deut, msuRatio);
+
+                row.unit.innerHTML = Util.formatToUnits(unit, 1);
+                row.unit.setAttribute('title', Util.formatNumber(Math.floor(unit)));
+                row.unit.classList.add('tooltip');
+
+                row.total.innerHTML = count ? Util.formatToUnits(total, 1) : '<span class="ogl_scrapeEmpty">0</span>';
+                row.total.setAttribute('title', count ? `<div class="ogl_readableTooltip">Metal: <b>${Util.formatNumber(line.metal)}</b><br>Crystal: <b>${Util.formatNumber(line.crystal)}</b><br>Deuterium: <b>${Util.formatNumber(line.deut)}</b></div>` : '');
+                row.total.classList.toggle('tooltip', Boolean(count));
+
+                cumul.metal += line.metal;
+                cumul.crystal += line.crystal;
+                cumul.deut += line.deut;
+            });
+
+            ['metal', 'crystal', 'deut'].forEach(resource =>
+            {
+                sums[resource].innerHTML = Util.formatToUnits(cumul[resource], 2);
+                sums[resource].setAttribute('title', Util.formatNumber(cumul[resource]));
+                sums[resource].classList.add('tooltip');
+            });
+
+            const msu = Util.getMSU(cumul.metal, cumul.crystal, cumul.deut, msuRatio);
+            sums.msu.innerHTML = Util.formatToUnits(msu, 2);
+            sums.msu.setAttribute('title', Util.formatNumber(Math.floor(msu)));
+            sums.msu.classList.add('tooltip');
+        };
+
+        rateInput.addEventListener('input', () =>
+        {
+            rate = clampRate(rateInput.value.replace(/\D/g, ''));
+            this.ogl.db.options.scrapeRate = rate;
+            refresh();
+        });
+
+        // the field is only corrected once focus leaves it, so typing "3" on the way to "35" is not
+        // snapped back to 35 under the player's fingers
+        rateInput.addEventListener('blur', () => rateInput.value = rate);
+
+        fillAll.addEventListener('click', () =>
+        {
+            this.ogl.shipsList.forEach(id => { chosen[id] = owned[id]; rows[id].input.value = owned[id]; });
+            refresh();
+        });
+
+        fillNone.addEventListener('click', () =>
+        {
+            this.ogl.shipsList.forEach(id => { chosen[id] = 0; rows[id].input.value = 0; });
+            refresh();
+        });
+
+        refresh();
+        this.ogl._popup.open(container);
+    }
+
     openProduction()
     {
         // v13: field/temperature come from a separate, longer-cached fetch (see
@@ -9627,6 +9825,9 @@ class AccountManager extends Manager
         [
             { title:'empire', icon:'account_balance', type:'empire' },
             { title:'production', icon:'factory', type:'production' },
+            // PrOGect: the scrap merchant. The glyph is checked to exist in the embedded font - it is a
+            // subset, and a name it lacks paints nothing at all.
+            { title:'scrape', icon:'handshake', type:'scrape' },
             //{ title:'research', icon:'science', type:'research' },
             {
                 title:'planets', icon:'planet', type:'planets',

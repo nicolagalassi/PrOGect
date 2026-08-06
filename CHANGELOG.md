@@ -2,6 +2,37 @@
 
 Versions carry a `-v13` suffix: the OGame generation the build targets. It still runs on v12.
 
+## 0.7.0-v13
+
+### Added
+
+- **A Scrape tab in the account view: what the scrap merchant would pay for the fleet.** It opens with the
+  whole account's fleet already filled in - planets and moons together - so the total for everything needs
+  no typing, and each ship can be edited down to price a partial sale. Columns are the ship, how many are
+  owned, how many to sell, the value of one, and the row total; the footer carries metal, crystal,
+  deuterium and the MSU total. The merchant's offer is a field, since it is what the merchant happens to be
+  offering; the game's range is 35% to 100% and the value is clamped to it and remembered between opens.
+  `all` and `none` fill or clear every row at once.
+- Rows for ships the account does not own are greyed and read-only rather than hidden, so the table keeps
+  the same shape and shows what the fleet is missing.
+
+### Notes
+
+- **Nothing is sold and nothing is fetched.** The tab is a calculator over the fleet the account manager
+  has already summed for the other tabs, so opening it makes no request to the game and produces no
+  activity. The sale itself stays where it belongs: the game's own merchant page.
+- Ship prices come from the shared tech table rather than from `getTechData`, which applies a body's own
+  lifeform discounts - a fleet spans bodies with different ones, and the merchant's percentage applies to
+  the standard cost.
+- The percentage is applied to the whole batch and rounded down once, not per unit: rounding each unit
+  first quietly loses resources across a large fleet.
+- Verified against the shipped method in a browser, driven through its own DOM: the totals match an
+  independent recomputation from the cost table at both 35% and 100%, a row refuses to sell more than it
+  owns, typing `3` on the way to `35` is not snapped back under the player's fingers while `250` clamps to
+  `100`, `all` and `none` work, and the rate persists.
+- The Total column shipped at 1.1:1 contrast in the first draft - black text inherited from the popup on a
+  near-black panel, on the one figure the tab exists to show. It is now 15.5:1, measured.
+
 ## 0.6.5-v13
 
 ### Fixed
