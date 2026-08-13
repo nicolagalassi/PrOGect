@@ -62,6 +62,21 @@
         while (Date.now() < end) { let v; try { v = fn(); } catch (e) { v = null; } if (v) return v; await sleep(intervalMs); }
         return null;
     }
+    // Visibilita' affidabile ANCHE per elementi position:fixed (il dialog di
+    // conferma ha class TBfixedPosition -> offsetParent e' null pur essendo
+    // visibile, quindi NON si puo' usare offsetParent per rilevarlo).
+    function isVisible(el) {
+        if (!el || el.getClientRects().length === 0) return false;
+        const s = getComputedStyle(el);
+        return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity || '1') > 0;
+    }
+    // Click "reale": alcuni handler OGame (jQuery UI) ascoltano mousedown/mouseup,
+    // non solo click. Emettiamo l'intera sequenza.
+    function clickReal(el) {
+        for (const type of ['mousedown', 'mouseup', 'click']) {
+            el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+        }
+    }
 
     // =========================================================================
     // 0. INTERCETTORE AJAX  (fix "slot check non corretto")
@@ -567,19 +582,25 @@
         window.__ogdb_lastDiscovery = null;
         const clickTs = Date.now();
         updateStatus(`Invio pos ${label} (Step ${mem.step})...`, 'hl-green');
-        try { el.click(); } catch (e) { isSending = false; updateStatus('Errore click.', 'hl-red'); return; }
+        try { clickReal(el); } catch (e) { isSending = false; updateStatus('Errore click.', 'hl-red'); return; }
 
-        // v13: il click apre una finestra di conferma (#errorBoxDecision).
+        // v13: il click apre una finestra di conferma (#errorBoxDecision), che e'
+        // position:fixed (class TBfixedPosition) -> usiamo isVisible, NON offsetParent.
         // L'AJAX sendDiscoveryFleet parte SOLO dopo aver premuto "Sì".
         const yesBtn = await waitFor(() => {
             const box = document.querySelector(SEL.confirmBox);
-            if (!box || box.offsetParent === null) return null;
-            for (const s of SEL.confirmYes) { const b = box.querySelector(s) || document.querySelector(s); if (b) return b; }
+            if (!isVisible(box)) return null;
+            for (const s of SEL.confirmYes) {
+                const b = box.querySelector(s) || document.querySelector(s);
+                if (b && isVisible(b)) return b.closest('a') || b; // span "Sì" -> anchor cliccabile
+            }
             return null;
-        }, 3500);
+        }, 4000);
         if (yesBtn) {
             updateStatus(`Confermo pos ${label}...`, 'hl-green');
-            try { yesBtn.click(); } catch (e) {}
+            try { clickReal(yesBtn); } catch (e) {}
+        } else {
+            updateStatus('Dialog conferma non trovato.', 'hl-red');
         }
         // Se il dialog non e' comparso proseguiamo comunque: alcuni universi
         // potrebbero inviare direttamente, oppure il click non ha avuto effetto.
