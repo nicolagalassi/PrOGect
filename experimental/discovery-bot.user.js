@@ -46,8 +46,11 @@
         eventBox:     ['#eventContent', '#eventboxContent table', '.eventFleet'],
         eventToggle:  ['#js_eventDetailsClosed', '#js_eventDetailsOpen'],
         // v13: dopo il click sull'icona appare una finestra di conferma.
+        // NB: OGame (errorBoxDecision) lega l'handler del "Sì" allo SPAN
+        // #errorBoxDecisionYes -> va cliccato l'elemento piu' interno, perche'
+        // l'evento bolla verso l'alto (cliccare l'anchor NON attiva lo span).
         confirmBox:   '#errorBoxDecision',
-        confirmYes:   ['#errorBoxDecision a.yes', '#errorBoxDecision .yes', '#errorBoxDecisionYes'],
+        confirmYes:   ['#errorBoxDecisionYes', '#errorBoxDecision a.yes span', '#errorBoxDecision a.yes', '#errorBoxDecision .yes'],
     };
 
     // helper: primo selettore che matcha
@@ -597,7 +600,9 @@
             if (!isVisible(box)) return null;
             for (const s of SEL.confirmYes) {
                 const b = box.querySelector(s) || document.querySelector(s);
-                if (b && isVisible(b)) return b.closest('a') || b; // span "Sì" -> anchor cliccabile
+                // Clicca l'elemento PIU' INTERNO (lo span): l'evento bolla verso
+                // l'alto e attiva l'handler ovunque sia legato (span o anchor).
+                if (b && isVisible(b)) return b;
             }
             return null;
         }, 4000);
