@@ -35,8 +35,14 @@
         galaxyInput:  ['#galaxy_input', 'input[name="galaxy"]', '#galaxy'],
         slotUsed:     ['#slotUsed', '#galaxycomponent #slotUsed'],
         slotTotal:    ['#slotValue', '#galaxycomponent #slotValue'],
+        // v13: discovery PER SINGOLO PIANETA. Ogni posizione scopribile ha
+        // <a class="planetDiscover positionN" onclick="discoverPlanet(url,{...})">
+        // (action=sendDiscoveryFleet). L'onclick e' presente solo se scopribile.
+        planetDiscover: 'a.planetDiscover',
+        // Fallback: eventuale pulsante "scopri intero sistema" (non presente
+        // su tutti gli universi; se esiste manda action=sendSystemDiscoveryFleet).
         discoverBtn:  ['#discoverySystemBtn', '#discoverSystemBtn', '.discoveryButton',
-                       'button[data-discovery]', 'a.discovery', '[id*="iscover"]'],
+                       'button[data-discovery]', 'a.discovery'],
         eventBox:     ['#eventContent', '#eventboxContent table', '.eventFleet'],
         eventToggle:  ['#js_eventDetailsClosed', '#js_eventDetailsOpen'],
     };
@@ -327,6 +333,32 @@
         return { used, total, valid: used >= 0 && total >= 0 };
     }
 
+    // Avanza di uno step nella spirale e naviga (reload) al prossimo sistema.
+    function advanceSpiral(mem, delay = 1000) {
+        const next = nextValidStep(mem.startSys, mem.step + 1);
+        saveHistoryForCp(config.targetCp, mem.startSys, next.step);
+        setTimeout(() => navigateToSystem(next.sys), delay);
+    }
+
+    // Posizioni gia' inviate in QUESTO caricamento pagina (evita doppi invii
+    // se il DOM non aggiorna subito l'icona). Si azzera a ogni reload.
+    const sentPositions = new Set();
+    const posOf = (a) => {
+        const m = (a.className.match(/position(\d+)/) || [])[1];
+        if (m) return m;
+        const m2 = ((a.getAttribute('onclick') || '').match(/['"]position['"]\s*:\s*(\d+)/) || [])[1];
+        return m2 || null;
+    };
+    // Icone discovery per-pianeta ANCORA da inviare nel sistema corrente.
+    // Filtro chiave: onclick deve contenere discoverPlanet( -> presente solo
+    // sulle posizioni realmente scopribili (esclude i gia' fatti).
+    function getDiscoverTargets() {
+        return Array.from(document.querySelectorAll(SEL.planetDiscover))
+            .filter(a => (a.getAttribute('onclick') || '').indexOf('discoverPlanet') >= 0)
+            .filter(a => a.offsetParent !== null)
+            .filter(a => !sentPositions.has(posOf(a)));
+    }
+
     // =========================================================================
     // 7. CALCOLO ATTESA  (flotte discovery/LF in rientro -> mission-type 18)
     //    Best-effort: se non troviamo eventi, fallback fisso. In ogni caso alla
@@ -439,27 +471,45 @@
             if (slots.used >= slots.total) { await calculateWaitTime(); return; }
         }
 
-        // 8) Invia discovery e aspetta la RISPOSTA AJAX reale (fix slot check)
-        const discoverBtn = q(SEL.discoverBtn);
-        if (!discoverBtn) {
-            // Nessun pulsante discovery in questo sistema: consideralo "fatto", avanza.
-            updateStatus('No discovery qui. Next...', 'hl-yellow');
-            const step = mem.step + 1;
-            const next = nextValidStep(mem.startSys, step);
-            saveHistoryForCp(config.targetCp, mem.startSys, next.step);
-            await sleep(500);
-            navigateToSystem(next.sys);
+        // 8) DISCOVERY PER-PIANETA (v13). In un sistema possono esserci piu'
+        //    posizioni scopribili: ne inviamo UNA per tick (una per slot),
+        //    finche' il sistema e' completato o gli slot si riempiono.
+        let targets = getDiscoverTargets();
+
+        // 8a) Nessun target per-pianeta: prova l'eventuale pulsante globale,
+        //     altrimenti il sistema e' considerato "fatto" -> avanza.
+        if (targets.length === 0) {
+            const globalBtn = q(SEL.discoverBtn);
+            if (globalBtn && globalBtn.offsetParent !== null && !sentPositions.has('__system__')) {
+                sentPositions.add('__system__');
+                await clickAndAwait(globalBtn, mem, 'sistema');
+                return;
+            }
+            updateStatus('Sistema completato. Next...', 'hl-yellow');
+            advanceSpiral(mem, 600);
             return;
         }
 
-        // Click + attesa esito autorevole dall'intercettore
+        // 8b) Ci sono target: check slot preventivo, poi invia il primo.
+        const pre = readSlots();
+        if (pre.valid && pre.used >= pre.total) { await calculateWaitTime(); return; }
+
+        const target = targets[0];
+        const pos = posOf(target);
+        sentPositions.add(pos); // marca subito: evita ri-click se il DOM non aggiorna
+        await clickAndAwait(target, mem, pos);
+    }
+
+    // Clicca un target discovery (per-pianeta o globale), attende l'esito AJAX
+    // autorevole e decide: RESTA (slot pieni -> timer) oppure continua.
+    async function clickAndAwait(el, mem, label) {
         isSending = true;
         window.__ogdb_lastDiscovery = null;
         const clickTs = Date.now();
-        updateStatus(`Invio (Step ${mem.step})...`, 'hl-green');
-        try { discoverBtn.click(); } catch (e) { isSending = false; updateStatus('Errore click.', 'hl-red'); return; }
+        updateStatus(`Invio pos ${label} (Step ${mem.step})...`, 'hl-green');
+        try { el.click(); } catch (e) { isSending = false; updateStatus('Errore click.', 'hl-red'); return; }
 
-        // Attendi fino a 8s la risposta di sendSystemDiscoveryFleet
+        // Attendi fino a 8s la risposta di sendDiscoveryFleet / sendSystemDiscoveryFleet
         let result = null;
         for (let i = 0; i < 40; i++) {
             await sleep(200);
@@ -469,47 +519,35 @@
             }
         }
 
-        if (!result) {
-            // Nessuna risposta: forse il bottone non ha inviato (gia' esplorato / cooldown).
-            // Rileggi gli slot dal DOM come fallback prima di decidere.
-            isSending = false;
-            const s2 = readSlots();
-            if (s2.valid && s2.used >= s2.total) { updateStatus('Timeout, slot pieni.', 'hl-red'); await calculateWaitTime(); return; }
-            updateStatus('Timeout invio. Next...', 'hl-red');
-            const step = mem.step + 1;
-            const next = nextValidStep(mem.startSys, step);
-            saveHistoryForCp(config.targetCp, mem.startSys, next.step);
-            await sleep(800);
-            navigateToSystem(next.sys);
-            return;
-        }
-
-        // Abbiamo l'esito reale. result.slots = slot USATI autorevoli.
+        // Slot autorevoli: da response.slots (usati) se presente, altrimenti DOM.
         const total = toInt(q(SEL.slotTotal), -1);
-        const usedNow = (result.slots !== null) ? result.slots : readSlots().used;
+        const usedNow = (result && result.slots !== null) ? result.slots : readSlots().used;
         if (total >= 0 && usedNow >= 0) {
             const slotsEl = document.getElementById('hud-slots');
             slotsEl.innerText = `${usedNow}/${total}`;
             slotsEl.classList.toggle('hl-red', usedNow >= total);
         }
-
         isSending = false;
 
-        // LOGICA COMPLETIONIST (ora basata sui dati veri):
-        // - se dopo l'invio gli slot sono pieni -> RESTA qui, imposta timer, non avanzare.
-        // - altrimenti (successo con spazio, oppure nessun invio) -> avanza nella spirale.
+        // Se dopo l'invio gli slot sono pieni -> COMPLETIONIST: resta qui e
+        // imposta il timer. NON avanziamo: al risveglio (reload) i pianeti
+        // gia' scoperti non mostreranno piu' l'icona, riprenderemo dai restanti.
         if (total >= 0 && usedNow >= total) {
-            updateStatus(result.success ? `Inviata ma FULL. Resto.` : `Slot pieni. Resto.`, 'hl-red');
+            updateStatus((result && result.success) ? 'Inviata ma FULL. Resto.' : 'Slot pieni. Resto.', 'hl-red');
             await calculateWaitTime();
             return;
         }
 
-        updateStatus(result.success ? 'OK & spazio. Next...' : 'Vuoto/skip. Next...', 'hl-green');
-        const step = mem.step + 1;
-        const next = nextValidStep(mem.startSys, step);
-        saveHistoryForCp(config.targetCp, mem.startSys, next.step);
-        await sleep(1200);
-        navigateToSystem(next.sys);
+        if (!result) {
+            // Nessun AJAX: click non andato a buon fine (gia' scoperto / navi
+            // insufficienti). L'abbiamo gia' marcato in sentPositions: al prossimo
+            // tick si passa al target successivo o si avanza.
+            updateStatus('Nessun invio (skip pos).', 'hl-yellow');
+            return;
+        }
+        // Invio ok e slot liberi: il prossimo tick prende il target successivo
+        // dello stesso sistema (o avanza se non ce ne sono piu').
+        updateStatus('OK & spazio. Prossimo target...', 'hl-green');
     }
 
     // Loop cadenzato. mainLoop e' async ma i branch che navigano settano

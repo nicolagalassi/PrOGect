@@ -18,14 +18,23 @@ gestendo gli slot flotta. Evoluzione della V15 (che girava su OGame v12), adatta
    (`location.reload()`), così `#slotUsed` e la lista eventi tornano freschi.
 
 2. **Controllo slot corretto.**
-   Su v13 la Discovery è una chiamata **AJAX** (`sendSystemDiscoveryFleet` /
-   `sendDiscoveryFleet`) e il contatore slot nel DOM si aggiorna in modo asincrono:
+   Su v13 la Discovery è una chiamata **AJAX** (`sendDiscoveryFleet` /
+   `sendSystemDiscoveryFleet`) e il contatore slot nel DOM si aggiorna in modo asincrono:
    leggerlo subito dopo il click era inaffidabile, così come il parsing di
    `#fleetstatusrow`. Ora il bot **intercetta la risposta AJAX** (XHR + fetch) e usa
    `response.success` e `response.slots` (slot usati, valore autorevole) per decidere se
    restare (completionist) o avanzare nella spirale.
 
-3. **Selettori con fallback v13** per parsing pianeti, input sistema, pulsante discovery,
+3. **Discovery per singolo pianeta.**
+   Su v13 non c'è (in genere) un unico tasto "scopri sistema": ogni posizione scopribile ha
+   la sua icona `<a class="planetDiscover positionN" onclick="discoverPlanet(...)">`. Il bot
+   **cicla su tutte le posizioni scopribili** del sistema (un invio per slot), filtrando per
+   `onclick` contenente `discoverPlanet` (così esclude in automatico i pianeti già scoperti).
+   Se gli slot si riempiono a metà sistema, **resta** e riprende dai restanti dopo il rientro
+   (logica *completionist*). È previsto un fallback al pulsante globale, se il tuo universo ne
+   ha uno (`sendSystemDiscoveryFleet`).
+
+4. **Selettori con fallback v13** per parsing pianeti, input sistema, icone discovery,
    slot ed eventi (id/classi possono essere rinominati tra le versioni del gioco).
 
 ### Uso
