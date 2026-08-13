@@ -30,9 +30,13 @@ gestendo gli slot flotta. Evoluzione della V15 (che girava su OGame v12), adatta
    la sua icona `<a class="planetDiscover positionN" onclick="discoverPlanet(...)">`. Il bot
    **cicla su tutte le posizioni scopribili** del sistema (un invio per slot), filtrando per
    `onclick` contenente `discoverPlanet` (così esclude in automatico i pianeti già scoperti).
+   Dopo il click compare la **finestra di conferma** `#errorBoxDecision`: il bot preme
+   automaticamente **"Sì"** (`a.yes`), che è ciò che fa realmente partire l'AJAX.
    Se gli slot si riempiono a metà sistema, **resta** e riprende dai restanti dopo il rientro
    (logica *completionist*). È previsto un fallback al pulsante globale, se il tuo universo ne
    ha uno (`sendSystemDiscoveryFleet`).
+
+   Slot letti da `#slots` → `#slotUsed`/`#slotValue` (es. `14/36`).
 
 4. **Selettori con fallback v13** per parsing pianeti, input sistema, icone discovery,
    slot ed eventi (id/classi possono essere rinominati tra le versioni del gioco).

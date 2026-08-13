@@ -45,6 +45,9 @@
                        'button[data-discovery]', 'a.discovery'],
         eventBox:     ['#eventContent', '#eventboxContent table', '.eventFleet'],
         eventToggle:  ['#js_eventDetailsClosed', '#js_eventDetailsOpen'],
+        // v13: dopo il click sull'icona appare una finestra di conferma.
+        confirmBox:   '#errorBoxDecision',
+        confirmYes:   ['#errorBoxDecision a.yes', '#errorBoxDecision .yes', '#errorBoxDecisionYes'],
     };
 
     // helper: primo selettore che matcha
@@ -53,6 +56,12 @@
     function toInt(el, def = 0) { if (!el) return def; const n = parseInt((el.innerText || el.textContent || el.value || '').replace(/[^\d-]/g, ''), 10); return isNaN(n) ? def : n; }
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
     function getUrlParam(url, param) { try { return new URL(url, window.location.origin).searchParams.get(param); } catch(e) { return null; } }
+    // Attende che fn() restituisca un valore truthy, entro timeoutMs.
+    async function waitFor(fn, timeoutMs, intervalMs = 150) {
+        const end = Date.now() + timeoutMs;
+        while (Date.now() < end) { let v; try { v = fn(); } catch (e) { v = null; } if (v) return v; await sleep(intervalMs); }
+        return null;
+    }
 
     // =========================================================================
     // 0. INTERCETTORE AJAX  (fix "slot check non corretto")
@@ -508,6 +517,21 @@
         const clickTs = Date.now();
         updateStatus(`Invio pos ${label} (Step ${mem.step})...`, 'hl-green');
         try { el.click(); } catch (e) { isSending = false; updateStatus('Errore click.', 'hl-red'); return; }
+
+        // v13: il click apre una finestra di conferma (#errorBoxDecision).
+        // L'AJAX sendDiscoveryFleet parte SOLO dopo aver premuto "Sì".
+        const yesBtn = await waitFor(() => {
+            const box = document.querySelector(SEL.confirmBox);
+            if (!box || box.offsetParent === null) return null;
+            for (const s of SEL.confirmYes) { const b = box.querySelector(s) || document.querySelector(s); if (b) return b; }
+            return null;
+        }, 3500);
+        if (yesBtn) {
+            updateStatus(`Confermo pos ${label}...`, 'hl-green');
+            try { yesBtn.click(); } catch (e) {}
+        }
+        // Se il dialog non e' comparso proseguiamo comunque: alcuni universi
+        // potrebbero inviare direttamente, oppure il click non ha avuto effetto.
 
         // Attendi fino a 8s la risposta di sendDiscoveryFleet / sendSystemDiscoveryFleet
         let result = null;
