@@ -70,12 +70,17 @@
         const s = getComputedStyle(el);
         return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity || '1') > 0;
     }
-    // Click "reale": alcuni handler OGame (jQuery UI) ascoltano mousedown/mouseup,
-    // non solo click. Emettiamo l'intera sequenza.
+    // Click robusto: prima il .click() nativo (che funziona con gli handler
+    // jQuery), poi come rinforzo la sequenza mousedown/mouseup/click. Tutto
+    // guardato: in sandbox Tampermonkey il costruttore MouseEvent puo' lanciare
+    // (NON passiamo "view"), quindi non deve mai far fallire l'invio.
     function clickReal(el) {
-        for (const type of ['mousedown', 'mouseup', 'click']) {
-            el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
-        }
+        try { el.click(); } catch (e) {}
+        try {
+            for (const type of ['mousedown', 'mouseup', 'click']) {
+                el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+            }
+        } catch (e) {}
     }
 
     // =========================================================================
@@ -582,7 +587,7 @@
         window.__ogdb_lastDiscovery = null;
         const clickTs = Date.now();
         updateStatus(`Invio pos ${label} (Step ${mem.step})...`, 'hl-green');
-        try { clickReal(el); } catch (e) { isSending = false; updateStatus('Errore click.', 'hl-red'); return; }
+        try { el.click(); } catch (e) { isSending = false; updateStatus('Errore click icona.', 'hl-red'); return; }
 
         // v13: il click apre una finestra di conferma (#errorBoxDecision), che e'
         // position:fixed (class TBfixedPosition) -> usiamo isVisible, NON offsetParent.
