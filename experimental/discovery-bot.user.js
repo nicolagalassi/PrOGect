@@ -8,6 +8,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
+// @grant        unsafeWindow
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -85,6 +86,23 @@
             }
         } catch (e) {}
     }
+    // jQuery della PAGINA (via unsafeWindow): invoca l'handler nel contesto reale,
+    // il modo piu' autorevole di premere "Sì" (bypassa problemi di sandbox/timing).
+    const PW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    function pageJQueryClick(selectors) {
+        try {
+            const jq = PW.jQuery || PW.$;
+            if (!jq) return false;
+            for (const s of selectors) { const $el = jq(s); if ($el && $el.length) { $el.first().trigger('click'); return true; } }
+        } catch (e) {}
+        return false;
+    }
+    // Primo elemento visibile tra una lista di selettori (dentro un contenitore).
+    function firstVisibleIn(container, selectors) {
+        for (const s of selectors) { const b = (container && container.querySelector(s)) || document.querySelector(s); if (b && isVisible(b)) return b; }
+        return null;
+    }
+    const gotDiscoveryAfter = (ts) => window.__ogdb_lastDiscovery && window.__ogdb_lastDiscovery.ts >= ts;
 
     // =========================================================================
     // 0. INTERCETTORE AJAX  (fix "slot check non corretto")
@@ -593,27 +611,33 @@
         try { el.click(); } catch (e) { isSending = false; updateStatus('Errore click icona.', 'hl-red'); return; }
 
         // v13: il click apre una finestra di conferma (#errorBoxDecision), che e'
-        // position:fixed (class TBfixedPosition) -> usiamo isVisible, NON offsetParent.
-        // L'AJAX sendDiscoveryFleet parte SOLO dopo aver premuto "Sì".
-        const yesBtn = await waitFor(() => {
-            const box = document.querySelector(SEL.confirmBox);
-            if (!isVisible(box)) return null;
-            for (const s of SEL.confirmYes) {
-                const b = box.querySelector(s) || document.querySelector(s);
-                // Clicca l'elemento PIU' INTERNO (lo span): l'evento bolla verso
-                // l'alto e attiva l'handler ovunque sia legato (span o anchor).
-                if (b && isVisible(b)) return b;
-            }
-            return null;
-        }, 4000);
-        if (yesBtn) {
-            updateStatus(`Confermo pos ${label}...`, 'hl-green');
-            try { clickReal(yesBtn); } catch (e) {}
+        // un jQuery UI dialog position:fixed (class TBfixedPosition) -> usiamo
+        // isVisible, NON offsetParent. L'AJAX sendDiscoveryFleet parte SOLO dopo "Sì".
+
+        // (1) Aspetta la comparsa del dialog.
+        const appeared = await waitFor(() => isVisible(document.querySelector(SEL.confirmBox)) ? true : null, 4000);
+        if (!appeared) {
+            updateStatus('Dialog conferma non comparso.', 'hl-red');
         } else {
-            updateStatus('Dialog conferma non trovato.', 'hl-red');
+            // (2) Premi "Sì" con RETRY (gestisce il binding tardivo dell'handler).
+            //     Ogni giro: prima la jQuery della PAGINA (metodo piu' affidabile),
+            //     controllo se il dialog si chiude, e SOLO se resta aperto uso il
+            //     click nativo. Il check di visibilita' tra i due evita doppi invii.
+            for (let i = 0; i < 12; i++) {
+                let box = document.querySelector(SEL.confirmBox);
+                if (!isVisible(box) || gotDiscoveryAfter(clickTs)) break;   // gia' confermato
+                updateStatus(`Confermo pos ${label}...`, 'hl-green');
+
+                pageJQueryClick(SEL.confirmYes);
+                await sleep(180);
+                box = document.querySelector(SEL.confirmBox);
+                if (!isVisible(box) || gotDiscoveryAfter(clickTs)) break;   // jQuery ha funzionato
+
+                const yes = firstVisibleIn(box, SEL.confirmYes);
+                if (yes) clickReal(yes);
+                await sleep(220);
+            }
         }
-        // Se il dialog non e' comparso proseguiamo comunque: alcuni universi
-        // potrebbero inviare direttamente, oppure il click non ha avuto effetto.
 
         // Attendi fino a 8s la risposta di sendDiscoveryFleet / sendSystemDiscoveryFleet
         let result = null;

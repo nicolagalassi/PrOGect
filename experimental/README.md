@@ -30,8 +30,11 @@ gestendo gli slot flotta. Evoluzione della V15 (che girava su OGame v12), adatta
    la sua icona `<a class="planetDiscover positionN" onclick="discoverPlanet(...)">`. Il bot
    **cicla su tutte le posizioni scopribili** del sistema (un invio per slot), filtrando per
    `onclick` contenente `discoverPlanet` (così esclude in automatico i pianeti già scoperti).
-   Dopo il click compare la **finestra di conferma** `#errorBoxDecision`: il bot preme
-   automaticamente **"Sì"** (`a.yes`), che è ciò che fa realmente partire l'AJAX.
+   Dopo il click compare la **finestra di conferma** `#errorBoxDecision` (jQuery UI dialog,
+   `position:fixed`): il bot preme automaticamente **"Sì"**, che è ciò che fa realmente
+   partire l'AJAX. La conferma è robusta: attende la comparsa del dialog, poi tenta il "Sì"
+   con retry usando prima `jQuery(...).trigger('click')` della pagina (via `unsafeWindow`) e
+   poi il click nativo come backup, con controllo di visibilità in mezzo per evitare doppi invii.
    Se gli slot si riempiono a metà sistema, **resta** e riprende dai restanti dopo il rientro
    (logica *completionist*). È previsto un fallback al pulsante globale, se il tuo universo ne
    ha uno (`sendSystemDiscoveryFleet`).
