@@ -136,6 +136,21 @@
         .info-val { color: #c3d2e3; font-weight: bold; }
         .hl-cyan { color: #00d0ff; } .hl-magenta { color: #ff55ff; } .hl-yellow { color: #ff0; }
         .hl-green { color: #0f0; } .hl-red { color: #ff3333; }
+        /* Slot riservati */
+        .ogdb-reserve { display: flex; align-items: center; justify-content: space-between;
+            background: #0d1014; border: 1px solid #1f2733; border-radius: 4px; padding: 6px 8px; margin-bottom: 8px; }
+        .ogdb-reserve-label { color: #8897a6; font-size: 10px; }
+        .ogdb-stepper { display: flex; align-items: center; }
+        .ogdb-step-btn { cursor: pointer; width: 22px; height: 22px; line-height: 20px; text-align: center;
+            background: #1e232e; color: #c3d2e3; border: 1px solid #334252; font-weight: bold; font-size: 14px;
+            user-select: none; }
+        .ogdb-step-btn:hover { background: #2b3442; color: #fff; }
+        .ogdb-step-btn:first-of-type { border-radius: 3px 0 0 3px; }
+        .ogdb-step-btn:last-of-type { border-radius: 0 3px 3px 0; }
+        .ogdb-step-input { width: 34px; height: 22px; text-align: center; background: #161a23; color: #00d0ff;
+            border: 1px solid #334252; border-left: none; border-right: none; font-weight: bold; font-size: 12px;
+            -moz-appearance: textfield; }
+        .ogdb-step-input::-webkit-outer-spin-button, .ogdb-step-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     `);
 
     // =========================================================================
@@ -146,11 +161,12 @@
     const setUniValue = (k, v) => GM_setValue(`${UNI_ID}_${k}`, v);
 
     let config = {
-        paused:     getUniValue('paused', true),
-        targetCp:   getUniValue('targetCp', null),
-        history:    getUniValue('history', {}),
-        resumeTime: getUniValue('resumeTime', 0),
-        isMinimized:getUniValue('isMinimized', false)
+        paused:        getUniValue('paused', true),
+        targetCp:      getUniValue('targetCp', null),
+        history:       getUniValue('history', {}),
+        resumeTime:    getUniValue('resumeTime', 0),
+        isMinimized:   getUniValue('isMinimized', false),
+        reservedSlots: getUniValue('reservedSlots', 0)   // slot flotta da tenere SEMPRE liberi
     };
 
     let isNavigating = false;   // true = stiamo per cambiare pagina, non fare altro
@@ -228,6 +244,14 @@
                 <div style="flex-grow:1;font-size:10px;color:#546275;">Sistema attuale come Centro -></div>
                 <button id="bot-reset-btn" class="ogdb-btn reset">Reset ↻</button>
             </div>
+            <div class="ogdb-reserve">
+                <span class="ogdb-reserve-label">🛡️ Slot da tenere liberi</span>
+                <div class="ogdb-stepper">
+                    <button id="bot-res-minus" class="ogdb-step-btn">−</button>
+                    <input id="bot-res-input" class="ogdb-step-input" type="number" min="0" max="99" value="${config.reservedSlots}">
+                    <button id="bot-res-plus" class="ogdb-step-btn">+</button>
+                </div>
+            </div>
             <button id="bot-pause-btn" class="ogdb-btn main">Caricamento...</button>
             <div id="bot-info-panel">
                 <div class="info-row"><span class="info-label">🎯 Target</span><span id="hud-target-name" class="info-val">-</span></div>
@@ -247,6 +271,22 @@
     const planetSelect= document.getElementById('bot-planet-select');
     const statusEl    = document.getElementById('hud-status');
     const indicator   = document.getElementById('bot-indicator');
+    const resInput    = document.getElementById('bot-res-input');
+    const resMinus    = document.getElementById('bot-res-minus');
+    const resPlus     = document.getElementById('bot-res-plus');
+
+    function setReserved(n) {
+        n = Math.max(0, Math.min(99, parseInt(n, 10) || 0));
+        config.reservedSlots = n;
+        setUniValue('reservedSlots', n);
+        resInput.value = n;
+        // ridipingi subito la riga slot con i valori correnti a schermo
+        const s = readSlots();
+        if (s.valid) paintSlots(s.used, s.total);
+    }
+    resMinus.onclick = () => setReserved(config.reservedSlots - 1);
+    resPlus.onclick  = () => setReserved(config.reservedSlots + 1);
+    resInput.onchange = (e) => setReserved(e.target.value);
 
     toggleBtn.onclick = () => {
         config.isMinimized = !config.isMinimized;
@@ -340,6 +380,18 @@
         const used = toInt(q(SEL.slotUsed), -1);
         const total = toInt(q(SEL.slotTotal), -1);
         return { used, total, valid: used >= 0 && total >= 0 };
+    }
+    // Limite operativo tenendo conto degli slot riservati (sempre liberi).
+    function slotLimit(total) { return Math.max(0, total - (config.reservedSlots || 0)); }
+    // "Pieno" per il bot = raggiunto il limite operativo (non il totale reale).
+    function slotsFull(used, total) { return used >= slotLimit(total); }
+    // Aggiorna la riga slot nell'HUD, evidenziando in rosso a limite raggiunto.
+    function paintSlots(used, total) {
+        const el = document.getElementById('hud-slots');
+        if (!el || used < 0 || total < 0) return;
+        const res = config.reservedSlots || 0;
+        el.innerText = res > 0 ? `${used}/${total} (−${res})` : `${used}/${total}`;
+        el.classList.toggle('hl-red', slotsFull(used, total));
     }
 
     // Avanza di uno step nella spirale e naviga (reload) al prossimo sistema.
@@ -471,13 +523,12 @@
             return;
         }
 
-        // 7) Leggi gli slot (FIX: check preventivo con valori dal DOM freschi del reload)
+        // 7) Leggi gli slot (FIX: check preventivo con valori dal DOM freschi del reload).
+        //    Tiene conto degli slot riservati: "pieno" = usati >= totale - riservati.
         const slots = readSlots();
         if (slots.valid) {
-            const slotsEl = document.getElementById('hud-slots');
-            slotsEl.innerText = `${slots.used}/${slots.total}`;
-            slotsEl.classList.toggle('hl-red', slots.used >= slots.total);
-            if (slots.used >= slots.total) { await calculateWaitTime(); return; }
+            paintSlots(slots.used, slots.total);
+            if (slotsFull(slots.used, slots.total)) { await calculateWaitTime(); return; }
         }
 
         // 8) DISCOVERY PER-PIANETA (v13). In un sistema possono esserci piu'
@@ -499,9 +550,9 @@
             return;
         }
 
-        // 8b) Ci sono target: check slot preventivo, poi invia il primo.
+        // 8b) Ci sono target: check slot preventivo (con riserva), poi invia il primo.
         const pre = readSlots();
-        if (pre.valid && pre.used >= pre.total) { await calculateWaitTime(); return; }
+        if (pre.valid) { paintSlots(pre.used, pre.total); if (slotsFull(pre.used, pre.total)) { await calculateWaitTime(); return; } }
 
         const target = targets[0];
         const pos = posOf(target);
@@ -546,18 +597,16 @@
         // Slot autorevoli: da response.slots (usati) se presente, altrimenti DOM.
         const total = toInt(q(SEL.slotTotal), -1);
         const usedNow = (result && result.slots !== null) ? result.slots : readSlots().used;
-        if (total >= 0 && usedNow >= 0) {
-            const slotsEl = document.getElementById('hud-slots');
-            slotsEl.innerText = `${usedNow}/${total}`;
-            slotsEl.classList.toggle('hl-red', usedNow >= total);
-        }
+        if (total >= 0 && usedNow >= 0) paintSlots(usedNow, total);
         isSending = false;
 
-        // Se dopo l'invio gli slot sono pieni -> COMPLETIONIST: resta qui e
-        // imposta il timer. NON avanziamo: al risveglio (reload) i pianeti
-        // gia' scoperti non mostreranno piu' l'icona, riprenderemo dai restanti.
-        if (total >= 0 && usedNow >= total) {
-            updateStatus((result && result.success) ? 'Inviata ma FULL. Resto.' : 'Slot pieni. Resto.', 'hl-red');
+        // Se dopo l'invio abbiamo raggiunto il limite (totale - riservati) ->
+        // COMPLETIONIST: resta qui e imposta il timer. NON avanziamo: al risveglio
+        // (reload) i pianeti gia' scoperti non mostreranno piu' l'icona, quindi
+        // riprenderemo dai restanti.
+        if (total >= 0 && slotsFull(usedNow, total)) {
+            const lbl = (config.reservedSlots || 0) > 0 ? 'Limite (riserva). Resto.' : 'Slot pieni. Resto.';
+            updateStatus((result && result.success) ? 'Inviata, limite. Resto.' : lbl, 'hl-red');
             await calculateWaitTime();
             return;
         }

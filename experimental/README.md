@@ -41,11 +41,20 @@ gestendo gli slot flotta. Evoluzione della V15 (che girava su OGame v12), adatta
 4. **Selettori con fallback v13** per parsing pianeti, input sistema, icone discovery,
    slot ed eventi (id/classi possono essere rinominati tra le versioni del gioco).
 
+### Slot riservati
+
+Nell'HUD c'è il controllo **🛡️ Slot da tenere liberi** (stepper −/+). Imposta quanti slot
+flotta lasciare sempre liberi: il bot considera "pieno" quando `usati ≥ totale − riservati`,
+così non satura la flotta (es. per lasciare 2 slot ad altri usi). Il valore è persistente per
+universo. La riga 🚀 Slot mostra `usati/totale (−riservati)` e diventa rossa al raggiungimento
+del limite operativo.
+
 ### Uso
 
 Installa il file in Tampermonkey. Nell'HUD in alto a destra:
 - scegli il pianeta/luna di **partenza** (centro spirale),
 - eventualmente premi **Reset ↻** per fissare il sistema corrente come centro,
+- imposta gli **slot da tenere liberi** se vuoi (default 0),
 - premi **AVVIA**.
 
 I selettori sono configurabili in cima al file (oggetto `SEL`) se il tuo universo usa id diversi.
