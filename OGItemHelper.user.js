@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.6.0
+// @version      0.6.1
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -178,34 +178,37 @@
         return planets[(i + 1) % planets.length];
     }
 
-    // Read the inventory the shop page already holds — no fetch (§4).
-    // Primary source: the game's own inventoryObj.items_inventory (also carries the per-planet
-    // active state: status / timeLeft / extendable). Fallback: the inventory tile DOM.
-    // Collect every item the shop page already knows about — no fetch (§4). We merge the game's
-    // own inventoryObj.items_inventory (what you OWN, plus per-planet active state) with
-    // items_shop (what is BUYABLE). Each entry is tagged owned / active / buyable so the view
-    // can show the inventory by default and the shop only behind the flag.
+    // Collect every item the shop page already knows about — no fetch (§4).
+    // We MERGE four sources so nothing is missed: the game's inventoryObj.items_inventory (owned,
+    // with per-planet active state) and items_shop (buyable), PLUS the inventory- and shop-slider
+    // DOM tiles. The DOM inventory slider is what guarantees the WEAK, non-buyable items you own
+    // (e.g. bronze boosters, which never appear in items_shop) are shown — the arrays alone can be
+    // empty or partial depending on which tab the game has rendered.
     function collectItems()
     {
-        const obj = PAGE.inventoryObj || {};
         const map = {};
 
-        const push = it =>
+        // Merge one record into the map: OR the boolean flags, keep the first non-empty scalar.
+        const upsert = d =>
         {
-            // Skip the active running one-shot instances (packages/KRAKEN with an expiryDate):
-            // they are countdown copies, not activatable stacks.
-            if(!it || !it.ref || it.expiryDate) return;
+            if(!d || !d.uuid) return;
+            const e = map[d.uuid] || (map[d.uuid] = { uuid: d.uuid });
+            for(const k in d)
+            {
+                const v = d[k];
+                if(v === undefined || v === null || v === '') continue;
+                if(k === 'owned' || k === 'active' || k === 'buyable') e[k] = e[k] || v;
+                else if(e[k] === undefined || e[k] === '' || e[k] === 0) e[k] = v;
+            }
+        };
+
+        const fromJs = it =>
+        {
+            if(!it || !it.ref || it.expiryDate) return null; // skip running one-shot instances
             const amount = it.amount || 0;
             const active = it.status === 'effecting' || it.timeLeft > 0;
-            const existing = map[it.ref];
-            if(existing)
-            {
-                if(it.buyable) existing.buyable = true; // shop copy adds the buyable flag
-                return;
-            }
             const hash = it.imageLarge || it.image || '';
-            map[it.ref] =
-            {
+            return {
                 uuid: it.ref,
                 name: (it.name || 'Item').trim(),
                 amount,
@@ -220,40 +223,46 @@
             };
         };
 
-        (obj.items_inventory || []).forEach(push); // owned + active first (authoritative)
-        (obj.items_shop || []).forEach(push);      // buyable shop items
+        const obj = PAGE.inventoryObj || {};
+        (obj.items_inventory || []).forEach(it => upsert(fromJs(it)));
+        (obj.items_shop || []).forEach(it => upsert(fromJs(it)));
+        scrapeSlider('#js_inventorySlider', false).forEach(upsert);
+        scrapeSlider('#js_shopSliderBox', true).forEach(upsert);
 
-        let list = Object.values(map);
-        if(!list.length) list = scrapeInventoryDom(); // fallback, scoped to the inventory slider
-        return list;
+        return Object.values(map).filter(e => e.name);
     }
 
-    // Fallback only — strictly scoped to the inventory slider so shop tiles never leak in.
-    function scrapeInventoryDom()
+    // Read the tiles of one slider. isShop tags them buyable; inventory tiles are owned.
+    function scrapeSlider(sel, isShop)
     {
         const out = [];
-        const scope = document.querySelector('#js_inventorySlider');
+        const scope = document.querySelector(sel);
         if(!scope) return out;
         const seen = {};
         scope.querySelectorAll('a.detail_button[ref]').forEach(a =>
         {
             const uuid = a.getAttribute('ref');
-            if(!uuid || seen[uuid]) return;
+            if(!uuid || uuid === 'ffffffffffffffffffffffffffffffffffffffff' || seen[uuid]) return;
+            const box = a.closest('.item_img');
+            // Skip running one-shot instances (they show a countdown and carry no stack amount),
+            // to match the items_inventory handling.
+            if(box && box.querySelector('.countdownHolder') && !box.querySelector('.ecke .amount')) return;
             seen[uuid] = 1;
             const parts = (a.getAttribute('data-tooltip-title') || '').split('|');
             const name = stripTags(parts[0] || 'Item');
             const effect = stripTags((parts[1] || '').split('<br')[0]);
             const amount = +(a.querySelector('.ecke .amount, .amount')?.textContent || '').replace(/[^\d]/g, '') || 0;
-            const box = a.closest('.item_img');
-            let image = '';
+            let image = '', rarity = '';
             if(box)
             {
                 const m = getComputedStyle(box).backgroundImage.match(/url\(["']?([^"')]+)["']?\)/);
                 if(m) image = m[1];
+                const rc = [...box.classList].find(c => c.indexOf('r_') === 0);
+                if(rc) rarity = rc.slice(2);
             }
             const active = !!(box && box.querySelector('.activation.js_is_active'));
-            const timeText = box && box.querySelector('.countdownHolder time')?.textContent;
-            out.push({ uuid, name, amount, image, effect, rarity: '', active, timeLeft: 0, timeText: timeText || '', extendable: false, buyable: false, owned: amount > 0 });
+            const timeText = (box && box.querySelector('.countdownHolder time')?.textContent) || '';
+            out.push({ uuid, name, amount, image, effect, rarity, active, timeText, extendable: false, buyable: isShop, owned: isShop ? amount > 0 : true });
         });
         return out;
     }
