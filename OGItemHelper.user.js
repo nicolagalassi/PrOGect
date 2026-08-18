@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.12.4
+// @version      0.12.5
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -490,27 +490,33 @@
     // game's router resolves to that item regardless of category/pagination.
     function openNativeItem(uuid, fromShop)
     {
-        const sliderSel = fromShop ? '#js_shopSliderBox' : '#js_inventorySlider';
-        const findTile = () =>
-        {
-            const scope = document.querySelector(sliderSel);
-            return (scope && scope.querySelector(`a.detail_button[ref="${uuid}"]`)) || null;
-        };
-        // Already on the right tab and the tile is rendered → open it directly.
-        const tab = document.querySelector(fromShop ? '.tabSelectionTab.shopTab' : '.tabSelectionTab.inventoryTab');
-        const onRightTab = !tab || tab.classList.contains('active');
-        if(onRightTab) { const t = findTile(); if(t) { t.click(); return; } }
+        // A variant can live in either section (you may own the 7d but not the 30d/90d), so we look
+        // for the tile anywhere, not only in the preferred slider — searching just one section was
+        // why duration links did nothing for items flagged active.
+        const findTile = () => document.querySelector(`a.detail_button[ref="${uuid}"]`);
+        const wanted = fromShop ? '.tabSelectionTab.shopTab' : '.tabSelectionTab.inventoryTab';
+        const other = fromShop ? '.tabSelectionTab.inventoryTab' : '.tabSelectionTab.shopTab';
 
-        // Otherwise switch tab, then WAIT for the game to re-render that section and click the tile
-        // once it appears (the deep-link hash only opens an item on a fresh page load, not on the
-        // same page). Event-driven with a hard cap — no polling of the server.
-        if(tab && !onRightTab) tab.click();
+        const t0 = findTile();
+        if(t0) { t0.click(); return; }
+
+        // Not rendered → switch to the preferred tab and WAIT for the game to render it (the
+        // deep-link hash only opens an item on a fresh page load, not on the same page). If it
+        // still has not appeared, try the other tab. Event-driven, hard-capped, no server polling.
+        const tab = document.querySelector(wanted);
+        if(tab && !tab.classList.contains('active')) tab.click();
+
         let done = false;
         const tryClick = () => { if(done) return true; const t = findTile(); if(t) { done = true; t.click(); return true; } return false; };
-        if(tryClick()) return;
         const obs = new MutationObserver(() => { if(tryClick()) obs.disconnect(); });
         obs.observe(document.querySelector('#buttonz') || document.body, { childList: true, subtree: true });
-        setTimeout(() => obs.disconnect(), 5000); // local cleanup only, never a server call
+        setTimeout(() =>
+        {
+            if(done) return;
+            const alt = document.querySelector(other);   // fall back to the other section
+            if(alt && !alt.classList.contains('active')) alt.click();
+        }, 1200);
+        setTimeout(() => obs.disconnect(), 6000); // local cleanup only, never a server call
     }
 
     // --------------------------------------------------------------------- UI
@@ -581,7 +587,7 @@
         const styleFor = it => (it.active && it.extendable) ? 'oih_extend' : (!it.owned && !it.active) ? 'oih_compra' : 'oih_activate';
 
         // Open an item's native panel, remembering the current search for the "repeat" comfort.
-        const doOpen = it => { sessionStorage.setItem('oih_filter', search.value || ''); openNativeItem(it.uuid, !it.owned && !it.active); };
+        const doOpen = it => { sessionStorage.setItem('oih_filter', search.value || ''); openNativeItem(it.uuid, !it.owned); };   // where the tile lives depends on ownership, not on being active
 
         // A "next planet" link for one item, using OGame's own inventory deep-link URL so the game
         // opens the inventory on that item itself (1 user click = 1 navigation, §1.1).
