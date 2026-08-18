@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.4.0
+// @version      0.5.0
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -26,8 +26,9 @@
     marks the item(s) already ACTIVE on the current planet with the remaining time.
   - "Attiva" (or "Prolunga" when the item is already active and extendable) opens the game's
     OWN item panel for that item. You press the game's button — that is the one game action.
-  - "Pianeta succ." navigates to the next planet's shop (the game's own cp flow) and re-opens
-    the box focused on the SAME item, ready to activate.
+  - "Pianeta succ." navigates to the next planet's shop (the game's own cp flow) and, on arrival,
+    switches to the Inventory tab and opens the SAME item's own game panel — so it is right there
+    with the game's Attiva/Prolunga button. It never presses that button: the activation is yours.
 
   COMPLIANCE (OGame Origin tool rules — see PrOGect/AGENTS.md):
   - §1.1  1 click = 1 action. The helper never activates anything itself; it only opens the
@@ -52,6 +53,21 @@
     if(HREF.indexOf('component=shop') < 0 && HREF.indexOf('page=shop') < 0) return;
 
     const PAGE = window; // @grant none → shares the page window, so inventoryObj is readable.
+
+    // Item carried over from a "Pianeta succ." click. OGame's cp handling can redirect and drop
+    // the pgItem query param, so we also stash it in sessionStorage (survives the navigation).
+    const carry =
+    {
+        uuid: new URLSearchParams(HREF.split('?')[1] || '').get('pgItem') || sessionStorage.getItem('oih_pending') || '',
+        name: sessionStorage.getItem('oih_pendingName') || '',
+        done: false,
+        tries: 0,
+    };
+    function clearCarry()
+    {
+        sessionStorage.removeItem('oih_pending');
+        sessionStorage.removeItem('oih_pendingName');
+    }
 
     // --------------------------------------------------------------------- styles
     const CSS = `
@@ -303,17 +319,13 @@
             });
         };
 
-        // On arrival, focus on the item we carried over (URL pgItem, or the sessionStorage
-        // stash that survives OGame's cp redirect). We only pre-filter — never auto-activate.
+        // On arrival, focus the box on the item we carried over. The actual "open the game's
+        // panel ready to activate" step is handled by autoSelect() below; here we just filter.
         let initialFilter = '';
-        const wantedUuid = new URLSearchParams(HREF.split('?')[1] || '').get('pgItem') || sessionStorage.getItem('oih_pending') || '';
-        const wantedName = sessionStorage.getItem('oih_pendingName') || '';
-        if(wantedUuid)
+        if(carry.uuid)
         {
-            const m = items.find(it => it.uuid === wantedUuid);
-            initialFilter = m ? m.name : wantedName;
-            sessionStorage.removeItem('oih_pending');
-            sessionStorage.removeItem('oih_pendingName');
+            const m = items.find(it => it.uuid === carry.uuid);
+            initialFilter = m ? m.name : carry.name;
             if(sessionStorage.getItem('oih_collapsed') === '1') { grid.classList.remove('oih_hidden'); caret.innerHTML = '&#9662;'; }
         }
 
@@ -323,6 +335,34 @@
         if(initialFilter) requestAnimationFrame(() => search.focus());
 
         return true;
+    }
+
+    // After arriving from a "Pianeta succ." click, put the same item in front of the player,
+    // ready to activate: switch to the game's Inventory tab and open the item's OWN panel
+    // (the one with the game's Attiva/Prolunga button).
+    //
+    // GRAY AREA (§3): this is a comfort convenience and needs ToolDev sign-off before publishing.
+    // It stays within the rules: switching a tab and opening an item panel are UI/read steps, not
+    // game actions; the getDetails read fires once on this page load, not on a timer/loop (§4);
+    // and we NEVER press the activate button — the activation is always the player's own click
+    // (§1.1). It runs exactly once per carried item, with a hard attempt cap as a safety net.
+    function autoSelect()
+    {
+        if(!carry.uuid || carry.done) return;
+        if(carry.tries++ > 80) { carry.done = true; clearCarry(); return; }
+
+        // Step 1: make the game's Inventory tab active (the shop opens on the Shop tab).
+        const invTab = document.querySelector('.tabSelectionTab.inventoryTab');
+        if(invTab && !invTab.classList.contains('active')) { invTab.click(); return; } // wait for re-render
+
+        // Step 2: once the tile for this item exists, open the game's own item panel. Done once.
+        const tile = document.querySelector(`a.detail_button[ref="${carry.uuid}"]`);
+        if(tile)
+        {
+            carry.done = true;
+            clearCarry();
+            tile.click();
+        }
     }
 
     // --------------------------------------------------------------------- start
@@ -337,7 +377,11 @@
         requestAnimationFrame(() =>
         {
             pending = false;
-            try { if(!document.querySelector('.oih_box')) build(); }
+            try
+            {
+                if(!document.querySelector('.oih_box')) build();
+                autoSelect();
+            }
             catch(e) { console.error('[OGItemHelper] build failed:', e); }
         });
     }
