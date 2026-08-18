@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.13.0
+// @version      0.13.1
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -371,6 +371,7 @@
             extendable: !!it.extendable,
             buyable: !!it.buyable,
             owned: amount > 0,
+            cats: Array.isArray(it.category) ? it.category.slice() : [],   // for the shop deep-link
         };
     }
 
@@ -599,8 +600,12 @@
         {
             const link = el('a', 'oih_btn oih_next', null, textLabel);
             link.title = (nextPlanet.coords || '') + ' »';
-            const cat = inventoryAllCategory();
-            link.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop&cp=${nextPlanet.id}#category=${cat}&item=${it.uuid}&page=inventory&panel1-1=`;
+            // Land on the section the item lives in: owned/active → inventory, otherwise the
+            // shop, so a buyable variant can be bought and activated on the next planet too.
+            const inInventory = it.owned || it.active;
+            const cat = inInventory ? inventoryAllCategory() : ((it.cats && it.cats[0]) || inventoryAllCategory());
+            const page = inInventory ? 'inventory' : 'shop';
+            link.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop&cp=${nextPlanet.id}#category=${cat}&item=${it.uuid}&page=${page}&panel1-1=`;
             link.addEventListener('click', () =>
             {
                 sessionStorage.setItem('oih_pending', it.uuid);
@@ -686,7 +691,7 @@
                     // Single version → button acts directly.
                     const act = el('div', 'oih_btn ' + styleFor(rep), actions, labelFor(rep));
                     act.addEventListener('click', () => doOpen(rep));
-                    if(nextPlanet && !buyOnly) actions.appendChild(nextLink(rep, '»'));
+                    if(nextPlanet) actions.appendChild(nextLink(rep, '»'));
                 }
                 else
                 {
@@ -710,7 +715,7 @@
                             if(!sel || e.target === caret) { sub.classList.remove('oih_hidden'); return; }
                             doOpen(sel);
                         });
-                        if(sel && nextPlanet && (sel.owned || sel.active)) actions.appendChild(nextLink(sel, '»'));
+                        if(sel && nextPlanet) actions.appendChild(nextLink(sel, '»'));
                     };
 
                     group.forEach((m, i) =>
