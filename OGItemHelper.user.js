@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.10.2
+// @version      0.11.0
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -104,17 +104,17 @@
         .oih_count{font-size:11px;color:#7c8b99;white-space:nowrap}
         .oih_collapse{cursor:pointer;color:#9aa7b4;font-size:14px;line-height:1;padding:2px 4px;user-select:none}
         .oih_collapse:hover{color:#ffb800}
-        .oih_grid{max-height:240px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:6px;padding-right:2px}
+        .oih_grid{max-height:250px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px;padding-right:2px}
         .oih_grid.oih_hidden{display:none}
-        .oih_card{position:relative;display:flex;gap:7px;align-items:center;padding:5px;border-radius:3px;background:rgba(14,19,26,.75);border:1px solid #2b3542}
+        .oih_card{position:relative;display:flex;gap:8px;align-items:center;padding:6px;border-radius:3px;background:rgba(14,19,26,.75);border:1px solid #2b3542}
         .oih_card:hover{border-color:#4a5a6c}
         .oih_card.oih_on{border-color:#3f8f5f;background:rgba(20,34,26,.8)}
         .oih_card.oih_buy{border-color:#3f5a80;background:rgba(18,24,34,.8)}
         .oih_shopTag{color:#7fa8e0}
-        .oih_thumb{width:36px;height:36px;flex:0 0 auto;border-radius:3px;background-size:cover;background-position:center;background-repeat:no-repeat;background-color:#0b0f14;border:1px solid #333c47}
+        .oih_thumb{width:42px;height:42px;flex:0 0 auto;border-radius:3px;background-size:cover;background-position:center;background-repeat:no-repeat;background-color:#0b0f14;border:1px solid #333c47}
         .oih_r_common{border-color:#6d7b86}.oih_r_uncommon{border-color:#4a8f5b}.oih_r_rare{border-color:#3f6fb0}.oih_r_epic{border-color:#8a5bbf}
         .oih_info{flex:1 1 auto;min-width:0}
-        .oih_name{font-size:11px;color:#e6ecf2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .oih_name{font-size:11px;color:#e6ecf2;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
         .oih_meta{font-size:10px;color:#8aa0b2;display:flex;gap:6px;margin-top:2px;flex-wrap:wrap}
         .oih_amount{color:#ffb800}
         .oih_pct{color:#7fd6a0}
@@ -380,16 +380,17 @@
     // game's router resolves to that item regardless of category/pagination.
     function openNativeItem(uuid, fromShop)
     {
+        // Direct tile click ONLY when we are already on the right tab and the tile is rendered
+        // (fast, no reload). If a tab switch would be needed, clicking the tile fails on the first
+        // press (the tab switch re-renders the slider and the old tile reference goes stale), so we
+        // instead let the game's OWN deep-link hash do the switch + open in a single shot.
         const tab = document.querySelector(fromShop ? '.tabSelectionTab.shopTab' : '.tabSelectionTab.inventoryTab');
+        const onRightTab = !tab || tab.classList.contains('active');
         const scope = document.querySelector(fromShop ? '#js_shopSliderBox' : '#js_inventorySlider');
-        const tile = (scope && scope.querySelector(`a.detail_button[ref="${uuid}"]`)) || document.querySelector(`a.detail_button[ref="${uuid}"]`);
-        if(tile)
-        {
-            if(tab && !tab.classList.contains('active')) tab.click();
-            tile.click();
-            return;
-        }
-        // Not rendered → drive the game's own hash router to open it.
+        const tile = onRightTab && scope ? scope.querySelector(`a.detail_button[ref="${uuid}"]`) : null;
+        if(tile) { tile.click(); return; }
+
+        // Game's own hash router: switches to the right page/tab and opens the item, no stale tile.
         const cat = inventoryAllCategory();
         const page = fromShop ? 'shop' : 'inventory';
         const target = `category=${cat}&item=${uuid}&page=${page}&panel1-1=`;
@@ -555,7 +556,7 @@
                     // Single version → button acts directly.
                     const act = el('div', 'oih_btn ' + styleFor(rep), actions, labelFor(rep));
                     act.addEventListener('click', () => doOpen(rep));
-                    if(nextPlanet && !buyOnly) actions.appendChild(nextLink(rep, (nextPlanet.coords || '') + ' »'));
+                    if(nextPlanet && !buyOnly) actions.appendChild(nextLink(rep, '»'));
                 }
                 else
                 {
