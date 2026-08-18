@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.12.6
+// @version      0.13.0
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -133,6 +133,7 @@
         .oih_btn{cursor:pointer;font-size:10px;padding:3px 7px;border-radius:3px;border:1px solid #3a4756;background:linear-gradient(192deg,#2b3542,#1a2029);color:#fff;text-align:center;text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
         .oih_btn:hover{border-color:#ffb800}
         .oih_btn.oih_activate{color:#bfeecf}
+        .oih_caret{padding-left:5px;opacity:.75}
         .oih_btn.oih_extend{color:#ffd78a}
         .oih_btn.oih_compra{color:#9ec7ff}
         .oih_btn.oih_next{color:#9ec7ff}
@@ -584,8 +585,10 @@
 
         // Localized button words, straight from OGame.
         const T = { activate: L('activate', 'Attiva'), extend: L('extend', 'Prolunga'), buy: locaBuy() };
-        const labelFor = it => (it.active && it.extendable) ? T.extend : (!it.owned && !it.active) ? T.buy : T.activate;
-        const styleFor = it => (it.active && it.extendable) ? 'oih_extend' : (!it.owned && !it.active) ? 'oih_compra' : 'oih_activate';
+        // Active → the game's own wording is "extend"; the `extendable` flag is only present in the
+        // live tab data, so relying on it mislabelled scanned-active items as "activate".
+        const labelFor = it => it.active ? T.extend : (!it.owned) ? T.buy : T.activate;
+        const styleFor = it => it.active ? 'oih_extend' : (!it.owned) ? 'oih_compra' : 'oih_activate';
 
         // Open an item's native panel, remembering the current search for the "repeat" comfort.
         const doOpen = it => { sessionStorage.setItem('oih_filter', search.value || ''); openNativeItem(it.uuid, !it.owned); };   // where the tile lives depends on ownership, not on being active
@@ -687,12 +690,28 @@
                 }
                 else
                 {
-                    // Multiple durations → the button reveals a horizontal, blurred overlay across
-                    // the card with the per-duration choices (+7d / +30d / +90d).
-                    const act = el('div', 'oih_btn ' + styleFor(rep), actions, labelFor(rep) + ' ▾');
+                    // Multiple durations → choose one first. Picking a duration does not open
+                    // anything: it selects the variant, and the card then offers the action for it
+                    // plus the jump to the next planet (which needs a concrete variant to carry).
                     const sub = el('div', 'oih_sub oih_hidden', card); // overlays the whole card
-                    act.addEventListener('click', e => { e.stopPropagation(); sub.classList.remove('oih_hidden'); });
-                    sub.addEventListener('click', e => { if(e.target === sub) sub.classList.add('oih_hidden'); }); // click backdrop to close
+                    sub.addEventListener('click', e => { if(e.target === sub) sub.classList.add('oih_hidden'); }); // backdrop closes
+
+                    const paint = sel =>
+                    {
+                        actions.innerHTML = '';
+                        const base = sel || rep;
+                        const main = el('div', 'oih_btn ' + styleFor(base), actions, '');
+                        el('span', null, main, labelFor(base) + (sel ? ' ' + (durLabel(sel) || '') : ''));
+                        const caret = el('span', 'oih_caret', main, '▾');
+                        main.addEventListener('click', e =>
+                        {
+                            e.stopPropagation();
+                            // No duration chosen yet, or the caret was clicked → (re)open the picker.
+                            if(!sel || e.target === caret) { sub.classList.remove('oih_hidden'); return; }
+                            doOpen(sel);
+                        });
+                        if(sel && nextPlanet && (sel.owned || sel.active)) actions.appendChild(nextLink(sel, '»'));
+                    };
 
                     group.forEach((m, i) =>
                     {
@@ -700,8 +719,10 @@
                         const dLabel = durLabel(m) || ('#' + (i + 1));
                         const open = el('div', 'oih_btn oih_dur ' + styleFor(m), sub, dLabel);
                         open.title = labelFor(m) + ' · ' + m.name + (m.amount ? ' ×' + m.amount : '');
-                        open.addEventListener('click', () => { sub.classList.add('oih_hidden'); doOpen(m); });
+                        open.addEventListener('click', () => { sub.classList.add('oih_hidden'); paint(m); });
                     });
+
+                    paint(null);
                 }
             });
         };
