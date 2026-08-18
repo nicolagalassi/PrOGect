@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.6.1
+// @version      0.7.0
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -25,9 +25,14 @@
     with a compact, searchable overview: thumbnail, name, amount, percentage badge — and it
     marks the item(s) already ACTIVE on the current planet with the remaining time.
   - By default it lists only what you OWN plus what is active. A "Shop" flag also lists buyable
-    shop items you do not own, whose button reads "Compra" (or "Prolunga" if already active).
-  - "Attiva" / "Prolunga" / "Compra" opens the game's OWN item panel for that item. You press the
-    game's button — that is the one game action.
+    shop items you do not own. It reads BOTH shop sections as one: the game loads inventory and
+    shop data separately per tab, so each is cached in the session (inventory per planet, shop
+    globally) and merged, and the button labels come from OGame's own `loca` so they are already
+    in the player's language (Attiva / Prolunga / Compra, etc.).
+  - The different DURATIONS of one item (7d / 30d / 90d) are grouped under a single button that
+    expands to the per-duration choices, instead of one button per version.
+  - The action button opens the game's OWN item panel for that item. You press the game's button —
+    that is the one game action.
   - "Pianeta succ." navigates to the next planet using the GAME'S OWN inventory deep-link URL
     (#category=..&item=..&page=inventory&panel1-1=), so OGame itself opens the inventory on the
     SAME item, ready. It never presses the activate button: the activation is yours.
@@ -121,6 +126,10 @@
         .oih_btn.oih_extend{color:#ffd78a}
         .oih_btn.oih_compra{color:#9ec7ff}
         .oih_btn.oih_next{color:#9ec7ff}
+        .oih_sub{display:flex;flex-direction:column;gap:3px;margin-top:2px}
+        .oih_sub.oih_hidden{display:none}
+        .oih_subRow{display:flex;gap:3px;align-items:stretch}
+        .oih_subRow .oih_btn{flex:1 1 auto}
         .oih_empty{color:#8aa0b2;font-size:12px;padding:14px;text-align:center;grid-column:1/-1}
     `;
     function injectStyle()
@@ -151,15 +160,45 @@
     const fmtDur = sec =>
     {
         sec = Math.max(0, Math.floor(sec || 0));
-        const g = Math.floor(sec / 86400); sec -= g * 86400;
-        const o = Math.floor(sec / 3600); sec -= o * 3600;
+        const d = Math.floor(sec / 86400); sec -= d * 86400;
+        const h = Math.floor(sec / 3600); sec -= h * 3600;
         const m = Math.floor(sec / 60);
         const p = [];
-        if(g) p.push(g + 'g');
-        if(o) p.push(o + 'o');
-        if(m && !g) p.push(m + 'm');
+        if(d) p.push(d + 'd');
+        if(h) p.push(h + 'h');
+        if(m && !d) p.push(m + 'm');
         return p.join(' ') || '<1m';
     };
+
+    // Localization — read OGame's own strings from the page's `loca` so the buttons/labels match
+    // the player's language automatically. Fallbacks keep it working if a key is missing.
+    const loca = () => PAGE.loca || {};
+    const L = (key, fb) => { const v = loca()[key]; return (typeof v === 'string' && v) ? stripTags(v) : fb; };
+    function locaBuy()
+    {
+        const lo = loca();
+        if(lo.buy) return stripTags(lo.buy);
+        const ba = lo.buyAndActivate || lo.buyAndExtend; // e.g. "Compra & Attiva" → take the first word
+        if(ba) { const first = stripTags(ba).split(/&|\+/)[0].trim(); if(first) return first; }
+        return 'Buy';
+    }
+
+    // Session cache so the two shop sections read as ONE. OGame lazily populates items_inventory
+    // (owned/active) and items_shop (buyable) only when their tab has rendered, so on any given
+    // load we usually see just one. We remember each as it appears — inventory per planet (its
+    // owned/active state is planet-specific), the shop globally — and merge live + cached, so the
+    // helper always shows the full picture. Pure DOM/sessionStorage: no fetch, no polling (§4).
+    function currentPlanetId()
+    {
+        const line = document.querySelector('.smallplanet.hightlightPlanet, .smallplanet.hightlightMoon');
+        const link = line && (line.querySelector('.planetlink') || line.querySelector('a[href*="cp="]'));
+        const fromLink = link && new URLSearchParams((link.getAttribute('href') || '').split('?')[1] || '').get('cp');
+        const fromUrl = new URLSearchParams(HREF.split('?')[1] || '').get('cp');
+        return String(fromLink || fromUrl || '0').split('#')[0];
+    }
+    const cacheGet = k => { try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch(e) { return null; } };
+    const cacheSet = (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch(e) {} };
+    const slim = it => ({ ref: it.ref, name: it.name, imageLarge: it.imageLarge, image: it.image, effect: it.effect, rarity: it.rarity, amount: it.amount, status: it.status, timeLeft: it.timeLeft, extendable: it.extendable, buyable: it.buyable, expiryDate: it.expiryDate });
 
     function getNextPlanet()
     {
@@ -217,15 +256,26 @@
                 rarity: (it.rarity || '').toLowerCase(),
                 active,
                 timeLeft: active ? (it.timeLeft || 0) : 0,
+                duration: it.duration || 0,
                 extendable: !!it.extendable,
                 buyable: !!it.buyable,
                 owned: amount > 0,
             };
         };
 
+        // Live arrays from whichever tab the game has rendered — cache each so the other section
+        // is still available later (inventory per planet, shop globally).
         const obj = PAGE.inventoryObj || {};
-        (obj.items_inventory || []).forEach(it => upsert(fromJs(it)));
-        (obj.items_shop || []).forEach(it => upsert(fromJs(it)));
+        const pid = currentPlanetId();
+        const invLive = (obj.items_inventory || []).filter(it => it && it.ref && !it.expiryDate);
+        const shopLive = (obj.items_shop || []).filter(it => it && it.ref && !it.expiryDate);
+        if(invLive.length) cacheSet('oih_inv_' + pid, invLive.map(slim));
+        if(shopLive.length) cacheSet('oih_shop', shopLive.map(slim));
+        const invItems = invLive.length ? invLive : (cacheGet('oih_inv_' + pid) || []);
+        const shopItems = shopLive.length ? shopLive : (cacheGet('oih_shop') || []);
+
+        invItems.forEach(it => upsert(fromJs(it)));
+        shopItems.forEach(it => upsert(fromJs(it)));
         scrapeSlider('#js_inventorySlider', false).forEach(upsert);
         scrapeSlider('#js_shopSliderBox', true).forEach(upsert);
 
@@ -262,7 +312,11 @@
             }
             const active = !!(box && box.querySelector('.activation.js_is_active'));
             const timeText = (box && box.querySelector('.countdownHolder time')?.textContent) || '';
-            out.push({ uuid, name, amount, image, effect, rarity, active, timeText, extendable: false, buyable: isShop, owned: isShop ? amount > 0 : true });
+            // Duration hint from the tooltip / name (e.g. "7 giorni", "30 days") — language-agnostic
+            // number + a day word; falls back to 0 when not present.
+            const dm = (a.getAttribute('data-tooltip-title') || name).match(/(\d+)\s*(giorni|day|days|tag|tage|jour|jours|d[ií]as?|dni|dní|gün|dagen)/i);
+            const duration = dm ? +dm[1] * 86400 : 0;
+            out.push({ uuid, name, amount, image, effect, rarity, active, timeText, duration, extendable: false, buyable: isShop, owned: isShop ? amount > 0 : true });
         });
         return out;
     }
@@ -309,14 +363,14 @@
         el('div', 'oih_title', head, '<span>&#9670;</span> Item helper');
         const search = el('input', null, head);
         search.type = 'text';
-        search.placeholder = 'Cerca per nome...';
+        search.placeholder = '🔍'; // language-neutral search glyph
 
         // Flag: also show buyable shop items (default off → inventory + active only).
         const flag = el('label', 'oih_flag', head, '');
         const chk = el('input', null, flag);
         chk.type = 'checkbox';
         chk.checked = sessionStorage.getItem('oih_showShop') === '1';
-        flag.appendChild(document.createTextNode(' Shop'));
+        flag.appendChild(document.createTextNode(' ' + L('LOCA_PREMIUM_SHOP', 'Shop')));
 
         const count = el('div', 'oih_count', head, '');
         const collapsed0 = sessionStorage.getItem('oih_collapsed') === '1';
@@ -333,6 +387,31 @@
 
         const nextPlanet = getNextPlanet();
 
+        // Localized button words, straight from OGame.
+        const T = { activate: L('activate', 'Attiva'), extend: L('extend', 'Prolunga'), buy: locaBuy() };
+        const labelFor = it => (it.active && it.extendable) ? T.extend : (!it.owned && !it.active) ? T.buy : T.activate;
+        const styleFor = it => (it.active && it.extendable) ? 'oih_extend' : (!it.owned && !it.active) ? 'oih_compra' : 'oih_activate';
+        const durLabel = it => it.duration > 0 ? Math.round(it.duration / 86400) + 'd' : '';
+
+        // Open an item's native panel, remembering the current search for the "repeat" comfort.
+        const doOpen = it => { sessionStorage.setItem('oih_filter', search.value || ''); openNativeItem(it.uuid, !it.owned && !it.active); };
+
+        // A "next planet" link for one item, using OGame's own inventory deep-link URL so the game
+        // opens the inventory on that item itself (1 user click = 1 navigation, §1.1).
+        const nextLink = (it, textLabel) =>
+        {
+            const link = el('a', 'oih_btn oih_next', null, textLabel);
+            link.title = (nextPlanet.coords || '') + ' »';
+            const cat = inventoryAllCategory();
+            link.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop&cp=${nextPlanet.id}#category=${cat}&item=${it.uuid}&page=inventory&panel1-1=`;
+            link.addEventListener('click', () =>
+            {
+                sessionStorage.setItem('oih_pending', it.uuid);
+                sessionStorage.setItem('oih_pendingName', it.name);
+            });
+            return link;
+        };
+
         const render = filter =>
         {
             const needle = (filter || '').trim().toLowerCase();
@@ -342,57 +421,69 @@
             // Default: only what you own or have active. Flag on: also buyable shop items.
             let visible = items.filter(it => showShop || it.owned || it.active);
             visible = visible.filter(it => !needle || it.name.toLowerCase().indexOf(needle) >= 0);
-            count.textContent = visible.length + (showShop ? ' (+shop)' : '');
 
-            if(!visible.length) { el('div', 'oih_empty', grid, 'Nessun item trovato.'); return; }
+            if(!visible.length) { el('div', 'oih_empty', grid, '—'); return; }
 
-            // Active first, then owned, then buyable-only.
-            const rank = it => it.active ? 0 : it.owned ? 1 : 2;
-            visible.sort((a, b) => rank(a) - rank(b));
-
+            // Group the different DURATIONS of the same item (same effect text) under one card, so
+            // e.g. the 7d / 30d / 90d versions of one booster are one entry with a duration menu.
+            const groups = {};
             visible.forEach(it =>
             {
-                // extend = already active & extendable; buy = a shop item you don't own.
-                const extend = it.active && it.extendable;
-                const buyOnly = !it.owned && !it.active;
-                const label = extend ? 'Prolunga' : buyOnly ? 'Compra' : 'Attiva';
+                const key = (it.effect || it.name).toLowerCase();
+                (groups[key] || (groups[key] = [])).push(it);
+            });
+            let list = Object.values(groups);
 
-                const card = el('div', 'oih_card' + (it.active ? ' oih_on' : (buyOnly ? ' oih_buy' : '')), grid);
-                const thumb = el('div', 'oih_thumb' + (it.rarity ? ' oih_r_' + it.rarity : ''), card);
-                if(it.image) thumb.style.backgroundImage = `url('${it.image}')`;
+            // Active first, then owned, then buyable-only (by the group's best member).
+            const rank = g => Math.min(...g.map(it => it.active ? 0 : it.owned ? 1 : 2));
+            list.sort((a, b) => rank(a) - rank(b));
+            count.textContent = list.length + (showShop ? ' (+' + L('LOCA_PREMIUM_SHOP', 'Shop').toLowerCase() + ')' : '');
+
+            list.forEach(group =>
+            {
+                group.sort((a, b) => (a.duration || 0) - (b.duration || 0));
+                const rep = group.find(it => it.active) || group.find(it => it.owned) || group[0];
+                const buyOnly = !rep.owned && !rep.active;
+                const totalAmount = group.reduce((s, it) => s + (+it.amount || 0), 0);
+
+                const card = el('div', 'oih_card' + (rep.active ? ' oih_on' : (buyOnly ? ' oih_buy' : '')), grid);
+                const thumb = el('div', 'oih_thumb' + (rep.rarity ? ' oih_r_' + rep.rarity : ''), card);
+                if(rep.image) thumb.style.backgroundImage = `url('${rep.image}')`;
 
                 const info = el('div', 'oih_info', card);
-                const name = el('div', 'oih_name', info, it.name);
-                name.title = it.effect || it.name;
+                const name = el('div', 'oih_name', info, rep.name);
+                name.title = rep.effect || rep.name;
                 const meta = el('div', 'oih_meta', info);
-                if(it.amount) el('span', 'oih_amount', meta, 'x' + it.amount);
-                const pct = (it.effect || '').match(/[+-]?\d+\s*%/);
+                if(totalAmount) el('span', 'oih_amount', meta, 'x' + totalAmount);
+                const pct = (rep.effect || '').match(/[+-]?\d+\s*%/);
                 if(pct) el('span', 'oih_pct', meta, pct[0].replace(/\s+/g, ''));
-                if(it.active) el('span', 'oih_live', meta, 'attivo' + (it.timeLeft ? ' ' + fmtDur(it.timeLeft) : (it.timeText ? ' ' + it.timeText : '')));
-                else if(buyOnly) el('span', 'oih_shopTag', meta, 'shop');
+                if(rep.active) el('span', 'oih_live', meta, rep.timeLeft ? fmtDur(rep.timeLeft) : (rep.timeText || ''));
+                else if(buyOnly) el('span', 'oih_shopTag', meta, L('LOCA_PREMIUM_SHOP', 'Shop').toLowerCase());
 
                 const actions = el('div', 'oih_actions', card);
-                const act = el('div', 'oih_btn ' + (extend ? 'oih_extend' : buyOnly ? 'oih_compra' : 'oih_activate'), actions, label);
-                act.addEventListener('click', () =>
-                {
-                    sessionStorage.setItem('oih_filter', search.value || '');
-                    openNativeItem(it.uuid, buyOnly);
-                });
 
-                if(nextPlanet && !buyOnly)
+                if(group.length === 1)
                 {
-                    const link = el('a', 'oih_btn oih_next', actions, 'Pianeta »');
-                    link.title = 'Vai al pianeta successivo con questo item già aperto' + (nextPlanet.coords ? ` (${nextPlanet.coords})` : '');
-                    // Use the GAME'S OWN deep-link hash so OGame opens the inventory on this item
-                    // itself — the same URL shape the game produces when you navigate normally.
-                    // This is 1 user click = 1 navigation (§1.1); the activation is still yours.
-                    const cat = inventoryAllCategory();
-                    link.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop&cp=${nextPlanet.id}#category=${cat}&item=${it.uuid}&page=inventory&panel1-1=`;
-                    // Backup for our own box focus in case the hash is consumed by the game.
-                    link.addEventListener('click', () =>
+                    // Single version → button acts directly.
+                    const act = el('div', 'oih_btn ' + styleFor(rep), actions, labelFor(rep));
+                    act.addEventListener('click', () => doOpen(rep));
+                    if(nextPlanet && !buyOnly) actions.appendChild(nextLink(rep, (nextPlanet.coords || '') + ' »'));
+                }
+                else
+                {
+                    // Multiple durations → the button expands to a per-duration menu (7d/30d/90d).
+                    const act = el('div', 'oih_btn ' + styleFor(rep), actions, labelFor(rep) + ' ▾');
+                    const sub = el('div', 'oih_sub oih_hidden', actions);
+                    act.addEventListener('click', () => sub.classList.toggle('oih_hidden'));
+
+                    group.forEach(m =>
                     {
-                        sessionStorage.setItem('oih_pending', it.uuid);
-                        sessionStorage.setItem('oih_pendingName', it.name);
+                        const row = el('div', 'oih_subRow', sub);
+                        const dLabel = (durLabel(m) || m.name) + (m.amount ? ' ×' + m.amount : '');
+                        const open = el('div', 'oih_btn ' + styleFor(m), row, dLabel);
+                        open.title = labelFor(m) + ' · ' + m.name;
+                        open.addEventListener('click', () => doOpen(m));
+                        if(nextPlanet && m.owned) row.appendChild(nextLink(m, '»'));
                     });
                 }
             });
