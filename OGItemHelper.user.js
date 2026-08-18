@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.5.0
+// @version      0.6.0
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -24,11 +24,13 @@
   - Adds its OWN box inside the shop (between the image/detail area and the inventory list),
     with a compact, searchable overview: thumbnail, name, amount, percentage badge — and it
     marks the item(s) already ACTIVE on the current planet with the remaining time.
-  - "Attiva" (or "Prolunga" when the item is already active and extendable) opens the game's
-    OWN item panel for that item. You press the game's button — that is the one game action.
-  - "Pianeta succ." navigates to the next planet's shop (the game's own cp flow) and, on arrival,
-    switches to the Inventory tab and opens the SAME item's own game panel — so it is right there
-    with the game's Attiva/Prolunga button. It never presses that button: the activation is yours.
+  - By default it lists only what you OWN plus what is active. A "Shop" flag also lists buyable
+    shop items you do not own, whose button reads "Compra" (or "Prolunga" if already active).
+  - "Attiva" / "Prolunga" / "Compra" opens the game's OWN item panel for that item. You press the
+    game's button — that is the one game action.
+  - "Pianeta succ." navigates to the next planet using the GAME'S OWN inventory deep-link URL
+    (#category=..&item=..&page=inventory&panel1-1=), so OGame itself opens the inventory on the
+    SAME item, ready. It never presses the activate button: the activation is yours.
 
   COMPLIANCE (OGame Origin tool rules — see PrOGect/AGENTS.md):
   - §1.1  1 click = 1 action. The helper never activates anything itself; it only opens the
@@ -54,19 +56,34 @@
 
     const PAGE = window; // @grant none → shares the page window, so inventoryObj is readable.
 
-    // Item carried over from a "Pianeta succ." click. OGame's cp handling can redirect and drop
-    // the pgItem query param, so we also stash it in sessionStorage (survives the navigation).
+    // Item carried over from a "Pianeta succ." click. We navigate with the GAME'S OWN deep-link
+    // hash (#category=..&item=..&page=inventory&panel1-1=), so on arrival the game itself opens
+    // the inventory on that item. We read the item back from that hash (or the sessionStorage
+    // stash / legacy query) only to focus OUR box on it.
+    const hashParams = new URLSearchParams((location.hash || '').replace(/^#/, ''));
     const carry =
     {
-        uuid: new URLSearchParams(HREF.split('?')[1] || '').get('pgItem') || sessionStorage.getItem('oih_pending') || '',
+        uuid: hashParams.get('item') || new URLSearchParams(HREF.split('?')[1] || '').get('pgItem') || sessionStorage.getItem('oih_pending') || '',
         name: sessionStorage.getItem('oih_pendingName') || '',
-        done: false,
-        tries: 0,
     };
     function clearCarry()
     {
         sessionStorage.removeItem('oih_pending');
         sessionStorage.removeItem('oih_pendingName');
+    }
+
+    // The inventory "all" category id, needed for the game's deep-link. It is the category shared
+    // by every owned item; we derive it dynamically (fallback to the known constant).
+    function inventoryAllCategory()
+    {
+        const arrs = ((PAGE.inventoryObj || {}).items_inventory || []).map(it => it.category || []).filter(a => a.length);
+        if(arrs.length)
+        {
+            let common = arrs[0].slice();
+            arrs.forEach(a => { common = common.filter(c => a.indexOf(c) >= 0); });
+            if(common[0]) return common[0];
+        }
+        return 'd8d49c315fa620d9c7f1f19963970dea59a0e3be';
     }
 
     // --------------------------------------------------------------------- styles
@@ -76,6 +93,8 @@
         .oih_title{font-size:12px;color:#f0a955;font-weight:bold;white-space:nowrap;display:flex;align-items:center;gap:4px}
         .oih_head input{flex:1;min-width:60px;padding:4px 8px;border-radius:3px;border:1px solid #3a4756;background:#0e131a;color:#fff;font-size:12px}
         .oih_head input:focus{outline:none;border-color:#ffb800}
+        .oih_flag{font-size:11px;color:#9ec7ff;white-space:nowrap;display:inline-flex;align-items:center;gap:3px;cursor:pointer;user-select:none}
+        .oih_flag input{cursor:pointer;margin:0}
         .oih_count{font-size:11px;color:#7c8b99;white-space:nowrap}
         .oih_collapse{cursor:pointer;color:#9aa7b4;font-size:14px;line-height:1;padding:2px 4px;user-select:none}
         .oih_collapse:hover{color:#ffb800}
@@ -84,6 +103,8 @@
         .oih_card{position:relative;display:flex;gap:7px;align-items:center;padding:5px;border-radius:3px;background:rgba(14,19,26,.75);border:1px solid #2b3542}
         .oih_card:hover{border-color:#4a5a6c}
         .oih_card.oih_on{border-color:#3f8f5f;background:rgba(20,34,26,.8)}
+        .oih_card.oih_buy{border-color:#3f5a80;background:rgba(18,24,34,.8)}
+        .oih_shopTag{color:#7fa8e0}
         .oih_thumb{width:36px;height:36px;flex:0 0 auto;border-radius:3px;background-size:cover;background-position:center;background-repeat:no-repeat;background-color:#0b0f14;border:1px solid #333c47}
         .oih_r_common{border-color:#6d7b86}.oih_r_uncommon{border-color:#4a8f5b}.oih_r_rare{border-color:#3f6fb0}.oih_r_epic{border-color:#8a5bbf}
         .oih_info{flex:1 1 auto;min-width:0}
@@ -98,6 +119,7 @@
         .oih_btn:hover{border-color:#ffb800}
         .oih_btn.oih_activate{color:#bfeecf}
         .oih_btn.oih_extend{color:#ffd78a}
+        .oih_btn.oih_compra{color:#9ec7ff}
         .oih_btn.oih_next{color:#9ec7ff}
         .oih_empty{color:#8aa0b2;font-size:12px;padding:14px;text-align:center;grid-column:1/-1}
     `;
@@ -159,46 +181,69 @@
     // Read the inventory the shop page already holds — no fetch (§4).
     // Primary source: the game's own inventoryObj.items_inventory (also carries the per-planet
     // active state: status / timeLeft / extendable). Fallback: the inventory tile DOM.
-    function readInventory()
+    // Collect every item the shop page already knows about — no fetch (§4). We merge the game's
+    // own inventoryObj.items_inventory (what you OWN, plus per-planet active state) with
+    // items_shop (what is BUYABLE). Each entry is tagged owned / active / buyable so the view
+    // can show the inventory by default and the shop only behind the flag.
+    function collectItems()
+    {
+        const obj = PAGE.inventoryObj || {};
+        const map = {};
+
+        const push = it =>
+        {
+            // Skip the active running one-shot instances (packages/KRAKEN with an expiryDate):
+            // they are countdown copies, not activatable stacks.
+            if(!it || !it.ref || it.expiryDate) return;
+            const amount = it.amount || 0;
+            const active = it.status === 'effecting' || it.timeLeft > 0;
+            const existing = map[it.ref];
+            if(existing)
+            {
+                if(it.buyable) existing.buyable = true; // shop copy adds the buyable flag
+                return;
+            }
+            const hash = it.imageLarge || it.image || '';
+            map[it.ref] =
+            {
+                uuid: it.ref,
+                name: (it.name || 'Item').trim(),
+                amount,
+                image: hash ? `/cdn/img/item-images/${hash}.png` : '',
+                effect: stripTags(it.effect || ''),
+                rarity: (it.rarity || '').toLowerCase(),
+                active,
+                timeLeft: active ? (it.timeLeft || 0) : 0,
+                extendable: !!it.extendable,
+                buyable: !!it.buyable,
+                owned: amount > 0,
+            };
+        };
+
+        (obj.items_inventory || []).forEach(push); // owned + active first (authoritative)
+        (obj.items_shop || []).forEach(push);      // buyable shop items
+
+        let list = Object.values(map);
+        if(!list.length) list = scrapeInventoryDom(); // fallback, scoped to the inventory slider
+        return list;
+    }
+
+    // Fallback only — strictly scoped to the inventory slider so shop tiles never leak in.
+    function scrapeInventoryDom()
     {
         const out = [];
+        const scope = document.querySelector('#js_inventorySlider');
+        if(!scope) return out;
         const seen = {};
-
-        const obj = PAGE.inventoryObj;
-        if(obj && Array.isArray(obj.items_inventory) && obj.items_inventory.length)
-        {
-            obj.items_inventory.forEach(it =>
-            {
-                if(!it || !it.ref || !(it.amount > 0) || it.expiryDate) return; // owned stacks only
-                if(seen[it.ref]) return;
-                seen[it.ref] = 1;
-                const hash = it.imageLarge || it.image || '';
-                const active = it.status === 'effecting' || (it.timeLeft > 0);
-                out.push({
-                    uuid: it.ref,
-                    name: (it.name || 'Item').trim(),
-                    amount: it.amount,
-                    image: hash ? `/cdn/img/item-images/${hash}.png` : '',
-                    effect: stripTags(it.effect || ''),
-                    rarity: (it.rarity || '').toLowerCase(),
-                    active,
-                    timeLeft: active ? (it.timeLeft || 0) : 0,
-                    extendable: !!it.extendable,
-                });
-            });
-            if(out.length) return out;
-        }
-
-        // Fallback: scrape the tiles.
-        document.querySelectorAll('#js_inventorySlider a.detail_button[ref], a.detail_button[ref]').forEach(a =>
+        scope.querySelectorAll('a.detail_button[ref]').forEach(a =>
         {
             const uuid = a.getAttribute('ref');
-            if(!uuid || uuid === 'ffffffffffffffffffffffffffffffffffffffff' || seen[uuid]) return;
+            if(!uuid || seen[uuid]) return;
             seen[uuid] = 1;
             const parts = (a.getAttribute('data-tooltip-title') || '').split('|');
             const name = stripTags(parts[0] || 'Item');
             const effect = stripTags((parts[1] || '').split('<br')[0]);
-            const amount = (a.querySelector('.ecke .amount, .amount')?.textContent || '').replace(/[^\d]/g, '');
+            const amount = +(a.querySelector('.ecke .amount, .amount')?.textContent || '').replace(/[^\d]/g, '') || 0;
             const box = a.closest('.item_img');
             let image = '';
             if(box)
@@ -206,19 +251,23 @@
                 const m = getComputedStyle(box).backgroundImage.match(/url\(["']?([^"')]+)["']?\)/);
                 if(m) image = m[1];
             }
-            const activeEl = box && box.querySelector('.activation.js_is_active');
+            const active = !!(box && box.querySelector('.activation.js_is_active'));
             const timeText = box && box.querySelector('.countdownHolder time')?.textContent;
-            out.push({ uuid, name, amount: amount ? +amount : '', image, effect, rarity: '', active: !!activeEl, timeLeft: 0, timeText: timeText || '', extendable: false });
+            out.push({ uuid, name, amount, image, effect, rarity: '', active, timeLeft: 0, timeText: timeText || '', extendable: false, buyable: false, owned: amount > 0 });
         });
         return out;
     }
 
-    // Open the game's OWN item panel. We never activate anything ourselves (§1.1/§6).
-    function openNativeItem(uuid)
+    // Open the game's OWN item panel. We never activate/buy anything ourselves (§1.1/§6) — the
+    // panel is where the game's Attiva / Prolunga / Compra buttons live and the player clicks.
+    // Owned/active items live in the Inventory tab; buyable-only items live in the Shop tab.
+    function openNativeItem(uuid, fromShop)
     {
-        const invTab = document.querySelector('.tabSelectionTab.inventoryTab');
-        if(invTab && !invTab.classList.contains('active')) invTab.click();
-        const tile = document.querySelector(`a.detail_button[ref="${uuid}"]`);
+        const tabSel = fromShop ? '.tabSelectionTab.shopTab' : '.tabSelectionTab.inventoryTab';
+        const tab = document.querySelector(tabSel);
+        if(tab && !tab.classList.contains('active')) tab.click();
+        const scope = document.querySelector(fromShop ? '#js_shopSliderBox' : '#js_inventorySlider') || document;
+        const tile = scope.querySelector(`a.detail_button[ref="${uuid}"]`) || document.querySelector(`a.detail_button[ref="${uuid}"]`);
         if(tile) tile.click();
     }
 
@@ -238,7 +287,7 @@
         else if(inhalt) { parent = inhalt; }
         else return false;
 
-        const items = readInventory();
+        const items = collectItems();
         if(!items.length) return false; // shop content not rendered yet — observer will retry
 
         injectStyle();
@@ -252,6 +301,14 @@
         const search = el('input', null, head);
         search.type = 'text';
         search.placeholder = 'Cerca per nome...';
+
+        // Flag: also show buyable shop items (default off → inventory + active only).
+        const flag = el('label', 'oih_flag', head, '');
+        const chk = el('input', null, flag);
+        chk.type = 'checkbox';
+        chk.checked = sessionStorage.getItem('oih_showShop') === '1';
+        flag.appendChild(document.createTextNode(' Shop'));
+
         const count = el('div', 'oih_count', head, '');
         const collapsed0 = sessionStorage.getItem('oih_collapsed') === '1';
         const caret = el('div', 'oih_collapse', head, collapsed0 ? '&#9656;' : '&#9662;');
@@ -270,18 +327,28 @@
         const render = filter =>
         {
             const needle = (filter || '').trim().toLowerCase();
+            const showShop = chk.checked;
             grid.innerHTML = '';
-            const visible = items.filter(it => !needle || it.name.toLowerCase().indexOf(needle) >= 0);
-            count.textContent = visible.length + '/' + items.length;
+
+            // Default: only what you own or have active. Flag on: also buyable shop items.
+            let visible = items.filter(it => showShop || it.owned || it.active);
+            visible = visible.filter(it => !needle || it.name.toLowerCase().indexOf(needle) >= 0);
+            count.textContent = visible.length + (showShop ? ' (+shop)' : '');
 
             if(!visible.length) { el('div', 'oih_empty', grid, 'Nessun item trovato.'); return; }
 
-            // Active items first, so what is running on this planet is obvious.
-            visible.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
+            // Active first, then owned, then buyable-only.
+            const rank = it => it.active ? 0 : it.owned ? 1 : 2;
+            visible.sort((a, b) => rank(a) - rank(b));
 
             visible.forEach(it =>
             {
-                const card = el('div', 'oih_card' + (it.active ? ' oih_on' : ''), grid);
+                // extend = already active & extendable; buy = a shop item you don't own.
+                const extend = it.active && it.extendable;
+                const buyOnly = !it.owned && !it.active;
+                const label = extend ? 'Prolunga' : buyOnly ? 'Compra' : 'Attiva';
+
+                const card = el('div', 'oih_card' + (it.active ? ' oih_on' : (buyOnly ? ' oih_buy' : '')), grid);
                 const thumb = el('div', 'oih_thumb' + (it.rarity ? ' oih_r_' + it.rarity : ''), card);
                 if(it.image) thumb.style.backgroundImage = `url('${it.image}')`;
 
@@ -293,23 +360,26 @@
                 const pct = (it.effect || '').match(/[+-]?\d+\s*%/);
                 if(pct) el('span', 'oih_pct', meta, pct[0].replace(/\s+/g, ''));
                 if(it.active) el('span', 'oih_live', meta, 'attivo' + (it.timeLeft ? ' ' + fmtDur(it.timeLeft) : (it.timeText ? ' ' + it.timeText : '')));
+                else if(buyOnly) el('span', 'oih_shopTag', meta, 'shop');
 
                 const actions = el('div', 'oih_actions', card);
-                const extend = it.active && it.extendable;
-                const act = el('div', 'oih_btn ' + (extend ? 'oih_extend' : 'oih_activate'), actions, extend ? 'Prolunga' : 'Attiva');
+                const act = el('div', 'oih_btn ' + (extend ? 'oih_extend' : buyOnly ? 'oih_compra' : 'oih_activate'), actions, label);
                 act.addEventListener('click', () =>
                 {
                     sessionStorage.setItem('oih_filter', search.value || '');
-                    openNativeItem(it.uuid);
+                    openNativeItem(it.uuid, buyOnly);
                 });
 
-                if(nextPlanet)
+                if(nextPlanet && !buyOnly)
                 {
                     const link = el('a', 'oih_btn oih_next', actions, 'Pianeta »');
-                    link.title = 'Vai al pianeta successivo con questo item pronto' + (nextPlanet.coords ? ` (${nextPlanet.coords})` : '');
-                    link.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop&cp=${nextPlanet.id}&pgItem=${encodeURIComponent(it.uuid)}`;
-                    // OGame's cp handling can redirect and drop the query string, so stash the
-                    // wanted item in sessionStorage (survives the navigation) as well.
+                    link.title = 'Vai al pianeta successivo con questo item già aperto' + (nextPlanet.coords ? ` (${nextPlanet.coords})` : '');
+                    // Use the GAME'S OWN deep-link hash so OGame opens the inventory on this item
+                    // itself — the same URL shape the game produces when you navigate normally.
+                    // This is 1 user click = 1 navigation (§1.1); the activation is still yours.
+                    const cat = inventoryAllCategory();
+                    link.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop&cp=${nextPlanet.id}#category=${cat}&item=${it.uuid}&page=inventory&panel1-1=`;
+                    // Backup for our own box focus in case the hash is consumed by the game.
                     link.addEventListener('click', () =>
                     {
                         sessionStorage.setItem('oih_pending', it.uuid);
@@ -319,51 +389,35 @@
             });
         };
 
-        // On arrival, focus the box on the item we carried over. The actual "open the game's
-        // panel ready to activate" step is handled by autoSelect() below; here we just filter.
+        // On arrival, focus the box on the item we carried over. The game itself opens that item's
+        // panel via the deep-link hash; here we only filter our box to it. Clear the stash so a
+        // later manual navigation does not re-trigger the focus.
         let initialFilter = '';
         if(carry.uuid)
         {
             const m = items.find(it => it.uuid === carry.uuid);
             initialFilter = m ? m.name : carry.name;
+            clearCarry();
             if(sessionStorage.getItem('oih_collapsed') === '1') { grid.classList.remove('oih_hidden'); caret.innerHTML = '&#9662;'; }
         }
 
         search.value = initialFilter;
         search.addEventListener('input', () => render(search.value));
+        chk.addEventListener('change', () =>
+        {
+            sessionStorage.setItem('oih_showShop', chk.checked ? '1' : '0');
+            render(search.value);
+        });
         render(initialFilter);
         if(initialFilter) requestAnimationFrame(() => search.focus());
 
         return true;
     }
 
-    // After arriving from a "Pianeta succ." click, put the same item in front of the player,
-    // ready to activate: switch to the game's Inventory tab and open the item's OWN panel
-    // (the one with the game's Attiva/Prolunga button).
-    //
-    // GRAY AREA (§3): this is a comfort convenience and needs ToolDev sign-off before publishing.
-    // It stays within the rules: switching a tab and opening an item panel are UI/read steps, not
-    // game actions; the getDetails read fires once on this page load, not on a timer/loop (§4);
-    // and we NEVER press the activate button — the activation is always the player's own click
-    // (§1.1). It runs exactly once per carried item, with a hard attempt cap as a safety net.
-    function autoSelect()
-    {
-        if(!carry.uuid || carry.done) return;
-        if(carry.tries++ > 80) { carry.done = true; clearCarry(); return; }
-
-        // Step 1: make the game's Inventory tab active (the shop opens on the Shop tab).
-        const invTab = document.querySelector('.tabSelectionTab.inventoryTab');
-        if(invTab && !invTab.classList.contains('active')) { invTab.click(); return; } // wait for re-render
-
-        // Step 2: once the tile for this item exists, open the game's own item panel. Done once.
-        const tile = document.querySelector(`a.detail_button[ref="${carry.uuid}"]`);
-        if(tile)
-        {
-            carry.done = true;
-            clearCarry();
-            tile.click();
-        }
-    }
+    // Note: we no longer drive the game's UI to open the carried item — the "Pianeta »" link uses
+    // OGame's own deep-link hash, so the game opens the inventory on that item by itself. Our old
+    // tab/tile clicking produced a malformed #page=inventory hash that corrupted the inventory
+    // render; letting the game's native URL do the work is both cleaner and more compliant.
 
     // --------------------------------------------------------------------- start
     // The shop rebuilds its DOM constantly (GFSlider, tab switches, opening a detail,
@@ -377,11 +431,7 @@
         requestAnimationFrame(() =>
         {
             pending = false;
-            try
-            {
-                if(!document.querySelector('.oih_box')) build();
-                autoSelect();
-            }
+            try { if(!document.querySelector('.oih_box')) build(); }
             catch(e) { console.error('[OGItemHelper] build failed:', e); }
         });
     }
