@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.12.0
+// @version      0.12.1
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -252,28 +252,30 @@
         try { const o = JSON.parse(localStorage.getItem('oih_active_all') || 'null'); if(o && (Date.now() - o.at) < CACHE_TTL) return o; } catch(e) {}
         return null;
     }
-    // Best-effort extraction of per-planet active items from accountInfo. The exact shape is not
-    // documented, so we probe several plausible fields and log the structure for verification.
+    // Per-planet active items from accountInfo. Each planet/moon body carries a `buffs` array;
+    // a buff is identified by its NAME (the same localized name our items use) plus start/end
+    // epoch fields (unit auto-detected s vs ms). We keep name + end time; matching to our items is
+    // by name (buffs have no item ref). endsAt 0 = active but permanent / no reliable end.
+    function buffEndMs(b)
+    {
+        let end = Math.max(+((b && b.effectEnd) || 0), +((b && b.buffEnd) || 0));
+        if(end > 1e12) end = Math.floor(end / 1000); // ms → s
+        const nowS = Math.floor(Date.now() / 1000);
+        if(!(end > nowS && end < nowS + 3 * 365 * 86400)) return 0; // permanent / expired / unknown
+        return end * 1000;
+    }
     function extractActive(json)
     {
         const byPlanet = {};
         const bodies = Object.assign({}, json.planets || {}, json.moons || {});
         Object.entries(bodies).forEach(([id, body]) =>
         {
-            if(!body) return;
+            if(!body || !Array.isArray(body.buffs) || !body.buffs.length) return;
             const arr = [];
-            [body.items, body.activeItems, body.buffs, body.itemList, body.premium, body.activeBuffs].forEach(c =>
+            body.buffs.forEach(b =>
             {
-                if(!c) return;
-                (Array.isArray(c) ? c : Object.values(c)).forEach(it =>
-                {
-                    if(!it) return;
-                    const ref = it.ref || it.id || it.uuid || it.itemId || (typeof it === 'string' ? it : null);
-                    if(!ref || typeof ref !== 'string' || ref.length < 20) return; // item refs are long hashes
-                    const endsAt = it.endTime ? +it.endTime * 1000 : it.expiryDate ? +it.expiryDate * 1000
-                        : it.timeLeft ? Date.now() + (+it.timeLeft) * 1000 : 0;
-                    arr.push({ ref, endsAt });
-                });
+                const name = String((b && b.name) || '').split('|')[0].trim();
+                if(name) arr.push({ name: name.toLowerCase(), endsAt: buffEndMs(b) });
             });
             if(arr.length) byPlanet[id] = arr;
         });
@@ -304,19 +306,24 @@
         catch(e) { console.error('[OGItemHelper] account scan failed:', e); }
         finally { if(btn) btn.classList.remove('oih_busy'); }
     }
-    // Overlay the scanned active state for the CURRENT planet onto the item map (regardless of tab
-    // or the Shop flag), so active items are correctly flagged everywhere.
+    // Overlay the scanned active state for the CURRENT planet onto the item map, matched by NAME
+    // (buffs carry no item ref). Applies regardless of tab or the Shop flag, so active items are
+    // correctly flagged everywhere once the account has been scanned.
     function applyScannedActive(map)
     {
         const store = loadActive();
         if(!store) return;
+        const list = store.byPlanet[currentPlanetId()] || [];
+        if(!list.length) return;
+        const byName = {};
+        list.forEach(a => { byName[a.name] = a; });
         const now = Date.now();
-        (store.byPlanet[currentPlanetId()] || []).forEach(a =>
+        Object.values(map).forEach(rec =>
         {
-            const rec = map[a.ref];
-            if(!rec) return;
-            const tl = a.endsAt ? Math.floor((a.endsAt - now) / 1000) : 0;
-            if(!a.endsAt || tl > 0) { rec.active = true; if(tl > 0) rec.timeLeft = tl; }
+            const a = byName[(rec.name || '').toLowerCase()];
+            if(!a) return;
+            rec.active = true;
+            if(a.endsAt) { const tl = Math.floor((a.endsAt - now) / 1000); if(tl > 0) rec.timeLeft = tl; }
         });
     }
 
@@ -474,22 +481,27 @@
     // game's router resolves to that item regardless of category/pagination.
     function openNativeItem(uuid, fromShop)
     {
-        // Direct tile click ONLY when we are already on the right tab and the tile is rendered
-        // (fast, no reload). If a tab switch would be needed, clicking the tile fails on the first
-        // press (the tab switch re-renders the slider and the old tile reference goes stale), so we
-        // instead let the game's OWN deep-link hash do the switch + open in a single shot.
+        const sliderSel = fromShop ? '#js_shopSliderBox' : '#js_inventorySlider';
+        const findTile = () =>
+        {
+            const scope = document.querySelector(sliderSel);
+            return (scope && scope.querySelector(`a.detail_button[ref="${uuid}"]`)) || null;
+        };
+        // Already on the right tab and the tile is rendered → open it directly.
         const tab = document.querySelector(fromShop ? '.tabSelectionTab.shopTab' : '.tabSelectionTab.inventoryTab');
         const onRightTab = !tab || tab.classList.contains('active');
-        const scope = document.querySelector(fromShop ? '#js_shopSliderBox' : '#js_inventorySlider');
-        const tile = onRightTab && scope ? scope.querySelector(`a.detail_button[ref="${uuid}"]`) : null;
-        if(tile) { tile.click(); return; }
+        if(onRightTab) { const t = findTile(); if(t) { t.click(); return; } }
 
-        // Game's own hash router: switches to the right page/tab and opens the item, no stale tile.
-        const cat = inventoryAllCategory();
-        const page = fromShop ? 'shop' : 'inventory';
-        const target = `category=${cat}&item=${uuid}&page=${page}&panel1-1=`;
-        if(location.hash.slice(1) === target) location.hash = 'page=' + page; // force a change so it re-fires
-        location.hash = target;
+        // Otherwise switch tab, then WAIT for the game to re-render that section and click the tile
+        // once it appears (the deep-link hash only opens an item on a fresh page load, not on the
+        // same page). Event-driven with a hard cap — no polling of the server.
+        if(tab && !onRightTab) tab.click();
+        let done = false;
+        const tryClick = () => { if(done) return true; const t = findTile(); if(t) { done = true; t.click(); return true; } return false; };
+        if(tryClick()) return;
+        const obs = new MutationObserver(() => { if(tryClick()) obs.disconnect(); });
+        obs.observe(document.querySelector('#buttonz') || document.body, { childList: true, subtree: true });
+        setTimeout(() => obs.disconnect(), 5000); // local cleanup only, never a server call
     }
 
     // --------------------------------------------------------------------- UI
