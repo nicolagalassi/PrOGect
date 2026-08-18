@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.12.1
+// @version      0.12.2
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -275,7 +275,10 @@
             body.buffs.forEach(b =>
             {
                 const name = String((b && b.name) || '').split('|')[0].trim();
-                if(name) arr.push({ name: name.toLowerCase(), endsAt: buffEndMs(b) });
+                const endsAt = buffEndMs(b);
+                // Only TIMED buffs count as "active". Permanent items (e.g. planet/fleet slots)
+                // have no real end time (endsAt 0) and must not be shown as active.
+                if(name && endsAt > 0) arr.push({ name: name.toLowerCase(), endsAt });
             });
             if(arr.length) byPlanet[id] = arr;
         });
