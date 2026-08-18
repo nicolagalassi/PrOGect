@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.9.0
+// @version      0.9.1
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -25,10 +25,11 @@
     with a compact, searchable overview: thumbnail, name, amount, percentage badge — and it
     marks the item(s) already ACTIVE on the current planet with the remaining time.
   - By default it lists only what you OWN plus what is active. A "Shop" flag also lists buyable
-    shop items you do not own. It reads BOTH shop sections as one: the game loads inventory and
-    shop data only for the visible tab, so on load the helper briefly activates each tab once to
-    let the game fill both in, accumulates them in memory (fresh each load), then restores the
-    player's tab. Button labels come from OGame's own `loca`, already in the player's language.
+    shop items you do not own. The game loads inventory and shop data only for the visible tab, so
+    the helper accumulates, in memory for this page load, whatever the player opens: visit Shop
+    once and Inventory once and the box has both. It never switches tabs by itself (that would be
+    forbidden auto-refresh, §1.3/§4). Button labels come from OGame's own `loca`, in the player's
+    language.
   - The different DURATIONS of one item (7d / 30d / 90d) are grouped under a single button that
     expands to the per-duration choices, instead of one button per version.
   - The action button opens the game's OWN item panel for that item. You press the game's button —
@@ -129,10 +130,9 @@
         .oih_hint{font-size:10px;color:#9ec7ff;margin:-2px 0 6px;display:flex;gap:5px;align-items:center;cursor:default}
         .oih_hint.oih_hidden{display:none}
         .oih_hint .oih_pill{background:rgba(63,90,128,.35);border:1px solid #3f5a80;border-radius:10px;padding:0 7px;line-height:16px}
-        .oih_sub{display:flex;flex-direction:column;gap:3px;margin-top:2px}
+        .oih_sub{position:absolute;inset:0;z-index:5;display:flex;flex-direction:row;gap:6px;align-items:center;justify-content:center;padding:4px 6px;border-radius:3px;background:rgba(10,14,20,.45);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);cursor:pointer}
         .oih_sub.oih_hidden{display:none}
-        .oih_subRow{display:flex;gap:3px;align-items:stretch}
-        .oih_subRow .oih_btn{flex:1 1 auto}
+        .oih_dur{min-width:40px;padding:6px 8px;font-size:12px;font-weight:bold}
         .oih_empty{color:#8aa0b2;font-size:12px;padding:14px;text-align:center;grid-column:1/-1}
     `;
     function injectStyle()
@@ -439,15 +439,23 @@
             grid.innerHTML = '';
 
             // Prompt the player to open whichever section is not loaded yet (manual, no auto-load).
+            // Only nag at most once a day: once both sections have been loaded we stamp the time,
+            // and we stay quiet for 24h even if a later page starts with only one section.
+            const haveInv = Object.keys(mem.inv).length > 0;
+            const haveShop = Object.keys(mem.shop).length > 0;
+            if(haveInv && haveShop) { try { localStorage.setItem('oih_refreshedAt', Date.now()); } catch(e) {} }
+            let last = 0; try { last = +localStorage.getItem('oih_refreshedAt') || 0; } catch(e) {}
+            const quiet = (Date.now() - last) < 86400000; // 24h
+
             const missing = [];
-            if(!Object.keys(mem.inv).length) missing.push(L('LOCA_PREMIUM_INVENTORY', 'Inventario'));
-            if(!Object.keys(mem.shop).length) missing.push(L('LOCA_PREMIUM_SHOP', 'Shop'));
+            if(!haveInv) missing.push(L('LOCA_PREMIUM_INVENTORY', 'Inventario'));
+            if(!haveShop) missing.push(L('LOCA_PREMIUM_SHOP', 'Shop'));
             hint.innerHTML = '';
-            if(missing.length)
+            if(missing.length && !quiet)
             {
                 el('span', null, hint, '↻');
                 missing.forEach(nm => el('span', 'oih_pill', hint, nm));
-                hint.title = 'Apri queste schede una volta per caricarne gli item';
+                hint.title = 'Apri queste schede una volta per aggiornare gli item (richiesto ~ogni 24h)';
                 hint.classList.remove('oih_hidden');
             }
             else hint.classList.add('oih_hidden');
@@ -508,20 +516,20 @@
                 }
                 else
                 {
-                    // Multiple durations → the button expands to a per-duration menu (7d/30d/90d).
+                    // Multiple durations → the button reveals a horizontal, blurred overlay across
+                    // the card with the per-duration choices (+7d / +30d / +90d).
                     const act = el('div', 'oih_btn ' + styleFor(rep), actions, labelFor(rep) + ' ▾');
-                    const sub = el('div', 'oih_sub oih_hidden', actions);
-                    act.addEventListener('click', () => sub.classList.toggle('oih_hidden'));
+                    const sub = el('div', 'oih_sub oih_hidden', card); // overlays the whole card
+                    act.addEventListener('click', e => { e.stopPropagation(); sub.classList.remove('oih_hidden'); });
+                    sub.addEventListener('click', e => { if(e.target === sub) sub.classList.add('oih_hidden'); }); // click backdrop to close
 
                     group.forEach((m, i) =>
                     {
-                        const row = el('div', 'oih_subRow', sub);
                         // Just the days (+7d/+30d/+90d), trimming the long item name.
                         const dLabel = durLabel(m) || ('#' + (i + 1));
-                        const open = el('div', 'oih_btn ' + styleFor(m), row, dLabel);
+                        const open = el('div', 'oih_btn oih_dur ' + styleFor(m), sub, dLabel);
                         open.title = labelFor(m) + ' · ' + m.name + (m.amount ? ' ×' + m.amount : '');
-                        open.addEventListener('click', () => doOpen(m));
-                        if(nextPlanet && m.owned) row.appendChild(nextLink(m, '»'));
+                        open.addEventListener('click', () => { sub.classList.add('oih_hidden'); doOpen(m); });
                     });
                 }
             });
