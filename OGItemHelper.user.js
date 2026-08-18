@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.12.2
+// @version      0.12.3
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -118,7 +118,9 @@
         .oih_card.oih_buy{border-color:#3f5a80;background:rgba(18,24,34,.8)}
         .oih_shopTag{color:#7fa8e0}
         .oih_thumb{width:42px;height:42px;flex:0 0 auto;border-radius:3px;background-size:cover;background-position:center;background-repeat:no-repeat;background-color:#0b0f14;border:1px solid #333c47}
-        .oih_r_common{border-color:#6d7b86}.oih_r_uncommon{border-color:#4a8f5b}.oih_r_rare{border-color:#3f6fb0}.oih_r_epic{border-color:#8a5bbf}
+        /* Rarity = tier colour on the thumbnail: bronze / silver / gold / platinum→purple */
+        .oih_thumb[class*="oih_r_"]{border-width:2px}
+        .oih_r_common{border-color:#c87f3a}.oih_r_uncommon{border-color:#c3ccd4}.oih_r_rare{border-color:#e6be23}.oih_r_epic{border-color:#a05bd0}
         .oih_info{flex:1 1 auto;min-width:0}
         .oih_name{font-size:11px;color:#e6ecf2;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
         .oih_meta{font-size:10px;color:#8aa0b2;display:flex;gap:6px;margin-top:2px;flex-wrap:wrap}
