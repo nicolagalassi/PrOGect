@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.3.0
-// @description  A searchable inventory overview on the shop page, with a compliant activation flow: one click opens the game's own item panel, and a "next planet" jump pre-selects the same item. Standalone companion to PrOGect.
+// @version      0.4.0
+// @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
 // @icon         https://gf1.geo.gfsrv.net/cdn3d/favicon.ico
@@ -18,33 +18,29 @@
   Activating an item (e.g. a +10% metal booster) on every planet is tedious: open the
   inventory, filter by broad type, scroll a wall of items with NO name search, click to
   open, activate, get bounced back to the Shop tab, then repeat on the next planet.
-  This helper collapses the *finding* while leaving the *activating* exactly where the
-  game puts it.
+  This helper collapses the *finding* while leaving the *activating* where the game puts it.
 
   WHAT IT DOES (on the shop page)
-  - Reads the inventory the page already holds (the game's own `inventoryObj.items_inventory`,
-    or the inventory DOM as a fallback) and shows a compact, searchable overview: small
-    thumbnail, name, amount, and a percentage badge — with the name search the game lacks.
-  - "Attiva" opens the game's OWN item panel for that item (the panel with the game's
-    "Attiva"/"Prolunga" button). You press the game's button — that is the one game action.
-    The search is remembered, so re-opening the same item to stack/extend it needs no search.
-  - "Pianeta succ." is a normal navigation link to the next planet's shop with the same
-    item pre-selected, so it is right there when the page reloads.
+  - Adds its OWN box inside the shop (between the image/detail area and the inventory list),
+    with a compact, searchable overview: thumbnail, name, amount, percentage badge — and it
+    marks the item(s) already ACTIVE on the current planet with the remaining time.
+  - "Attiva" (or "Prolunga" when the item is already active and extendable) opens the game's
+    OWN item panel for that item. You press the game's button — that is the one game action.
+  - "Pianeta succ." navigates to the next planet's shop (the game's own cp flow) and re-opens
+    the box focused on the SAME item, ready to activate.
 
   COMPLIANCE (OGame Origin tool rules — see PrOGect/AGENTS.md):
-  - §1.1  1 click = 1 action. The helper never activates anything itself: "Attiva" only opens
-          the game's native item panel; the activation is the player's click on the game's
-          own button. No auto-click on load, no loop, no skipping the game's own confirm step.
+  - §1.1  1 click = 1 action. The helper never activates anything itself; it only opens the
+          game's native item panel. The activation is the player's click on the game's button.
   - §1.3/§4  No auto-refresh, no polling, no timers hitting the server. It reads data already
-          in the page; a DOM-only MutationObserver waits for the shop content to render.
-  - §4.2  No background `cp` calls. Planet switching is a real <a> navigation the player clicks.
+          in the page (the game's inventoryObj / the inventory DOM); a DOM-only MutationObserver
+          keeps the box present as the shop rebuilds itself.
+  - §4.2  No background cp calls. Planet switching is a real <a> navigation the player clicks.
   - §6    We call NO activation endpoint or game function ourselves — we forward to the game's
           own item tile / panel.
-  - §1.7  The shop image, ads and Shop menu are never hidden, resized, moved or swapped. The
-          overview is an on-demand overlay that starts collapsed and closes to reveal the shop
-          again (and closes itself when opening a game panel, so it never covers it).
-  - §3    Comfort feature that touches the shop UI/flow → GRAY AREA: get a ToolDev sign-off on
-          the OGame Origin forum before publishing.
+  - §1.7  Our box is added in normal flow; it never hides, resizes, moves or covers the shop
+          image, ads or Shop menu.
+  - §3    Comfort feature touching the shop UI/flow → GRAY AREA: get a ToolDev sign-off first.
   - §5    Runs inside the OGame page → needs toleration before public distribution.
 */
 
@@ -55,41 +51,39 @@
     const HREF = window.location.href;
     if(HREF.indexOf('component=shop') < 0 && HREF.indexOf('page=shop') < 0) return;
 
-    // Page context (with @grant none the script shares the page window, so the game's own
-    // inventoryObj is directly readable — no fetch needed).
-    const PAGE = window;
+    const PAGE = window; // @grant none → shares the page window, so inventoryObj is readable.
 
     // --------------------------------------------------------------------- styles
     const CSS = `
-        .oih_toggle{position:absolute;top:8px;right:12px;z-index:30;display:inline-flex;align-items:center;gap:5px;padding:4px 10px;cursor:pointer;border-radius:3px;font-size:12px;color:#fff;background:linear-gradient(192deg,#252e3a,#171c24 70%);border:1px solid #3a4756;box-shadow:0 1px 6px rgba(0,0,0,.5)}
-        .oih_toggle:hover{border-color:#ffb800}
-        .oih_toggle .oih_ico{color:#f0a955}
-        .oih_panel{position:absolute;top:36px;left:10px;right:10px;z-index:29;max-height:210px;display:flex;flex-direction:column;background:linear-gradient(192deg,rgba(37,46,58,.98),rgba(20,25,32,.98));border:1px solid #3a4756;border-radius:4px;box-shadow:0 6px 22px rgba(0,0,0,.6);padding:8px;box-sizing:border-box}
-        .oih_hidden{display:none !important}
-        .oih_head{display:flex;align-items:center;gap:8px;margin-bottom:7px;flex:0 0 auto}
-        .oih_title{font-size:12px;color:#f0a955;font-weight:bold;white-space:nowrap}
+        .oih_box{margin:6px 8px 10px;padding:8px;border:1px solid #3a4756;border-radius:4px;background:linear-gradient(192deg,rgba(37,46,58,.6),rgba(20,25,32,.6));box-sizing:border-box}
+        .oih_head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+        .oih_title{font-size:12px;color:#f0a955;font-weight:bold;white-space:nowrap;display:flex;align-items:center;gap:4px}
         .oih_head input{flex:1;min-width:60px;padding:4px 8px;border-radius:3px;border:1px solid #3a4756;background:#0e131a;color:#fff;font-size:12px}
         .oih_head input:focus{outline:none;border-color:#ffb800}
         .oih_count{font-size:11px;color:#7c8b99;white-space:nowrap}
-        .oih_close{cursor:pointer;color:#9aa7b4;font-size:18px;line-height:1;padding:0 2px}
-        .oih_close:hover{color:#f9392b}
-        .oih_grid{flex:1 1 auto;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;padding-right:2px}
+        .oih_collapse{cursor:pointer;color:#9aa7b4;font-size:14px;line-height:1;padding:2px 4px;user-select:none}
+        .oih_collapse:hover{color:#ffb800}
+        .oih_grid{max-height:240px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:6px;padding-right:2px}
+        .oih_grid.oih_hidden{display:none}
         .oih_card{position:relative;display:flex;gap:7px;align-items:center;padding:5px;border-radius:3px;background:rgba(14,19,26,.75);border:1px solid #2b3542}
         .oih_card:hover{border-color:#4a5a6c}
+        .oih_card.oih_on{border-color:#3f8f5f;background:rgba(20,34,26,.8)}
         .oih_thumb{width:36px;height:36px;flex:0 0 auto;border-radius:3px;background-size:cover;background-position:center;background-repeat:no-repeat;background-color:#0b0f14;border:1px solid #333c47}
         .oih_r_common{border-color:#6d7b86}.oih_r_uncommon{border-color:#4a8f5b}.oih_r_rare{border-color:#3f6fb0}.oih_r_epic{border-color:#8a5bbf}
         .oih_info{flex:1 1 auto;min-width:0}
         .oih_name{font-size:11px;color:#e6ecf2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .oih_meta{font-size:10px;color:#8aa0b2;display:flex;gap:6px;margin-top:2px}
+        .oih_meta{font-size:10px;color:#8aa0b2;display:flex;gap:6px;margin-top:2px;flex-wrap:wrap}
         .oih_amount{color:#ffb800}
         .oih_pct{color:#7fd6a0}
+        .oih_live{color:#59c98a;display:inline-flex;align-items:center;gap:3px}
+        .oih_live::before{content:"";width:6px;height:6px;border-radius:50%;background:#59c98a}
         .oih_actions{display:flex;flex-direction:column;gap:3px;flex:0 0 auto}
         .oih_btn{cursor:pointer;font-size:10px;padding:3px 7px;border-radius:3px;border:1px solid #3a4756;background:linear-gradient(192deg,#2b3542,#1a2029);color:#fff;text-align:center;text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
         .oih_btn:hover{border-color:#ffb800}
         .oih_btn.oih_activate{color:#bfeecf}
+        .oih_btn.oih_extend{color:#ffd78a}
         .oih_btn.oih_next{color:#9ec7ff}
         .oih_empty{color:#8aa0b2;font-size:12px;padding:14px;text-align:center;grid-column:1/-1}
-        .oih_hint{flex:0 0 auto;margin-top:6px;font-size:10px;color:#6f7f8d;line-height:1.35}
     `;
     function injectStyle()
     {
@@ -116,8 +110,19 @@
         t.innerHTML = s;
         return (t.textContent || '').replace(/\s+/g, ' ').trim();
     };
+    const fmtDur = sec =>
+    {
+        sec = Math.max(0, Math.floor(sec || 0));
+        const g = Math.floor(sec / 86400); sec -= g * 86400;
+        const o = Math.floor(sec / 3600); sec -= o * 3600;
+        const m = Math.floor(sec / 60);
+        const p = [];
+        if(g) p.push(g + 'g');
+        if(o) p.push(o + 'o');
+        if(m && !g) p.push(m + 'm');
+        return p.join(' ') || '<1m';
+    };
 
-    // Planet list from the game's own sidebar; "next planet" reuses the game's cp navigation.
     function getNextPlanet()
     {
         const planets = [];
@@ -136,7 +141,8 @@
     }
 
     // Read the inventory the shop page already holds — no fetch (§4).
-    // Primary source: the game's own inventoryObj.items_inventory. Fallback: the tile DOM.
+    // Primary source: the game's own inventoryObj.items_inventory (also carries the per-planet
+    // active state: status / timeLeft / extendable). Fallback: the inventory tile DOM.
     function readInventory()
     {
         const out = [];
@@ -147,12 +153,11 @@
         {
             obj.items_inventory.forEach(it =>
             {
-                // amount>0 = an owned stack you can activate; skip active running instances
-                // (they carry an expiryDate and are not re-activatable).
-                if(!it || !it.ref || !(it.amount > 0) || it.expiryDate) return;
+                if(!it || !it.ref || !(it.amount > 0) || it.expiryDate) return; // owned stacks only
                 if(seen[it.ref]) return;
                 seen[it.ref] = 1;
                 const hash = it.imageLarge || it.image || '';
+                const active = it.status === 'effecting' || (it.timeLeft > 0);
                 out.push({
                     uuid: it.ref,
                     name: (it.name || 'Item').trim(),
@@ -160,39 +165,41 @@
                     image: hash ? `/cdn/img/item-images/${hash}.png` : '',
                     effect: stripTags(it.effect || ''),
                     rarity: (it.rarity || '').toLowerCase(),
+                    active,
+                    timeLeft: active ? (it.timeLeft || 0) : 0,
+                    extendable: !!it.extendable,
                 });
             });
             if(out.length) return out;
         }
 
-        // Fallback: scrape the inventory tiles.
+        // Fallback: scrape the tiles.
         document.querySelectorAll('#js_inventorySlider a.detail_button[ref], a.detail_button[ref]').forEach(a =>
         {
             const uuid = a.getAttribute('ref');
             if(!uuid || uuid === 'ffffffffffffffffffffffffffffffffffffffff' || seen[uuid]) return;
             seen[uuid] = 1;
-            const tip = a.getAttribute('data-tooltip-title') || '';
-            const parts = tip.split('|');
+            const parts = (a.getAttribute('data-tooltip-title') || '').split('|');
             const name = stripTags(parts[0] || 'Item');
             const effect = stripTags((parts[1] || '').split('<br')[0]);
             const amount = (a.querySelector('.ecke .amount, .amount')?.textContent || '').replace(/[^\d]/g, '');
-            let image = '';
             const box = a.closest('.item_img');
+            let image = '';
             if(box)
             {
                 const m = getComputedStyle(box).backgroundImage.match(/url\(["']?([^"')]+)["']?\)/);
                 if(m) image = m[1];
             }
-            out.push({ uuid, name, amount: amount ? +amount : '', image, effect, rarity: '' });
+            const activeEl = box && box.querySelector('.activation.js_is_active');
+            const timeText = box && box.querySelector('.countdownHolder time')?.textContent;
+            out.push({ uuid, name, amount: amount ? +amount : '', image, effect, rarity: '', active: !!activeEl, timeLeft: 0, timeText: timeText || '', extendable: false });
         });
         return out;
     }
 
-    // Open the game's OWN item panel for this item. We never activate anything ourselves
-    // (§1.1/§6) — the player presses the game's "Attiva"/"Prolunga" button in that panel.
+    // Open the game's OWN item panel. We never activate anything ourselves (§1.1/§6).
     function openNativeItem(uuid)
     {
-        // Make sure the game's Inventory tab is the active one, then open the item.
         const invTab = document.querySelector('.tabSelectionTab.inventoryTab');
         if(invTab && !invTab.classList.contains('active')) invTab.click();
         const tile = document.querySelector(`a.detail_button[ref="${uuid}"]`);
@@ -202,46 +209,45 @@
     // --------------------------------------------------------------------- UI
     function build()
     {
-        // Anchor to the shop's own container (#planet). The overlay uses the shop-image space
-        // on demand without altering the image itself (§1.7).
-        const anchor = document.querySelector('#planet') || document.querySelector('#inhalt') || document.querySelector('#shopcomponent');
-        if(!anchor || anchor.querySelector('.oih_panel')) return false;
+        if(document.querySelector('.oih_box')) return true;
+
+        // Insert our own box in normal flow, between the shop image/detail area and the
+        // inventory list (#buttonz). Fallbacks keep it inside the shop container.
+        const buttonz = document.querySelector('#buttonz');
+        const planet = document.querySelector('#planet');
+        const inhalt = document.querySelector('#inhalt');
+        let insertBefore = null, parent = null;
+        if(buttonz && buttonz.parentNode) { parent = buttonz.parentNode; insertBefore = buttonz; }
+        else if(planet && inhalt) { parent = inhalt; insertBefore = planet.nextSibling; }
+        else if(inhalt) { parent = inhalt; }
+        else return false;
 
         const items = readInventory();
         if(!items.length) return false; // shop content not rendered yet — observer will retry
 
         injectStyle();
-        if(getComputedStyle(anchor).position === 'static') anchor.style.position = 'relative';
 
-        // pgItem in the URL = we arrived from a "next planet" click; reopen focused on it.
-        const requestedUuid = new URLSearchParams(HREF.split('?')[1] || '').get('pgItem') || '';
-        const openState = !!requestedUuid || sessionStorage.getItem('oih_open') === '1';
+        const box = document.createElement('div');
+        box.className = 'oih_box';
+        parent.insertBefore(box, insertBefore);
 
-        const toggle = el('div', 'oih_toggle' + (openState ? ' oih_hidden' : ''), anchor,
-            '<span class="oih_ico">&#9670;</span><span>Item helper</span>');
-
-        const panel = el('div', 'oih_panel' + (openState ? '' : ' oih_hidden'), anchor);
-        const head = el('div', 'oih_head', panel);
-        el('div', 'oih_title', head, 'Inventario');
+        const head = el('div', 'oih_head', box);
+        el('div', 'oih_title', head, '<span>&#9670;</span> Item helper');
         const search = el('input', null, head);
         search.type = 'text';
         search.placeholder = 'Cerca per nome...';
-        const count = el('div', 'oih_count', head, items.length + ' tipi');
-        const close = el('div', 'oih_close', head, '&times;');
+        const count = el('div', 'oih_count', head, '');
+        const collapsed0 = sessionStorage.getItem('oih_collapsed') === '1';
+        const caret = el('div', 'oih_collapse', head, collapsed0 ? '&#9656;' : '&#9662;');
 
-        const grid = el('div', 'oih_grid', panel);
-        el('div', 'oih_hint', panel,
-            'Attiva apre il pannello dell’item nel gioco: sei tu a premere Attiva/Prolunga (un clic = un’azione). "Pianeta succ." apre lo stesso item sul pianeta seguente.');
-
-        const setOpen = show =>
+        const grid = el('div', 'oih_grid' + (collapsed0 ? ' oih_hidden' : ''), box);
+        caret.addEventListener('click', () =>
         {
-            panel.classList.toggle('oih_hidden', !show);
-            toggle.classList.toggle('oih_hidden', show);
-            sessionStorage.setItem('oih_open', show ? '1' : '0');
-            if(show) search.focus();
-        };
-        toggle.addEventListener('click', () => setOpen(true));
-        close.addEventListener('click', () => setOpen(false));
+            const hide = !grid.classList.contains('oih_hidden');
+            grid.classList.toggle('oih_hidden', hide);
+            caret.innerHTML = hide ? '&#9656;' : '&#9662;';
+            sessionStorage.setItem('oih_collapsed', hide ? '1' : '0');
+        });
 
         const nextPlanet = getNextPlanet();
 
@@ -252,15 +258,14 @@
             const visible = items.filter(it => !needle || it.name.toLowerCase().indexOf(needle) >= 0);
             count.textContent = visible.length + '/' + items.length;
 
-            if(!visible.length)
-            {
-                el('div', 'oih_empty', grid, 'Nessun item trovato.');
-                return;
-            }
+            if(!visible.length) { el('div', 'oih_empty', grid, 'Nessun item trovato.'); return; }
+
+            // Active items first, so what is running on this planet is obvious.
+            visible.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
 
             visible.forEach(it =>
             {
-                const card = el('div', 'oih_card', grid);
+                const card = el('div', 'oih_card' + (it.active ? ' oih_on' : ''), grid);
                 const thumb = el('div', 'oih_thumb' + (it.rarity ? ' oih_r_' + it.rarity : ''), card);
                 if(it.image) thumb.style.backgroundImage = `url('${it.image}')`;
 
@@ -271,52 +276,59 @@
                 if(it.amount) el('span', 'oih_amount', meta, 'x' + it.amount);
                 const pct = (it.effect || '').match(/[+-]?\d+\s*%/);
                 if(pct) el('span', 'oih_pct', meta, pct[0].replace(/\s+/g, ''));
+                if(it.active) el('span', 'oih_live', meta, 'attivo' + (it.timeLeft ? ' ' + fmtDur(it.timeLeft) : (it.timeText ? ' ' + it.timeText : '')));
 
                 const actions = el('div', 'oih_actions', card);
-
-                // ACTIVATE — opens the game's own item panel. Closing our overlay first so the
-                // game's panel (which renders in the same top area) is visible and clickable.
-                const act = el('div', 'oih_btn oih_activate', actions, 'Attiva');
+                const extend = it.active && it.extendable;
+                const act = el('div', 'oih_btn ' + (extend ? 'oih_extend' : 'oih_activate'), actions, extend ? 'Prolunga' : 'Attiva');
                 act.addEventListener('click', () =>
                 {
                     sessionStorage.setItem('oih_filter', search.value || '');
-                    setOpen(false);
                     openNativeItem(it.uuid);
                 });
 
-                // NEXT PLANET — real navigation (one click = one planet change via the game's
-                // own cp flow). pgItem reopens the panel focused on this item on arrival.
                 if(nextPlanet)
                 {
                     const link = el('a', 'oih_btn oih_next', actions, 'Pianeta »');
                     link.title = 'Vai al pianeta successivo con questo item pronto' + (nextPlanet.coords ? ` (${nextPlanet.coords})` : '');
                     link.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop&cp=${nextPlanet.id}&pgItem=${encodeURIComponent(it.uuid)}`;
+                    // OGame's cp handling can redirect and drop the query string, so stash the
+                    // wanted item in sessionStorage (survives the navigation) as well.
+                    link.addEventListener('click', () =>
+                    {
+                        sessionStorage.setItem('oih_pending', it.uuid);
+                        sessionStorage.setItem('oih_pendingName', it.name);
+                    });
                 }
             });
         };
 
+        // On arrival, focus on the item we carried over (URL pgItem, or the sessionStorage
+        // stash that survives OGame's cp redirect). We only pre-filter — never auto-activate.
         let initialFilter = '';
-        if(requestedUuid)
+        const wantedUuid = new URLSearchParams(HREF.split('?')[1] || '').get('pgItem') || sessionStorage.getItem('oih_pending') || '';
+        const wantedName = sessionStorage.getItem('oih_pendingName') || '';
+        if(wantedUuid)
         {
-            const m = items.find(it => it.uuid === requestedUuid);
-            if(m) initialFilter = m.name;
+            const m = items.find(it => it.uuid === wantedUuid);
+            initialFilter = m ? m.name : wantedName;
+            sessionStorage.removeItem('oih_pending');
+            sessionStorage.removeItem('oih_pendingName');
+            if(sessionStorage.getItem('oih_collapsed') === '1') { grid.classList.remove('oih_hidden'); caret.innerHTML = '&#9662;'; }
         }
-        if(!initialFilter && openState) initialFilter = sessionStorage.getItem('oih_filter') || '';
 
         search.value = initialFilter;
         search.addEventListener('input', () => render(search.value));
         render(initialFilter);
-        if(openState) requestAnimationFrame(() => search.focus());
+        if(initialFilter) requestAnimationFrame(() => search.focus());
 
         return true;
     }
 
     // --------------------------------------------------------------------- start
-    // The shop rebuilds its own DOM constantly (GFSlider, tab switches, opening an item
-    // detail, pagination). Each rebuild wipes our panel, so we watch permanently and
-    // re-inject whenever it is missing. This is DOM-only observation — no timers hitting
-    // the server, no polling (§1.3/§4). A short debounce coalesces bursts of mutations and
-    // ignores the mutation caused by our own insertion.
+    // The shop rebuilds its DOM constantly (GFSlider, tab switches, opening a detail,
+    // pagination), wiping our box. We watch permanently and re-inject when it is missing.
+    // DOM-only observation — no server calls, no polling (§1.3/§4).
     let pending = false;
     function ensure()
     {
@@ -325,11 +337,7 @@
         requestAnimationFrame(() =>
         {
             pending = false;
-            try
-            {
-                if(document.querySelector('.oih_panel')) return; // already present
-                build();
-            }
+            try { if(!document.querySelector('.oih_box')) build(); }
             catch(e) { console.error('[OGItemHelper] build failed:', e); }
         });
     }
@@ -339,14 +347,9 @@
         try
         {
             ensure();
-            // Observe a node that survives the shop rebuilds. #inhalt / #planet stay put while
-            // their children are replaced; body is the last resort.
             const target = document.querySelector('#inhalt') || document.querySelector('#planet') || document.body;
             if(!target) return;
-            const obs = new MutationObserver(ensure);
-            obs.observe(target, { childList: true, subtree: true });
-            // If we anchored high (body) before the shop existed, also latch onto #inhalt once
-            // it appears, so we observe the tighter, longer-lived container.
+            new MutationObserver(ensure).observe(target, { childList: true, subtree: true });
             if(target === document.body)
             {
                 const boot = new MutationObserver(() =>
