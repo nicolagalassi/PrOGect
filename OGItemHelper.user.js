@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.10.1
+// @version      0.10.2
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -195,29 +195,25 @@
     const mem = { inv: {}, shop: {} };
 
     // Persistent memory of what we have SEEN, so the box stays complete without re-asking every
-    // page: the shop cached globally (static), the inventory cached per planet (its owned/active
-    // state is planet-specific). Kept for 24h — after that we ask the player to re-open the tabs so
-    // the data refreshes. Live data always wins over the cache; visiting a tab refreshes its cache.
+    // page. Items belong to the ACCOUNT, so both the inventory stock and the shop are cached
+    // GLOBALLY (not per planet). The one thing that IS planet-specific — which item is currently
+    // ACTIVE — is never cached: it is stripped when saving and only ever taken from the live data
+    // of the planet you are on. Kept for 24h; live data always wins; visiting a tab refreshes it.
     const CACHE_TTL = 86400000; // 24h
-    function planetId()
-    {
-        const line = document.querySelector('.smallplanet.hightlightPlanet, .smallplanet.hightlightMoon');
-        const link = line && (line.querySelector('.planetlink') || line.querySelector('a[href*="cp="]'));
-        const fromLink = link && new URLSearchParams((link.getAttribute('href') || '').split('?')[1] || '').get('cp');
-        const fromUrl = new URLSearchParams(HREF.split('?')[1] || '').get('cp');
-        return String(fromLink || fromUrl || '0').split('#')[0];
-    }
-    const cacheKey = kind => kind === 'shop' ? 'oih_cache_shop' : 'oih_cache_inv_' + planetId();
+    const cacheKey = kind => kind === 'shop' ? 'oih_cache_shop' : 'oih_cache_inv';
     function saveCache(kind, map)
     {
-        try { localStorage.setItem(cacheKey(kind), JSON.stringify({ at: Date.now(), items: Object.values(map) })); } catch(e) {}
+        // Active/timeLeft are planet-specific — don't persist them in the account-wide inventory.
+        const items = Object.values(map).map(r => Object.assign({}, r, { active: false, timeLeft: 0 }));
+        try { localStorage.setItem(cacheKey(kind), JSON.stringify({ at: Date.now(), items })); } catch(e) {}
     }
     function loadCache(kind)
     {
         try { const o = JSON.parse(localStorage.getItem(cacheKey(kind)) || 'null'); if(o && (Date.now() - o.at) < CACHE_TTL) return o; } catch(e) {}
         return null;
     }
-    // Seed memory from a fresh (<24h) cache, decaying any active countdown by the time elapsed.
+    // Seed memory from a fresh (<24h) cache. The cache carries no active state (that is per planet
+    // and comes only from live data), so seeded items start inactive until the live tab confirms.
     function seedFromCache()
     {
         [['inv', mem.inv], ['shop', mem.shop]].forEach(([kind, target]) =>
@@ -227,14 +223,7 @@
             o.items.forEach(r =>
             {
                 if(!r || !r.uuid) return;
-                const rec = Object.assign({}, r);
-                if(rec.active && rec.timeLeft > 0)
-                {
-                    const rem = rec.timeLeft - (Date.now() - o.at) / 1000;
-                    if(rem > 0) rec.timeLeft = Math.floor(rem);
-                    else { rec.active = false; rec.timeLeft = 0; }
-                }
-                target[rec.uuid] = rec;
+                target[r.uuid] = Object.assign({}, r, { active: false, timeLeft: 0 });
             });
         });
     }
