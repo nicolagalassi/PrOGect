@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.11.0
+// @version      0.12.0
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -43,7 +43,9 @@
           game's native item panel. The activation is the player's click on the game's button.
   - §1.3/§4  No auto-refresh, no polling, no timers hitting the server. It reads data already
           in the page (the game's inventoryObj / the inventory DOM); a DOM-only MutationObserver
-          keeps the box present as the shop rebuilds itself.
+          keeps the box present as the shop rebuilds itself. The one background call is the optional
+          "Scan account" button: a SINGLE accountInfo read, only on the player's explicit click,
+          never on a timer/loop (§4.1 — read once, never poll), token propagated.
   - §4.2  No background cp calls. Planet switching is a real <a> navigation the player clicks.
   - §6    We call NO activation endpoint or game function ourselves — we forward to the game's
           own item tile / panel.
@@ -101,6 +103,10 @@
         .oih_head input[type=text]:focus{outline:none;border-color:#ffb800;background:#0e131a !important;color:#fff !important;-webkit-text-fill-color:#fff}
         .oih_flag{font-size:11px;color:#9ec7ff;white-space:nowrap;display:inline-flex;align-items:center;gap:3px;cursor:pointer;user-select:none}
         .oih_flag input{cursor:pointer;margin:0}
+        .oih_scan{cursor:pointer;color:#9ec7ff;font-size:14px;line-height:1;padding:2px 4px;user-select:none;border:1px solid #3a4756;border-radius:3px}
+        .oih_scan:hover{border-color:#ffb800;color:#ffb800}
+        .oih_scan.oih_busy{animation:oih_spin .8s linear infinite;color:#ffb800;pointer-events:none}
+        @keyframes oih_spin{to{transform:rotate(360deg)}}
         .oih_count{font-size:11px;color:#7c8b99;white-space:nowrap}
         .oih_collapse{cursor:pointer;color:#9aa7b4;font-size:14px;line-height:1;padding:2px 4px;user-select:none}
         .oih_collapse:hover{color:#ffb800}
@@ -228,6 +234,92 @@
         });
     }
 
+    // ---- Account scan: active items across ALL planets, from ONE accountInfo read -------------
+    // accountInfo returns the whole account in a single response, so a single user-triggered read
+    // gives the active items on every planet — no per-planet spamming. COMPLIANCE §4.1: read ONCE,
+    // never poll; here it fires only on the player's explicit click of the "Scan" button. The
+    // rotated ajax token is propagated so we do not desync the game's own requests.
+    function currentPlanetId()
+    {
+        const line = document.querySelector('.smallplanet.hightlightPlanet, .smallplanet.hightlightMoon');
+        const link = line && (line.querySelector('.planetlink') || line.querySelector('a[href*="cp="]'));
+        const fromLink = link && new URLSearchParams((link.getAttribute('href') || '').split('?')[1] || '').get('cp');
+        const fromUrl = new URLSearchParams(HREF.split('?')[1] || '').get('cp');
+        return String(fromLink || fromUrl || '0').split('#')[0];
+    }
+    function loadActive()
+    {
+        try { const o = JSON.parse(localStorage.getItem('oih_active_all') || 'null'); if(o && (Date.now() - o.at) < CACHE_TTL) return o; } catch(e) {}
+        return null;
+    }
+    // Best-effort extraction of per-planet active items from accountInfo. The exact shape is not
+    // documented, so we probe several plausible fields and log the structure for verification.
+    function extractActive(json)
+    {
+        const byPlanet = {};
+        const bodies = Object.assign({}, json.planets || {}, json.moons || {});
+        Object.entries(bodies).forEach(([id, body]) =>
+        {
+            if(!body) return;
+            const arr = [];
+            [body.items, body.activeItems, body.buffs, body.itemList, body.premium, body.activeBuffs].forEach(c =>
+            {
+                if(!c) return;
+                (Array.isArray(c) ? c : Object.values(c)).forEach(it =>
+                {
+                    if(!it) return;
+                    const ref = it.ref || it.id || it.uuid || it.itemId || (typeof it === 'string' ? it : null);
+                    if(!ref || typeof ref !== 'string' || ref.length < 20) return; // item refs are long hashes
+                    const endsAt = it.endTime ? +it.endTime * 1000 : it.expiryDate ? +it.expiryDate * 1000
+                        : it.timeLeft ? Date.now() + (+it.timeLeft) * 1000 : 0;
+                    arr.push({ ref, endsAt });
+                });
+            });
+            if(arr.length) byPlanet[id] = arr;
+        });
+        return byPlanet;
+    }
+    async function scanAccount(btn)
+    {
+        const busy = btn && btn.classList.contains('oih_busy');
+        if(busy) return;
+        if(btn) btn.classList.add('oih_busy');
+        try
+        {
+            const url = `https://${window.location.host}/game/index.php?page=componentOnly&component=externaldataexport&action=accountInfo&asJson=1`;
+            const res = await fetch(url, { credentials: 'include', cache: 'no-cache', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            const json = await res.json();
+            if(json.newAjaxToken && typeof PAGE.setNewTokenData === 'function') { try { PAGE.setNewTokenData(json.newAjaxToken); } catch(e) {} }
+
+            // Structure probe — helps us confirm where the item/buff data lives.
+            console.log('[OGItemHelper] accountInfo keys:', Object.keys(json));
+            const firstBody = Object.values(json.planets || {})[0];
+            if(firstBody) console.log('[OGItemHelper] planet body keys:', Object.keys(firstBody));
+
+            const byPlanet = extractActive(json);
+            console.log('[OGItemHelper] active items found on', Object.keys(byPlanet).length, 'bodies:', byPlanet);
+            localStorage.setItem('oih_active_all', JSON.stringify({ at: Date.now(), byPlanet }));
+            if(rerender) rerender();
+        }
+        catch(e) { console.error('[OGItemHelper] account scan failed:', e); }
+        finally { if(btn) btn.classList.remove('oih_busy'); }
+    }
+    // Overlay the scanned active state for the CURRENT planet onto the item map (regardless of tab
+    // or the Shop flag), so active items are correctly flagged everywhere.
+    function applyScannedActive(map)
+    {
+        const store = loadActive();
+        if(!store) return;
+        const now = Date.now();
+        (store.byPlanet[currentPlanetId()] || []).forEach(a =>
+        {
+            const rec = map[a.ref];
+            if(!rec) return;
+            const tl = a.endsAt ? Math.floor((a.endsAt - now) / 1000) : 0;
+            if(!a.endsAt || tl > 0) { rec.active = true; if(tl > 0) rec.timeLeft = tl; }
+        });
+    }
+
     // Merge a record into a target map: OR the boolean flags, keep the first meaningful scalar
     // (so a shop copy's amount:0 never overwrites the inventory's real amount).
     function upsertInto(target, d)
@@ -306,12 +398,14 @@
         return planets[(i + 1) % planets.length];
     }
 
-    // The union of everything we have accumulated in memory this page load (inventory + shop).
+    // The union of everything we have accumulated in memory this page load (inventory + shop),
+    // with the scanned active state for the current planet overlaid on top.
     function collectItems()
     {
         const map = {};
         Object.values(mem.inv).forEach(r => upsertInto(map, r));
         Object.values(mem.shop).forEach(r => upsertInto(map, r));
+        applyScannedActive(map);
         return Object.values(map).filter(e => e.name);
     }
 
@@ -435,6 +529,11 @@
         chk.type = 'checkbox';
         chk.checked = sessionStorage.getItem('oih_showShop') === '1';
         flag.appendChild(document.createTextNode(' ' + L('LOCA_PREMIUM_SHOP', 'Shop')));
+
+        // Scan button: one accountInfo read (on click) to learn the active items of ALL planets.
+        const scan = el('div', 'oih_scan', head, '⟳');
+        scan.title = 'Scansiona account: legge una volta gli item attivi di tutti i pianeti';
+        scan.addEventListener('click', () => scanAccount(scan));
 
         const count = el('div', 'oih_count', head, '');
         const collapsed0 = sessionStorage.getItem('oih_collapsed') === '1';
