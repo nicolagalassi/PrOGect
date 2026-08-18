@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.12.5
+// @version      0.12.6
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -124,7 +124,8 @@
         .oih_info{flex:1 1 auto;min-width:0}
         .oih_name{font-size:11px;color:#e6ecf2;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
         .oih_meta{font-size:10px;color:#8aa0b2;display:flex;gap:6px;margin-top:2px;flex-wrap:wrap}
-        .oih_amount{color:#ffb800}
+        /* Owned quantity as a boxed chip, so it never reads as part of the percentage next to it */
+        .oih_amount{color:#ffb800;background:rgba(255,184,0,.1);border:1px solid rgba(255,184,0,.35);border-radius:3px;padding:0 4px;line-height:14px;font-weight:bold}
         .oih_pct{color:#7fd6a0}
         .oih_live{color:#59c98a;display:inline-flex;align-items:center;gap:3px}
         .oih_live::before{content:"";width:6px;height:6px;border-radius:50%;background:#59c98a}
