@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.8.0
+// @version      0.9.0
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -96,8 +96,8 @@
         .oih_box{margin:6px 8px 10px;padding:8px;border:1px solid #3a4756;border-radius:4px;background:linear-gradient(192deg,rgba(37,46,58,.6),rgba(20,25,32,.6));box-sizing:border-box}
         .oih_head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
         .oih_title{font-size:12px;color:#f0a955;font-weight:bold;white-space:nowrap;display:flex;align-items:center;gap:4px}
-        .oih_head input{flex:1;min-width:60px;padding:4px 8px;border-radius:3px;border:1px solid #3a4756;background:#0e131a;color:#fff;font-size:12px}
-        .oih_head input:focus{outline:none;border-color:#ffb800}
+        .oih_head input[type=text]{flex:1;min-width:60px;padding:4px 8px;border-radius:3px;border:1px solid #3a4756;background:#0e131a !important;color:#fff !important;-webkit-text-fill-color:#fff;caret-color:#fff;font-size:12px}
+        .oih_head input[type=text]:focus{outline:none;border-color:#ffb800;background:#0e131a !important;color:#fff !important;-webkit-text-fill-color:#fff}
         .oih_flag{font-size:11px;color:#9ec7ff;white-space:nowrap;display:inline-flex;align-items:center;gap:3px;cursor:pointer;user-select:none}
         .oih_flag input{cursor:pointer;margin:0}
         .oih_count{font-size:11px;color:#7c8b99;white-space:nowrap}
@@ -126,6 +126,9 @@
         .oih_btn.oih_extend{color:#ffd78a}
         .oih_btn.oih_compra{color:#9ec7ff}
         .oih_btn.oih_next{color:#9ec7ff}
+        .oih_hint{font-size:10px;color:#9ec7ff;margin:-2px 0 6px;display:flex;gap:5px;align-items:center;cursor:default}
+        .oih_hint.oih_hidden{display:none}
+        .oih_hint .oih_pill{background:rgba(63,90,128,.35);border:1px solid #3f5a80;border-radius:10px;padding:0 7px;line-height:16px}
         .oih_sub{display:flex;flex-direction:column;gap:3px;margin-top:2px}
         .oih_sub.oih_hidden{display:none}
         .oih_subRow{display:flex;gap:3px;align-items:stretch}
@@ -183,13 +186,12 @@
         return 'Buy';
     }
 
-    // The two shop sections must read as ONE. OGame only populates the inventory data
-    // (items_inventory / inventory slider) or the shop data (items_shop / shop slider) for
-    // whichever tab is currently rendered — never both at once. So we accumulate everything we
-    // see in memory for THIS page load (fresh each load → no cross-planet staleness), and we PRIME
-    // both sections once on load by briefly activating each tab so the game fills them in, then we
-    // restore the tab the player was on. This is page-load hydration (§4), driven by DOM readiness
-    // (no repeating timers, no polling); the extra loads happen once, at load, like the game's own.
+    // The two shop sections read as ONE. OGame only populates the inventory data
+    // (items_inventory / inventory slider) or the shop data (items_shop / shop slider) for the
+    // tab currently rendered — never both at once. We do NOT auto-load them (that would be
+    // auto-refresh/polling, forbidden by §1.3/§4). Instead we accumulate, in memory for this page
+    // load, whatever the game shows as the PLAYER navigates the tabs themselves: open Shop once,
+    // then Inventory once, and the box has the full picture. Pure DOM reads — no background calls.
     const mem = { inv: {}, shop: {} };
 
     // Merge a record into a target map: OR the boolean flags, keep the first meaningful scalar
@@ -241,39 +243,6 @@
     }
 
     // Prime both sections once, by activating each tab so the game loads its data, then restore.
-    let primeStep = 0, primeOriginalTab = null, primeTries = 0;
-    function primeSections()
-    {
-        if(primeStep >= 3) return;
-        if(++primeTries > 60) { primeStep = 3; return; } // give up gracefully, never loop forever
-        const invTab = document.querySelector('.tabSelectionTab.inventoryTab');
-        const shopTab = document.querySelector('.tabSelectionTab.shopTab');
-        if(!invTab || !shopTab) return;
-
-        if(primeStep === 0)
-        {
-            primeOriginalTab = document.querySelector('.tabSelectionTab.active') || (invTab.classList.contains('active') ? invTab : shopTab);
-            primeStep = 1;
-        }
-        const haveInv = Object.keys(mem.inv).length > 0;
-        const haveShop = Object.keys(mem.shop).length > 0;
-
-        if(primeStep === 1)
-        {
-            if(haveInv) primeStep = 2;
-            else { if(!invTab.classList.contains('active')) invTab.click(); return; } // wait for load
-        }
-        if(primeStep === 2)
-        {
-            if(haveShop) primeStep = 3;
-            else { if(!shopTab.classList.contains('active')) shopTab.click(); return; } // wait for load
-        }
-        if(primeStep === 3 && primeOriginalTab && !primeOriginalTab.classList.contains('active'))
-        {
-            primeOriginalTab.click(); // restore the player's tab
-        }
-    }
-
     function getNextPlanet()
     {
         const planets = [];
@@ -424,6 +393,10 @@
         const collapsed0 = sessionStorage.getItem('oih_collapsed') === '1';
         const caret = el('div', 'oih_collapse', head, collapsed0 ? '&#9656;' : '&#9662;');
 
+        // Hint: which sections are not yet loaded. Opening that tab once fills the box (manual,
+        // player-driven — the script never switches tabs by itself).
+        const hint = el('div', 'oih_hint oih_hidden', box);
+
         const grid = el('div', 'oih_grid' + (collapsed0 ? ' oih_hidden' : ''), box);
         caret.addEventListener('click', () =>
         {
@@ -465,7 +438,21 @@
             const showShop = chk.checked;
             grid.innerHTML = '';
 
-            // Re-read fresh each render so newly-primed data (the other section) appears.
+            // Prompt the player to open whichever section is not loaded yet (manual, no auto-load).
+            const missing = [];
+            if(!Object.keys(mem.inv).length) missing.push(L('LOCA_PREMIUM_INVENTORY', 'Inventario'));
+            if(!Object.keys(mem.shop).length) missing.push(L('LOCA_PREMIUM_SHOP', 'Shop'));
+            hint.innerHTML = '';
+            if(missing.length)
+            {
+                el('span', null, hint, '↻');
+                missing.forEach(nm => el('span', 'oih_pill', hint, nm));
+                hint.title = 'Apri queste schede una volta per caricarne gli item';
+                hint.classList.remove('oih_hidden');
+            }
+            else hint.classList.add('oih_hidden');
+
+            // Re-read fresh each render so data from a section just opened appears.
             const items = collectItems();
 
             // Default: only what you own or have active. Flag on: also buyable shop items.
@@ -562,7 +549,7 @@
         render();
         if(initialFilter) requestAnimationFrame(() => search.focus());
 
-        rerender = render; // let the observer refresh the grid when primed data arrives
+        rerender = render; // let the observer refresh the grid when a newly-opened tab adds data
         return true;
     }
 
@@ -586,8 +573,7 @@
             pending = false;
             try
             {
-                ingestLive();
-                primeSections();
+                ingestLive(); // passively read whatever tab the player has open — no auto-loading
                 const sig = Object.keys(mem.inv).length + '/' + Object.keys(mem.shop).length;
                 if(!document.querySelector('.oih_box')) { build(); lastSig = sig; }
                 else if(rerender && sig !== lastSig) { rerender(); lastSig = sig; } // only when data changed
