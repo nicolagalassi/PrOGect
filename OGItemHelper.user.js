@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.12.3
+// @version      0.12.4
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -352,7 +352,9 @@
         if(!it || !it.ref || it.expiryDate) return null; // skip running one-shot instances
         if(it.isAvatar) return null; // never list avatars
         const amount = it.amount || 0;
-        const active = it.status === 'effecting' || it.timeLeft > 0;
+        // Only a TIMED buff counts as active. Permanent items (planet/fleet slots) sit at
+        // status 'effecting' forever with no timeLeft, and must not show as active.
+        const active = it.timeLeft > 0;
         const hash = it.imageLarge || it.image || '';
         return {
             uuid: it.ref,
@@ -468,8 +470,10 @@
                 const rc = [...box.classList].find(c => c.indexOf('r_') === 0);
                 if(rc) rarity = rc.slice(2);
             }
-            const active = !!(box && box.querySelector('.activation.js_is_active'));
             const timeText = (box && box.querySelector('.countdownHolder time')?.textContent) || '';
+            // Same rule as the JS path: active only when the tile actually shows a countdown,
+            // so permanent items are never flagged as active.
+            const active = !!(box && box.querySelector('.activation.js_is_active')) && !!timeText;
             // Duration hint from the tooltip / name (e.g. "7 giorni", "30 days") — language-agnostic
             // number + a day word; falls back to 0 when not present.
             const dm = (a.getAttribute('data-tooltip-title') || name).match(/(\d+)\s*(giorni|day|days|tag|tage|jour|jours|d[ií]as?|dni|dní|gün|dagen)/i);
