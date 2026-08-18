@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.10.0
+// @version      0.10.1
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -257,6 +257,7 @@
     function fromJs(it)
     {
         if(!it || !it.ref || it.expiryDate) return null; // skip running one-shot instances
+        if(it.isAvatar) return null; // never list avatars
         const amount = it.amount || 0;
         const active = it.status === 'effecting' || it.timeLeft > 0;
         const hash = it.imageLarge || it.image || '';
@@ -281,12 +282,17 @@
     function ingestLive()
     {
         const obj = PAGE.inventoryObj || {};
+        // Refs the game marks as avatars — excluded from DOM tiles too, and purged from memory/cache.
+        const avatars = new Set();
+        [...(obj.items_inventory || []), ...(obj.items_shop || [])].forEach(it => { if(it && it.ref && it.isAvatar) avatars.add(it.ref); });
+
         const liveInv = {}, liveShop = {};
         (obj.items_inventory || []).forEach(it => { const r = fromJs(it); if(r) upsertInto(liveInv, r); });
-        scrapeSlider('#js_inventorySlider', false).forEach(r => upsertInto(liveInv, r));
+        scrapeSlider('#js_inventorySlider', false).forEach(r => { if(!avatars.has(r.uuid)) upsertInto(liveInv, r); });
         (obj.items_shop || []).forEach(it => { const r = fromJs(it); if(r) upsertInto(liveShop, r); });
-        scrapeSlider('#js_shopSliderBox', true).forEach(r => upsertInto(liveShop, r));
+        scrapeSlider('#js_shopSliderBox', true).forEach(r => { if(!avatars.has(r.uuid)) upsertInto(liveShop, r); });
 
+        avatars.forEach(ref => { delete mem.inv[ref]; delete mem.shop[ref]; }); // drop any previously cached avatar
         Object.entries(liveInv).forEach(([k, v]) => { mem.inv[k] = v; });
         Object.entries(liveShop).forEach(([k, v]) => { mem.shop[k] = v; });
 
@@ -545,8 +551,11 @@
                 name.title = rep.effect || rep.name;
                 const meta = el('div', 'oih_meta', info);
                 if(totalAmount) el('span', 'oih_amount', meta, 'x' + totalAmount);
-                const pct = (rep.effect || '').match(/[+-]?\d+\s*%/);
-                if(pct) el('span', 'oih_pct', meta, pct[0].replace(/\s+/g, ''));
+                // Percentage only when it is the item's OWN headline number: found in the name, or
+                // right at the START of the effect (boosters: "20% in più..."). This drops the
+                // incidental percentages buried in class / alliance-class item descriptions.
+                const pct = (rep.name || '').match(/[+-]?\d+\s*%/) || (rep.effect || '').match(/^\s*[+-]?\d+\s*%/);
+                if(pct) el('span', 'oih_pct', meta, pct[0].trim().replace(/\s+/g, ''));
                 if(rep.active) el('span', 'oih_live', meta, rep.timeLeft ? fmtDur(rep.timeLeft) : (rep.timeText || ''));
                 else if(buyOnly) el('span', 'oih_shopTag', meta, L('LOCA_PREMIUM_SHOP', 'Shop').toLowerCase());
 
