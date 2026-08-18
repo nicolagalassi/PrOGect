@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.9.1
+// @version      0.10.0
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -194,6 +194,51 @@
     // then Inventory once, and the box has the full picture. Pure DOM reads — no background calls.
     const mem = { inv: {}, shop: {} };
 
+    // Persistent memory of what we have SEEN, so the box stays complete without re-asking every
+    // page: the shop cached globally (static), the inventory cached per planet (its owned/active
+    // state is planet-specific). Kept for 24h — after that we ask the player to re-open the tabs so
+    // the data refreshes. Live data always wins over the cache; visiting a tab refreshes its cache.
+    const CACHE_TTL = 86400000; // 24h
+    function planetId()
+    {
+        const line = document.querySelector('.smallplanet.hightlightPlanet, .smallplanet.hightlightMoon');
+        const link = line && (line.querySelector('.planetlink') || line.querySelector('a[href*="cp="]'));
+        const fromLink = link && new URLSearchParams((link.getAttribute('href') || '').split('?')[1] || '').get('cp');
+        const fromUrl = new URLSearchParams(HREF.split('?')[1] || '').get('cp');
+        return String(fromLink || fromUrl || '0').split('#')[0];
+    }
+    const cacheKey = kind => kind === 'shop' ? 'oih_cache_shop' : 'oih_cache_inv_' + planetId();
+    function saveCache(kind, map)
+    {
+        try { localStorage.setItem(cacheKey(kind), JSON.stringify({ at: Date.now(), items: Object.values(map) })); } catch(e) {}
+    }
+    function loadCache(kind)
+    {
+        try { const o = JSON.parse(localStorage.getItem(cacheKey(kind)) || 'null'); if(o && (Date.now() - o.at) < CACHE_TTL) return o; } catch(e) {}
+        return null;
+    }
+    // Seed memory from a fresh (<24h) cache, decaying any active countdown by the time elapsed.
+    function seedFromCache()
+    {
+        [['inv', mem.inv], ['shop', mem.shop]].forEach(([kind, target]) =>
+        {
+            const o = loadCache(kind);
+            if(!o) return;
+            o.items.forEach(r =>
+            {
+                if(!r || !r.uuid) return;
+                const rec = Object.assign({}, r);
+                if(rec.active && rec.timeLeft > 0)
+                {
+                    const rem = rec.timeLeft - (Date.now() - o.at) / 1000;
+                    if(rem > 0) rec.timeLeft = Math.floor(rem);
+                    else { rec.active = false; rec.timeLeft = 0; }
+                }
+                target[rec.uuid] = rec;
+            });
+        });
+    }
+
     // Merge a record into a target map: OR the boolean flags, keep the first meaningful scalar
     // (so a shop copy's amount:0 never overwrites the inventory's real amount).
     function upsertInto(target, d)
@@ -231,18 +276,24 @@
         };
     }
 
-    // Read whatever the game currently exposes (either tab) into memory. Called on every observer
-    // tick, so as priming flips through the tabs, mem fills up with both sections.
+    // Read whatever the game currently exposes (the visible tab) and let it OVERRIDE the cache for
+    // those refs (live is authoritative/fresh); refs only in cache stay. Persist what we saw.
     function ingestLive()
     {
         const obj = PAGE.inventoryObj || {};
-        (obj.items_inventory || []).forEach(it => { const r = fromJs(it); if(r) upsertInto(mem.inv, r); });
-        (obj.items_shop || []).forEach(it => { const r = fromJs(it); if(r) upsertInto(mem.shop, r); });
-        scrapeSlider('#js_inventorySlider', false).forEach(r => upsertInto(mem.inv, r));
-        scrapeSlider('#js_shopSliderBox', true).forEach(r => upsertInto(mem.shop, r));
+        const liveInv = {}, liveShop = {};
+        (obj.items_inventory || []).forEach(it => { const r = fromJs(it); if(r) upsertInto(liveInv, r); });
+        scrapeSlider('#js_inventorySlider', false).forEach(r => upsertInto(liveInv, r));
+        (obj.items_shop || []).forEach(it => { const r = fromJs(it); if(r) upsertInto(liveShop, r); });
+        scrapeSlider('#js_shopSliderBox', true).forEach(r => upsertInto(liveShop, r));
+
+        Object.entries(liveInv).forEach(([k, v]) => { mem.inv[k] = v; });
+        Object.entries(liveShop).forEach(([k, v]) => { mem.shop[k] = v; });
+
+        if(Object.keys(liveInv).length) saveCache('inv', mem.inv);   // refresh this planet's inventory cache
+        if(Object.keys(liveShop).length) saveCache('shop', mem.shop); // refresh the global shop cache
     }
 
-    // Prime both sections once, by activating each tab so the game loads its data, then restore.
     function getNextPlanet()
     {
         const planets = [];
@@ -438,24 +489,18 @@
             const showShop = chk.checked;
             grid.innerHTML = '';
 
-            // Prompt the player to open whichever section is not loaded yet (manual, no auto-load).
-            // Only nag at most once a day: once both sections have been loaded we stamp the time,
-            // and we stay quiet for 24h even if a later page starts with only one section.
-            const haveInv = Object.keys(mem.inv).length > 0;
-            const haveShop = Object.keys(mem.shop).length > 0;
-            if(haveInv && haveShop) { try { localStorage.setItem('oih_refreshedAt', Date.now()); } catch(e) {} }
-            let last = 0; try { last = +localStorage.getItem('oih_refreshedAt') || 0; } catch(e) {}
-            const quiet = (Date.now() - last) < 86400000; // 24h
-
+            // Prompt the player to open whichever section is missing. Because a visited section is
+            // cached for 24h and seeded back on load, this naturally stays quiet for a day and only
+            // re-asks once the cache has aged out — no separate timer needed.
             const missing = [];
-            if(!haveInv) missing.push(L('LOCA_PREMIUM_INVENTORY', 'Inventario'));
-            if(!haveShop) missing.push(L('LOCA_PREMIUM_SHOP', 'Shop'));
+            if(!Object.keys(mem.inv).length) missing.push(L('LOCA_PREMIUM_INVENTORY', 'Inventario'));
+            if(!Object.keys(mem.shop).length) missing.push(L('LOCA_PREMIUM_SHOP', 'Shop'));
             hint.innerHTML = '';
-            if(missing.length && !quiet)
+            if(missing.length)
             {
                 el('span', null, hint, '↻');
                 missing.forEach(nm => el('span', 'oih_pill', hint, nm));
-                hint.title = 'Apri queste schede una volta per aggiornare gli item (richiesto ~ogni 24h)';
+                hint.title = 'Apri queste schede una volta per aggiornare gli item (la cache dura ~24h)';
                 hint.classList.remove('oih_hidden');
             }
             else hint.classList.add('oih_hidden');
@@ -594,6 +639,7 @@
     {
         try
         {
+            seedFromCache(); // start from what we already saw (<24h), so the box is complete at once
             ensure();
             const target = document.querySelector('#inhalt') || document.querySelector('#planet') || document.body;
             if(!target) return;
