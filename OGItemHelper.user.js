@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.2.0
+// @version      0.3.0
 // @description  A searchable inventory overview on the shop page, with a compliant activation flow: one click opens the game's own item panel, and a "next planet" jump pre-selects the same item. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -312,17 +312,50 @@
     }
 
     // --------------------------------------------------------------------- start
+    // The shop rebuilds its own DOM constantly (GFSlider, tab switches, opening an item
+    // detail, pagination). Each rebuild wipes our panel, so we watch permanently and
+    // re-inject whenever it is missing. This is DOM-only observation — no timers hitting
+    // the server, no polling (§1.3/§4). A short debounce coalesces bursts of mutations and
+    // ignores the mutation caused by our own insertion.
+    let pending = false;
+    function ensure()
+    {
+        if(pending) return;
+        pending = true;
+        requestAnimationFrame(() =>
+        {
+            pending = false;
+            try
+            {
+                if(document.querySelector('.oih_panel')) return; // already present
+                build();
+            }
+            catch(e) { console.error('[OGItemHelper] build failed:', e); }
+        });
+    }
+
     function start()
     {
         try
         {
-            if(build()) return;
-            const target = document.querySelector('#planet') || document.querySelector('#inhalt') || document.body;
+            ensure();
+            // Observe a node that survives the shop rebuilds. #inhalt / #planet stay put while
+            // their children are replaced; body is the last resort.
+            const target = document.querySelector('#inhalt') || document.querySelector('#planet') || document.body;
             if(!target) return;
-            const obs = new MutationObserver(() => { if(build()) obs.disconnect(); });
+            const obs = new MutationObserver(ensure);
             obs.observe(target, { childList: true, subtree: true });
-            // Local cleanup only (no server call): stop watching once the page has settled.
-            setTimeout(() => obs.disconnect(), 15000);
+            // If we anchored high (body) before the shop existed, also latch onto #inhalt once
+            // it appears, so we observe the tighter, longer-lived container.
+            if(target === document.body)
+            {
+                const boot = new MutationObserver(() =>
+                {
+                    const inhalt = document.querySelector('#inhalt');
+                    if(inhalt) { boot.disconnect(); new MutationObserver(ensure).observe(inhalt, { childList: true, subtree: true }); ensure(); }
+                });
+                boot.observe(document.body, { childList: true, subtree: true });
+            }
         }
         catch(e) { console.error('[OGItemHelper] failed:', e); }
     }
