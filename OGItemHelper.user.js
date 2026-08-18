@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.7.0
+// @version      0.8.0
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -26,9 +26,9 @@
     marks the item(s) already ACTIVE on the current planet with the remaining time.
   - By default it lists only what you OWN plus what is active. A "Shop" flag also lists buyable
     shop items you do not own. It reads BOTH shop sections as one: the game loads inventory and
-    shop data separately per tab, so each is cached in the session (inventory per planet, shop
-    globally) and merged, and the button labels come from OGame's own `loca` so they are already
-    in the player's language (Attiva / Prolunga / Compra, etc.).
+    shop data only for the visible tab, so on load the helper briefly activates each tab once to
+    let the game fill both in, accumulates them in memory (fresh each load), then restores the
+    player's tab. Button labels come from OGame's own `loca`, already in the player's language.
   - The different DURATIONS of one item (7d / 30d / 90d) are grouped under a single button that
     expands to the per-duration choices, instead of one button per version.
   - The action button opens the game's OWN item panel for that item. You press the game's button —
@@ -183,22 +183,96 @@
         return 'Buy';
     }
 
-    // Session cache so the two shop sections read as ONE. OGame lazily populates items_inventory
-    // (owned/active) and items_shop (buyable) only when their tab has rendered, so on any given
-    // load we usually see just one. We remember each as it appears — inventory per planet (its
-    // owned/active state is planet-specific), the shop globally — and merge live + cached, so the
-    // helper always shows the full picture. Pure DOM/sessionStorage: no fetch, no polling (§4).
-    function currentPlanetId()
+    // The two shop sections must read as ONE. OGame only populates the inventory data
+    // (items_inventory / inventory slider) or the shop data (items_shop / shop slider) for
+    // whichever tab is currently rendered — never both at once. So we accumulate everything we
+    // see in memory for THIS page load (fresh each load → no cross-planet staleness), and we PRIME
+    // both sections once on load by briefly activating each tab so the game fills them in, then we
+    // restore the tab the player was on. This is page-load hydration (§4), driven by DOM readiness
+    // (no repeating timers, no polling); the extra loads happen once, at load, like the game's own.
+    const mem = { inv: {}, shop: {} };
+
+    // Merge a record into a target map: OR the boolean flags, keep the first meaningful scalar
+    // (so a shop copy's amount:0 never overwrites the inventory's real amount).
+    function upsertInto(target, d)
     {
-        const line = document.querySelector('.smallplanet.hightlightPlanet, .smallplanet.hightlightMoon');
-        const link = line && (line.querySelector('.planetlink') || line.querySelector('a[href*="cp="]'));
-        const fromLink = link && new URLSearchParams((link.getAttribute('href') || '').split('?')[1] || '').get('cp');
-        const fromUrl = new URLSearchParams(HREF.split('?')[1] || '').get('cp');
-        return String(fromLink || fromUrl || '0').split('#')[0];
+        if(!d || !d.uuid) return;
+        const e = target[d.uuid] || (target[d.uuid] = { uuid: d.uuid });
+        for(const k in d)
+        {
+            const v = d[k];
+            if(v === undefined || v === null || v === '') continue;
+            if(k === 'owned' || k === 'active' || k === 'buyable') e[k] = e[k] || v;
+            else if(e[k] === undefined || e[k] === '' || e[k] === 0) e[k] = v;
+        }
     }
-    const cacheGet = k => { try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch(e) { return null; } };
-    const cacheSet = (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch(e) {} };
-    const slim = it => ({ ref: it.ref, name: it.name, imageLarge: it.imageLarge, image: it.image, effect: it.effect, rarity: it.rarity, amount: it.amount, status: it.status, timeLeft: it.timeLeft, extendable: it.extendable, buyable: it.buyable, expiryDate: it.expiryDate });
+
+    function fromJs(it)
+    {
+        if(!it || !it.ref || it.expiryDate) return null; // skip running one-shot instances
+        const amount = it.amount || 0;
+        const active = it.status === 'effecting' || it.timeLeft > 0;
+        const hash = it.imageLarge || it.image || '';
+        return {
+            uuid: it.ref,
+            name: (it.name || 'Item').trim(),
+            amount,
+            image: hash ? `/cdn/img/item-images/${hash}.png` : '',
+            effect: stripTags(it.effect || ''),
+            rarity: (it.rarity || '').toLowerCase(),
+            active,
+            timeLeft: active ? (it.timeLeft || 0) : 0,
+            duration: it.duration || 0,
+            extendable: !!it.extendable,
+            buyable: !!it.buyable,
+            owned: amount > 0,
+        };
+    }
+
+    // Read whatever the game currently exposes (either tab) into memory. Called on every observer
+    // tick, so as priming flips through the tabs, mem fills up with both sections.
+    function ingestLive()
+    {
+        const obj = PAGE.inventoryObj || {};
+        (obj.items_inventory || []).forEach(it => { const r = fromJs(it); if(r) upsertInto(mem.inv, r); });
+        (obj.items_shop || []).forEach(it => { const r = fromJs(it); if(r) upsertInto(mem.shop, r); });
+        scrapeSlider('#js_inventorySlider', false).forEach(r => upsertInto(mem.inv, r));
+        scrapeSlider('#js_shopSliderBox', true).forEach(r => upsertInto(mem.shop, r));
+    }
+
+    // Prime both sections once, by activating each tab so the game loads its data, then restore.
+    let primeStep = 0, primeOriginalTab = null, primeTries = 0;
+    function primeSections()
+    {
+        if(primeStep >= 3) return;
+        if(++primeTries > 60) { primeStep = 3; return; } // give up gracefully, never loop forever
+        const invTab = document.querySelector('.tabSelectionTab.inventoryTab');
+        const shopTab = document.querySelector('.tabSelectionTab.shopTab');
+        if(!invTab || !shopTab) return;
+
+        if(primeStep === 0)
+        {
+            primeOriginalTab = document.querySelector('.tabSelectionTab.active') || (invTab.classList.contains('active') ? invTab : shopTab);
+            primeStep = 1;
+        }
+        const haveInv = Object.keys(mem.inv).length > 0;
+        const haveShop = Object.keys(mem.shop).length > 0;
+
+        if(primeStep === 1)
+        {
+            if(haveInv) primeStep = 2;
+            else { if(!invTab.classList.contains('active')) invTab.click(); return; } // wait for load
+        }
+        if(primeStep === 2)
+        {
+            if(haveShop) primeStep = 3;
+            else { if(!shopTab.classList.contains('active')) shopTab.click(); return; } // wait for load
+        }
+        if(primeStep === 3 && primeOriginalTab && !primeOriginalTab.classList.contains('active'))
+        {
+            primeOriginalTab.click(); // restore the player's tab
+        }
+    }
 
     function getNextPlanet()
     {
@@ -217,69 +291,32 @@
         return planets[(i + 1) % planets.length];
     }
 
-    // Collect every item the shop page already knows about — no fetch (§4).
-    // We MERGE four sources so nothing is missed: the game's inventoryObj.items_inventory (owned,
-    // with per-planet active state) and items_shop (buyable), PLUS the inventory- and shop-slider
-    // DOM tiles. The DOM inventory slider is what guarantees the WEAK, non-buyable items you own
-    // (e.g. bronze boosters, which never appear in items_shop) are shown — the arrays alone can be
-    // empty or partial depending on which tab the game has rendered.
+    // The union of everything we have accumulated in memory this page load (inventory + shop).
     function collectItems()
     {
         const map = {};
-
-        // Merge one record into the map: OR the boolean flags, keep the first non-empty scalar.
-        const upsert = d =>
-        {
-            if(!d || !d.uuid) return;
-            const e = map[d.uuid] || (map[d.uuid] = { uuid: d.uuid });
-            for(const k in d)
-            {
-                const v = d[k];
-                if(v === undefined || v === null || v === '') continue;
-                if(k === 'owned' || k === 'active' || k === 'buyable') e[k] = e[k] || v;
-                else if(e[k] === undefined || e[k] === '' || e[k] === 0) e[k] = v;
-            }
-        };
-
-        const fromJs = it =>
-        {
-            if(!it || !it.ref || it.expiryDate) return null; // skip running one-shot instances
-            const amount = it.amount || 0;
-            const active = it.status === 'effecting' || it.timeLeft > 0;
-            const hash = it.imageLarge || it.image || '';
-            return {
-                uuid: it.ref,
-                name: (it.name || 'Item').trim(),
-                amount,
-                image: hash ? `/cdn/img/item-images/${hash}.png` : '',
-                effect: stripTags(it.effect || ''),
-                rarity: (it.rarity || '').toLowerCase(),
-                active,
-                timeLeft: active ? (it.timeLeft || 0) : 0,
-                duration: it.duration || 0,
-                extendable: !!it.extendable,
-                buyable: !!it.buyable,
-                owned: amount > 0,
-            };
-        };
-
-        // Live arrays from whichever tab the game has rendered — cache each so the other section
-        // is still available later (inventory per planet, shop globally).
-        const obj = PAGE.inventoryObj || {};
-        const pid = currentPlanetId();
-        const invLive = (obj.items_inventory || []).filter(it => it && it.ref && !it.expiryDate);
-        const shopLive = (obj.items_shop || []).filter(it => it && it.ref && !it.expiryDate);
-        if(invLive.length) cacheSet('oih_inv_' + pid, invLive.map(slim));
-        if(shopLive.length) cacheSet('oih_shop', shopLive.map(slim));
-        const invItems = invLive.length ? invLive : (cacheGet('oih_inv_' + pid) || []);
-        const shopItems = shopLive.length ? shopLive : (cacheGet('oih_shop') || []);
-
-        invItems.forEach(it => upsert(fromJs(it)));
-        shopItems.forEach(it => upsert(fromJs(it)));
-        scrapeSlider('#js_inventorySlider', false).forEach(upsert);
-        scrapeSlider('#js_shopSliderBox', true).forEach(upsert);
-
+        Object.values(mem.inv).forEach(r => upsertInto(map, r));
+        Object.values(mem.shop).forEach(r => upsertInto(map, r));
         return Object.values(map).filter(e => e.name);
+    }
+
+    // A compact "+7d / +30d / +90d" label for one duration variant. The item names are long, so we
+    // trim to just the days: from the duration seconds when known, else parsed from the name/tooltip
+    // (day or week words, language-agnostic).
+    function durLabel(it)
+    {
+        let days = it.duration > 0 ? Math.round(it.duration / 86400) : 0;
+        if(!days)
+        {
+            const dm = (it.name || '').match(/(\d+)\s*(giorn|day|tag|jour|d[ií]a|dní|dni|gün|dag)/i);
+            if(dm) days = +dm[1];
+        }
+        if(!days)
+        {
+            const wm = (it.name || '').match(/(\d+)\s*(settiman|week|woche|semaine|semana|hafta|tyzd|týžd)/i);
+            if(wm) days = +wm[1] * 7;
+        }
+        return days ? '+' + days + 'd' : '';
     }
 
     // Read the tiles of one slider. isShop tags them buyable; inventory tiles are owned.
@@ -323,15 +360,26 @@
 
     // Open the game's OWN item panel. We never activate/buy anything ourselves (§1.1/§6) — the
     // panel is where the game's Attiva / Prolunga / Compra buttons live and the player clicks.
-    // Owned/active items live in the Inventory tab; buyable-only items live in the Shop tab.
+    // If the item's tile is in the current DOM we click it (fast, no reload); otherwise — e.g. a
+    // 30d/90d version not on the rendered slide — we use OGame's OWN deep-link hash, which the
+    // game's router resolves to that item regardless of category/pagination.
     function openNativeItem(uuid, fromShop)
     {
-        const tabSel = fromShop ? '.tabSelectionTab.shopTab' : '.tabSelectionTab.inventoryTab';
-        const tab = document.querySelector(tabSel);
-        if(tab && !tab.classList.contains('active')) tab.click();
-        const scope = document.querySelector(fromShop ? '#js_shopSliderBox' : '#js_inventorySlider') || document;
-        const tile = scope.querySelector(`a.detail_button[ref="${uuid}"]`) || document.querySelector(`a.detail_button[ref="${uuid}"]`);
-        if(tile) tile.click();
+        const tab = document.querySelector(fromShop ? '.tabSelectionTab.shopTab' : '.tabSelectionTab.inventoryTab');
+        const scope = document.querySelector(fromShop ? '#js_shopSliderBox' : '#js_inventorySlider');
+        const tile = (scope && scope.querySelector(`a.detail_button[ref="${uuid}"]`)) || document.querySelector(`a.detail_button[ref="${uuid}"]`);
+        if(tile)
+        {
+            if(tab && !tab.classList.contains('active')) tab.click();
+            tile.click();
+            return;
+        }
+        // Not rendered → drive the game's own hash router to open it.
+        const cat = inventoryAllCategory();
+        const page = fromShop ? 'shop' : 'inventory';
+        const target = `category=${cat}&item=${uuid}&page=${page}&panel1-1=`;
+        if(location.hash.slice(1) === target) location.hash = 'page=' + page; // force a change so it re-fires
+        location.hash = target;
     }
 
     // --------------------------------------------------------------------- UI
@@ -391,7 +439,6 @@
         const T = { activate: L('activate', 'Attiva'), extend: L('extend', 'Prolunga'), buy: locaBuy() };
         const labelFor = it => (it.active && it.extendable) ? T.extend : (!it.owned && !it.active) ? T.buy : T.activate;
         const styleFor = it => (it.active && it.extendable) ? 'oih_extend' : (!it.owned && !it.active) ? 'oih_compra' : 'oih_activate';
-        const durLabel = it => it.duration > 0 ? Math.round(it.duration / 86400) + 'd' : '';
 
         // Open an item's native panel, remembering the current search for the "repeat" comfort.
         const doOpen = it => { sessionStorage.setItem('oih_filter', search.value || ''); openNativeItem(it.uuid, !it.owned && !it.active); };
@@ -412,11 +459,14 @@
             return link;
         };
 
-        const render = filter =>
+        const render = () =>
         {
-            const needle = (filter || '').trim().toLowerCase();
+            const needle = (search.value || '').trim().toLowerCase();
             const showShop = chk.checked;
             grid.innerHTML = '';
+
+            // Re-read fresh each render so newly-primed data (the other section) appears.
+            const items = collectItems();
 
             // Default: only what you own or have active. Flag on: also buyable shop items.
             let visible = items.filter(it => showShop || it.owned || it.active);
@@ -476,12 +526,13 @@
                     const sub = el('div', 'oih_sub oih_hidden', actions);
                     act.addEventListener('click', () => sub.classList.toggle('oih_hidden'));
 
-                    group.forEach(m =>
+                    group.forEach((m, i) =>
                     {
                         const row = el('div', 'oih_subRow', sub);
-                        const dLabel = (durLabel(m) || m.name) + (m.amount ? ' ×' + m.amount : '');
+                        // Just the days (+7d/+30d/+90d), trimming the long item name.
+                        const dLabel = durLabel(m) || ('#' + (i + 1));
                         const open = el('div', 'oih_btn ' + styleFor(m), row, dLabel);
-                        open.title = labelFor(m) + ' · ' + m.name;
+                        open.title = labelFor(m) + ' · ' + m.name + (m.amount ? ' ×' + m.amount : '');
                         open.addEventListener('click', () => doOpen(m));
                         if(nextPlanet && m.owned) row.appendChild(nextLink(m, '»'));
                     });
@@ -502,15 +553,16 @@
         }
 
         search.value = initialFilter;
-        search.addEventListener('input', () => render(search.value));
+        search.addEventListener('input', render);
         chk.addEventListener('change', () =>
         {
             sessionStorage.setItem('oih_showShop', chk.checked ? '1' : '0');
-            render(search.value);
+            render();
         });
-        render(initialFilter);
+        render();
         if(initialFilter) requestAnimationFrame(() => search.focus());
 
+        rerender = render; // let the observer refresh the grid when primed data arrives
         return true;
     }
 
@@ -521,9 +573,10 @@
 
     // --------------------------------------------------------------------- start
     // The shop rebuilds its DOM constantly (GFSlider, tab switches, opening a detail,
-    // pagination), wiping our box. We watch permanently and re-inject when it is missing.
-    // DOM-only observation — no server calls, no polling (§1.3/§4).
-    let pending = false;
+    // pagination), wiping our box. We watch permanently: on each tick we hydrate memory from
+    // whatever section is currently rendered, drive the one-time priming of both sections, and
+    // re-inject/refresh the box. DOM-only observation — no server calls, no polling (§1.3/§4).
+    let pending = false, rerender = null, lastSig = '';
     function ensure()
     {
         if(pending) return;
@@ -531,8 +584,15 @@
         requestAnimationFrame(() =>
         {
             pending = false;
-            try { if(!document.querySelector('.oih_box')) build(); }
-            catch(e) { console.error('[OGItemHelper] build failed:', e); }
+            try
+            {
+                ingestLive();
+                primeSections();
+                const sig = Object.keys(mem.inv).length + '/' + Object.keys(mem.shop).length;
+                if(!document.querySelector('.oih_box')) { build(); lastSig = sig; }
+                else if(rerender && sig !== lastSig) { rerender(); lastSig = sig; } // only when data changed
+            }
+            catch(e) { console.error('[OGItemHelper] failed:', e); }
         });
     }
 
