@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         OGame Item Activation Helper
+// @name         Item Helper for Ogame
 // @namespace    https://github.com/nicolagalassi
-// @version      0.14.3
+// @version      0.14.4
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone userscript, no dependencies.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -12,7 +12,7 @@
 // ==/UserScript==
 
 /*
-  OGame Item Activation Helper — a small, self-contained userscript.
+  Item Helper for Ogame — a small, self-contained userscript.
 
   THE PROBLEM IT SOLVES
   Activating an item (e.g. a +10% metal booster) on every planet is tedious: open the
@@ -742,7 +742,7 @@
         parent.insertBefore(box, insertBefore);
 
         const head = el('div', 'oih_head', box);
-        el('div', 'oih_title', head, '<span>&#9670;</span> Item helper');
+        el('div', 'oih_title', head, '<span>&#9670;</span> Item Helper');
         const search = el('input', null, head);
         search.type = 'text';
         search.placeholder = '🔍'; // language-neutral search glyph
@@ -1098,7 +1098,7 @@
         setKept(chips.length);
 
         const off = el('span', 'oih_remOff', box, '&times;');
-        off.title = 'Nascondi il promemoria (si riattiva dal box Item helper, nello Shop)';
+        off.title = 'Nascondi il promemoria (si riattiva dal box Item Helper, nello Shop)';
         off.addEventListener('click', () =>
         {
             try { localStorage.setItem(REM_OFF_KEY, '1'); } catch(e) {}
