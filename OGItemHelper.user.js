@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.14.1
+// @version      0.14.2
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -49,8 +49,9 @@
     is nothing expiring, and a flag (in the shop box header, or the × on the reminder) turns it off.
   - Where it sits is MEASURED, not assumed: the bar of active items across the bottom of the banner,
     the moon/planet thumbnail above it and the planet data beside it are read off the live layout,
-    and the notice takes what is left — as many items as the width holds, the rest counted. With no
-    free strip it goes below the banner instead, so it never sits on top of the game's own bar.
+    and the notice takes what is left — up to six items over two lines, at least four, the rest
+    counted. When even that does not fit it goes below the banner instead, so it never sits on top
+    of the game's own bar.
 
   COMPLIANCE (OGame Origin tool rules — see PrOGect/AGENTS.md):
   - §1.1  1 click = 1 action. The helper never activates anything itself; it only opens the
@@ -182,6 +183,7 @@
         /* When the banner leaves no free strip, the notice goes under it in normal flow instead */
         .oih_rem.oih_remFlow{position:static;margin:4px 0 6px;max-width:none;width:-moz-fit-content;width:fit-content}
         .oih_remTitle{font-size:11px;color:#ffb14e;flex:0 0 auto}
+        .oih_remRow{display:flex;flex-wrap:wrap;gap:3px;min-width:0}
         .oih_remOff{cursor:pointer;color:#8aa0b2;padding:0 2px;line-height:1;font-size:12px;flex:0 0 auto}
         .oih_remOff:hover{color:#ffb800}
         .oih_remItem{display:flex;align-items:center;gap:4px;padding:1px 5px 1px 1px;border:1px solid #3a4756;border-radius:3px;background:rgba(20,26,34,.85);text-decoration:none;flex:0 0 auto}
@@ -1064,10 +1066,11 @@
         box.title = 'Item con una scadenza, letti nello Shop il ' + new Date(store.at).toLocaleString();
 
         const cat = commonCategory(store.items.map(r => r.cats || []));
+        const row = el('div', 'oih_remRow', box);
         const chips = store.items.slice(0, 6).map(r =>
         {
             const left = expiresIn(r);
-            const a = el('a', 'oih_remItem' + (left < 86400 ? ' oih_soon' : ''), box);
+            const a = el('a', 'oih_remItem' + (left < 86400 ? ' oih_soon' : ''), row);
             // The game's own inventory deep-link, on the planet we are already on: one click, one
             // navigation, and OGame opens the item itself (§1.1). No cp, so nothing switches planet.
             a.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop#category=${cat}&item=${r.uuid}&page=inventory&panel1-1=`;
@@ -1077,15 +1080,22 @@
             el('span', 'oih_remTime', a, fmtDur(left));
             return a;
         });
-        const more = el('span', 'oih_remMore', box, '');
-        const setMore = kept =>
+        const more = el('span', 'oih_remMore', row, '');
+        // Show the first `kept` chips, count the rest. Chips are taken away and put back by this
+        // one function, so the trimming below can try a size and change its mind.
+        const setKept = kept =>
         {
+            chips.forEach((c, i) =>
+            {
+                if(i < kept) { if(!c.parentNode) row.insertBefore(c, more); }
+                else if(c.parentNode) c.remove();
+            });
             const rest = store.items.slice(kept);
             more.textContent = rest.length ? '+' + rest.length : '';
             more.title = rest.map(r => r.name + ' — ' + fmtDur(expiresIn(r))).join('\n');
             more.style.display = rest.length ? '' : 'none';
         };
-        setMore(chips.length);
+        setKept(chips.length);
 
         const off = el('span', 'oih_remOff', box, '&times;');
         off.title = 'Nascondi il promemoria (si riattiva dal box Item helper, nello Shop)';
@@ -1095,22 +1105,18 @@
             box.remove();
         });
 
-        // Does the row fit the free strip? Its height is one line whatever the chip count, so a
-        // single measurement answers it.
-        const fits = spot.width >= 130 && box.offsetHeight <= spot.height;
-        if(fits)
-        {
-            // Trim to what the strip really holds, by measurement rather than by guessing a chip
-            // width: drop from the end until the row stops overflowing, and count what was
-            // dropped. This is what keeps the notice inside the free space.
-            let kept = chips.length;
-            while(kept > 1 && box.scrollWidth > box.clientWidth + 1)
-            {
-                chips[--kept].remove();
-                setMore(kept);
-            }
-        }
-        else
+        // The chips wrap, so the question is how many LINES they take. Two is the shape we want,
+        // and four items is the least worth showing: below that the notice stops being a summary
+        // of what is running out. Both are measured on the real box — chip widths depend on the
+        // time strings ("59m" against "9d 23h") and the strip's width is whatever the banner left.
+        const MIN_CHIPS = Math.min(4, chips.length);
+        const lineH = chips[0] ? chips[0].offsetHeight : 22;
+        const twoLines = () => row.offsetHeight <= lineH * 2 + 4;
+        let kept = chips.length;
+        while(kept > MIN_CHIPS && (!twoLines() || box.offsetHeight > spot.height)) setKept(--kept);
+
+        const fits = spot.width >= 130 && twoLines() && box.offsetHeight <= spot.height;
+        if(!fits)
         {
             // No room inside without covering something → below the banner, in normal flow. The
             // anchor is the block that also holds the item bar, because that bar is usually drawn
@@ -1118,9 +1124,13 @@
             // us past it instead of under it.
             box.classList.add('oih_remFlow');
             box.style.bottom = box.style.maxWidth = '';
+            setKept(chips.length); // below the banner there is the whole width to use
             let anchor = host;
             for(let i = 0; i < 4 && spot.bar && !anchor.contains(spot.bar) && anchor.parentElement && anchor.parentElement !== document.body; i++) anchor = anchor.parentElement;
             if(anchor.parentNode) anchor.parentNode.insertBefore(box, anchor.nextSibling);
+            // Same two-line shape here, measured again: the width down there is not the strip's.
+            let wide = chips.length;
+            while(wide > MIN_CHIPS && !twoLines()) setKept(--wide);
         }
 
         // Last guard, on the real layout: if the notice still meets something the game drew — a
