@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.13.1
+// @version      0.13.2
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -211,11 +211,15 @@
     // of the planet you are on. Kept for 24h; live data always wins; visiting a tab refreshes it.
     const CACHE_TTL = 86400000; // 24h
     const cacheKey = kind => kind === 'shop' ? 'oih_cache_shop' : 'oih_cache_inv';
-    function saveCache(kind, map)
+    // keepAt: this write only corrects what we already had (no fresh read of that section), so the
+    // original timestamp stands — otherwise the 24h life would keep renewing itself and the box
+    // would stop asking for the section to be opened again.
+    function saveCache(kind, map, keepAt)
     {
         // Active/timeLeft are planet-specific — don't persist them in the account-wide inventory.
         const items = Object.values(map).map(r => Object.assign({}, r, { active: false, timeLeft: 0 }));
-        try { localStorage.setItem(cacheKey(kind), JSON.stringify({ at: Date.now(), items })); } catch(e) {}
+        const at = (keepAt && (loadCache(kind) || {}).at) || Date.now();
+        try { localStorage.setItem(cacheKey(kind), JSON.stringify({ at, items })); } catch(e) {}
     }
     function loadCache(kind)
     {
@@ -329,6 +333,7 @@
         {
             const a = byName[(rec.name || '').toLowerCase()];
             if(!a) return;
+            if(a.endsAt && a.endsAt <= now) return; // the scan can be hours old — a buff that has since run out is not active
             rec.active = true;
             if(a.endsAt) { const tl = Math.floor((a.endsAt - now) / 1000); if(tl > 0) rec.timeLeft = tl; }
         });
@@ -376,7 +381,15 @@
     }
 
     // Read whatever the game currently exposes (the visible tab) and let it OVERRIDE the cache for
-    // those refs (live is authoritative/fresh); refs only in cache stay. Persist what we saw.
+    // those refs (live is authoritative/fresh); refs only in cache stay.
+    //
+    // Merging alone is not enough: an item that has been USED UP no longer appears anywhere in the
+    // live data, so a merge-only pass left the cached copy standing and the box kept offering an
+    // item that is gone (for up to 24h). So a read of the inventory is treated as REPLACING it, not
+    // adding to it: refs the game no longer lists are dropped. Only the game's own
+    // `items_inventory` array can decide that — it is the complete list of what the account owns,
+    // whereas the DOM slider renders one slide at a time and would look like a much smaller
+    // inventory. Persist the result, so the cache is corrected too and not just this page's memory.
     function ingestLive()
     {
         const obj = PAGE.inventoryObj || {};
@@ -384,18 +397,40 @@
         const avatars = new Set();
         [...(obj.items_inventory || []), ...(obj.items_shop || [])].forEach(it => { if(it && it.ref && it.isAvatar) avatars.add(it.ref); });
 
+        // Present (non-empty) only on the tab the game currently renders — that is the read we can
+        // prune against; on the Shop tab it is empty and the inventory keeps whatever it had.
+        const jsInv = Array.isArray(obj.items_inventory) ? obj.items_inventory : [];
+        const fullInvRead = jsInv.length > 0;
+
         const liveInv = {}, liveShop = {};
-        (obj.items_inventory || []).forEach(it => { const r = fromJs(it); if(r) upsertInto(liveInv, r); });
+        jsInv.forEach(it => { const r = fromJs(it); if(r) upsertInto(liveInv, r); });
         scrapeSlider('#js_inventorySlider', false).forEach(r => { if(!avatars.has(r.uuid)) upsertInto(liveInv, r); });
         (obj.items_shop || []).forEach(it => { const r = fromJs(it); if(r) upsertInto(liveShop, r); });
         scrapeSlider('#js_shopSliderBox', true).forEach(r => { if(!avatars.has(r.uuid)) upsertInto(liveShop, r); });
 
         avatars.forEach(ref => { delete mem.inv[ref]; delete mem.shop[ref]; }); // drop any previously cached avatar
+
+        if(fullInvRead)
+        {
+            // Used up, expired, or now running as a one-shot → not stock any more.
+            Object.keys(mem.inv).forEach(ref => { if(!liveInv[ref]) delete mem.inv[ref]; });
+            // The shop copy of the same item carries the owned amount too, and collectItems ORs the
+            // flags together — so the shop side is realigned on the same truth, or the stock we
+            // just dropped comes straight back from there.
+            Object.values(mem.shop).forEach(r =>
+            {
+                const n = liveInv[r.uuid] ? (+liveInv[r.uuid].amount || 0) : 0;
+                r.amount = n;
+                r.owned = n > 0;
+            });
+        }
+
         Object.entries(liveInv).forEach(([k, v]) => { mem.inv[k] = v; });
         Object.entries(liveShop).forEach(([k, v]) => { mem.shop[k] = v; });
 
-        if(Object.keys(liveInv).length) saveCache('inv', mem.inv);   // refresh this planet's inventory cache
-        if(Object.keys(liveShop).length) saveCache('shop', mem.shop); // refresh the global shop cache
+        const shopRead = Object.keys(liveShop).length > 0;
+        if(fullInvRead || Object.keys(liveInv).length) saveCache('inv', mem.inv); // the inventory as it really is now
+        if(fullInvRead || shopRead) saveCache('shop', mem.shop, !shopRead);       // shop, incl. the realigned amounts
     }
 
     function getNextPlanet()
@@ -769,6 +804,20 @@
     // whatever section is currently rendered, drive the one-time priming of both sections, and
     // re-inject/refresh the box. DOM-only observation — no server calls, no polling (§1.3/§4).
     let pending = false, rerender = null, lastSig = '';
+    // What the box actually draws: which items we hold, how many, and whether they are on. Counting
+    // the refs alone missed a stack going 2 → 1 (same number of items), so the grid kept showing the
+    // old amount until something else forced a redraw. Volatile countdowns stay out of it, or the
+    // grid would rebuild every second.
+    function memSig()
+    {
+        const parts = [];
+        [mem.inv, mem.shop].forEach(m => Object.keys(m).sort().forEach(k =>
+        {
+            const r = m[k] || {};
+            parts.push(k + ':' + (+r.amount || 0) + (r.owned ? 'o' : '') + (r.active ? 'a' : '') + (r.buyable ? 'b' : ''));
+        }));
+        return parts.join(',');
+    }
     function ensure()
     {
         if(pending) return;
@@ -779,7 +828,7 @@
             try
             {
                 ingestLive(); // passively read whatever tab the player has open — no auto-loading
-                const sig = Object.keys(mem.inv).length + '/' + Object.keys(mem.shop).length;
+                const sig = memSig();
                 if(!document.querySelector('.oih_box')) { build(); lastSig = sig; }
                 else if(rerender && sig !== lastSig) { rerender(); lastSig = sig; } // only when data changed
             }
