@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
-// @namespace    https://github.com/nicolagalassi/progect
-// @version      0.14.2
-// @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
+// @namespace    https://github.com/nicolagalassi
+// @version      0.14.3
+// @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone userscript, no dependencies.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
 // @icon         https://gf1.geo.gfsrv.net/cdn3d/favicon.ico
@@ -53,7 +53,7 @@
     counted. When even that does not fit it goes below the banner instead, so it never sits on top
     of the game's own bar.
 
-  COMPLIANCE (OGame Origin tool rules — see PrOGect/AGENTS.md):
+  COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
   - §1.1  1 click = 1 action. The helper never activates anything itself; it only opens the
           game's native item panel. The activation is the player's click on the game's button.
   - §1.3/§4  No auto-refresh, no polling, no timers hitting the server. It reads data already
