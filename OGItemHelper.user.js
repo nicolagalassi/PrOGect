@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Item Activation Helper
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.14.0
+// @version      0.14.1
 // @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -43,10 +43,14 @@
     an item for you (§1.1) — "first" means first in the list and under the button.
 
   WHAT IT DOES (on the overview / "Riepilogo" page)
-  - A small reminder in the empty area of the planet banner: the items with a deadline and how long
+  - A small reminder in the empty strip of the planet banner: the items with a deadline and how long
     is left, each linking to that item in the shop. It is built ONLY from what the shop page already
     read into localStorage, so the overview costs no request of its own; it shows nothing when there
     is nothing expiring, and a flag (in the shop box header, or the × on the reminder) turns it off.
+  - Where it sits is MEASURED, not assumed: the bar of active items across the bottom of the banner,
+    the moon/planet thumbnail above it and the planet data beside it are read off the live layout,
+    and the notice takes what is left — as many items as the width holds, the rest counted. With no
+    free strip it goes below the banner instead, so it never sits on top of the game's own bar.
 
   COMPLIANCE (OGame Origin tool rules — see PrOGect/AGENTS.md):
   - §1.1  1 click = 1 action. The helper never activates anything itself; it only opens the
@@ -174,15 +178,15 @@
         .oih_card.oih_perish{border-color:#8a6323}
         .oih_dur.oih_perish{border-color:#8a6323;color:#ffb14e}
         /* Overview reminder: sits in the empty corner of the planet banner, covers nothing */
-        .oih_rem{position:absolute;left:12px;bottom:10px;z-index:2;max-width:300px;max-width:min(300px,44%);padding:5px 7px;border:1px solid #5a4a24;border-radius:4px;background:rgba(12,16,22,.85);box-shadow:0 2px 8px rgba(0,0,0,.45);font-family:Verdana,Arial,sans-serif;box-sizing:border-box}
-        .oih_remHead{display:flex;align-items:center;gap:6px;font-size:10px;color:#ffb14e;margin-bottom:4px}
-        .oih_remTitle{font-weight:bold;white-space:nowrap}
-        .oih_remOff{margin-left:auto;cursor:pointer;color:#8aa0b2;padding:0 3px;line-height:1;font-size:12px}
+        .oih_rem{position:absolute;left:10px;bottom:10px;z-index:2;display:flex;align-items:center;gap:4px;padding:2px 4px;border:1px solid #5a4a24;border-radius:4px;background:rgba(12,16,22,.85);box-shadow:0 2px 8px rgba(0,0,0,.45);font-family:Verdana,Arial,sans-serif;box-sizing:border-box;white-space:nowrap;overflow:hidden}
+        /* When the banner leaves no free strip, the notice goes under it in normal flow instead */
+        .oih_rem.oih_remFlow{position:static;margin:4px 0 6px;max-width:none;width:-moz-fit-content;width:fit-content}
+        .oih_remTitle{font-size:11px;color:#ffb14e;flex:0 0 auto}
+        .oih_remOff{cursor:pointer;color:#8aa0b2;padding:0 2px;line-height:1;font-size:12px;flex:0 0 auto}
         .oih_remOff:hover{color:#ffb800}
-        .oih_remRow{display:flex;flex-wrap:wrap;gap:5px}
-        .oih_remItem{display:flex;align-items:center;gap:4px;padding:2px 6px 2px 2px;border:1px solid #3a4756;border-radius:3px;background:rgba(20,26,34,.85);text-decoration:none}
+        .oih_remItem{display:flex;align-items:center;gap:4px;padding:1px 5px 1px 1px;border:1px solid #3a4756;border-radius:3px;background:rgba(20,26,34,.85);text-decoration:none;flex:0 0 auto}
         .oih_remItem:hover{border-color:#ffb800}
-        .oih_remImg{width:22px;height:22px;border-radius:2px;background-size:cover;background-position:center;background-color:#0b0f14;display:block;flex:0 0 auto}
+        .oih_remImg{width:20px;height:20px;border-radius:2px;background-size:cover;background-position:center;background-color:#0b0f14;display:block;flex:0 0 auto}
         .oih_remTime{font-size:10px;color:#ffd78a;white-space:nowrap}
         .oih_remItem.oih_soon .oih_remTime{color:#ff8b7a}
         .oih_remMore{font-size:10px;color:#8aa0b2;align-self:center}
@@ -980,12 +984,60 @@
 
     // --------------------------------------------------------------------- overview reminder
     // An item with a deadline is worth nothing once it passes, and the shop is not the page you
-    // open every day — the overview is. So the deadlines are shown there, in the empty corner of
+    // open every day — the overview is. So the deadlines are shown there, in the empty strip of
     // the planet banner: thumbnail, time left, and a link that opens that item in the shop.
     //
     // It reads ONLY localStorage — what the shop page already stored while the player was there.
     // No request, no timer, no alarm registered anywhere (§1.3/§1.4/§4): a static notice, drawn
     // when the player opens the page themselves, and switched off with the × or the shop flag.
+
+    // Where the notice may sit, MEASURED rather than assumed. The banner's free strip is bounded
+    // by things the game draws and we must not cover (§1.7): the bar of active items across the
+    // bottom, the moon/planet thumbnail above, the planet data and its Trasferisciti /
+    // abbandona row to the side. Each of them is read off the live layout, so the strip is
+    // whatever is actually left — and if that is nothing, the caller puts the box below the
+    // banner instead of on top of something.
+    function reminderSpot()
+    {
+        const host = document.querySelector('#detailWrapper')
+            || document.querySelector('#overviewcomponent #planet')
+            || document.querySelector('#planet');
+        if(!host) return null;
+        const hostR = host.getBoundingClientRect();
+        if(!hostR.width || !hostR.height) return null;
+
+        // The active-items bar. It is drawn across the bottom of the banner (sometimes as a
+        // sibling that overlaps it), so it is found by id/class anywhere and matched by geometry.
+        let bottom = 8, bar = null;
+        [].forEach.call(document.querySelectorAll('#buffBar, [id*="buffBar"], [class*="buffBar"]'), e =>
+        {
+            const r = e.getBoundingClientRect();
+            if(!r.width || !r.height) return;
+            if(r.bottom > hostR.top && r.top < hostR.bottom + 40)
+            {
+                if(hostR.bottom - r.top + 6 >= bottom) bar = e;
+                bottom = Math.max(bottom, hostR.bottom - r.top + 6);
+            }
+        });
+
+        // The thumbnail (moon link, or the planet image) sets the ceiling of the strip.
+        const above = document.querySelector('#moon') || document.querySelector('#planetImage') || document.querySelector('#header_text');
+        const aboveR = above && above.getBoundingClientRect();
+        const ceiling = (aboveR && aboveR.height && aboveR.bottom > hostR.top) ? aboveR.bottom : hostR.top;
+        const roof = (aboveR && aboveR.height) ? above : null;
+
+        // The data column on the right sets the width, but only if it really is to the side.
+        let width = Math.min(320, hostR.width - 24);
+        const side = document.querySelector('#planetdata') || document.querySelector('#planetDetails');
+        if(side)
+        {
+            const r = side.getBoundingClientRect();
+            if(r.width && r.left > hostR.left + 60 && r.bottom > ceiling) width = Math.min(width, r.left - hostR.left - 16);
+        }
+
+        return { host, bar, roof, bottom, width, height: (hostR.bottom - bottom) - ceiling };
+    }
+
     function buildReminder()
     {
         if(document.querySelector('.oih_rem')) return true;
@@ -993,37 +1045,29 @@
         const store = loadExpiring();
         if(!store || !store.items.length) return true; // nothing perishable → no box at all
 
-        // The planet banner ("Riepilogo - G1 52"). Its bottom-left corner is empty by design, so
-        // the notice goes there and covers no game element (§1.7); if the page is not the one we
-        // expect, we simply do not draw it rather than putting it somewhere it does not belong.
-        const host = document.querySelector('#overviewcomponent #planet') || document.querySelector('#planet') || document.querySelector('#detailWrapper');
-        if(!host) return false;
+        const spot = reminderSpot();
+        if(!spot) return false; // not the page we expect (yet) — better nothing than the wrong place
 
         injectStyle();
+        const host = spot.host;
+        // One line, so it has a chance of fitting the strip the banner actually leaves free. It is
+        // drawn there first, hidden, and then measured: whether it fits is a question about the
+        // rendered box, not about a number we picked in advance.
+        const box = el('div', 'oih_rem', null);
+        box.style.visibility = 'hidden';
         if(getComputedStyle(host).position === 'static') host.style.position = 'relative';
+        box.style.bottom = spot.bottom + 'px';
+        box.style.maxWidth = Math.floor(spot.width) + 'px';
+        host.appendChild(box);
 
-        const box = el('div', 'oih_rem', host);
-        const head = el('div', 'oih_remHead', box);
-        el('span', 'oih_remTitle', head, '⏳ In scadenza');
-        // How fresh the underlying read is, without spending a line of the small box on it.
+        el('span', 'oih_remTitle', box, '⏳');
         box.title = 'Item con una scadenza, letti nello Shop il ' + new Date(store.at).toLocaleString();
-        const off = el('span', 'oih_remOff', head, '&times;');
-        off.title = 'Nascondi il promemoria (si riattiva dal box Item helper, nello Shop)';
-        off.addEventListener('click', () =>
-        {
-            try { localStorage.setItem(REM_OFF_KEY, '1'); } catch(e) {}
-            box.remove();
-        });
 
-        const row = el('div', 'oih_remRow', box);
         const cat = commonCategory(store.items.map(r => r.cats || []));
-        // A short list on purpose: the box lives in a small empty strip and must not grow up into
-        // the planet image (§1.7). The rest is counted, and named in the tooltip.
-        const shown = store.items.slice(0, 4);
-        shown.forEach(r =>
+        const chips = store.items.slice(0, 6).map(r =>
         {
             const left = expiresIn(r);
-            const a = el('a', 'oih_remItem' + (left < 86400 ? ' oih_soon' : ''), row);
+            const a = el('a', 'oih_remItem' + (left < 86400 ? ' oih_soon' : ''), box);
             // The game's own inventory deep-link, on the planet we are already on: one click, one
             // navigation, and OGame opens the item itself (§1.1). No cp, so nothing switches planet.
             a.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop#category=${cat}&item=${r.uuid}&page=inventory&panel1-1=`;
@@ -1031,13 +1075,70 @@
             const th = el('span', 'oih_remImg', a);
             if(r.image) th.style.backgroundImage = `url('${r.image}')`;
             el('span', 'oih_remTime', a, fmtDur(left));
+            return a;
         });
-        const rest = store.items.slice(shown.length);
-        if(rest.length)
+        const more = el('span', 'oih_remMore', box, '');
+        const setMore = kept =>
         {
-            const more = el('span', 'oih_remMore', row, '+' + rest.length);
+            const rest = store.items.slice(kept);
+            more.textContent = rest.length ? '+' + rest.length : '';
             more.title = rest.map(r => r.name + ' — ' + fmtDur(expiresIn(r))).join('\n');
+            more.style.display = rest.length ? '' : 'none';
+        };
+        setMore(chips.length);
+
+        const off = el('span', 'oih_remOff', box, '&times;');
+        off.title = 'Nascondi il promemoria (si riattiva dal box Item helper, nello Shop)';
+        off.addEventListener('click', () =>
+        {
+            try { localStorage.setItem(REM_OFF_KEY, '1'); } catch(e) {}
+            box.remove();
+        });
+
+        // Does the row fit the free strip? Its height is one line whatever the chip count, so a
+        // single measurement answers it.
+        const fits = spot.width >= 130 && box.offsetHeight <= spot.height;
+        if(fits)
+        {
+            // Trim to what the strip really holds, by measurement rather than by guessing a chip
+            // width: drop from the end until the row stops overflowing, and count what was
+            // dropped. This is what keeps the notice inside the free space.
+            let kept = chips.length;
+            while(kept > 1 && box.scrollWidth > box.clientWidth + 1)
+            {
+                chips[--kept].remove();
+                setMore(kept);
+            }
         }
+        else
+        {
+            // No room inside without covering something → below the banner, in normal flow. The
+            // anchor is the block that also holds the item bar, because that bar is usually drawn
+            // over the banner's bottom edge rather than after it: going out one level is what puts
+            // us past it instead of under it.
+            box.classList.add('oih_remFlow');
+            box.style.bottom = box.style.maxWidth = '';
+            let anchor = host;
+            for(let i = 0; i < 4 && spot.bar && !anchor.contains(spot.bar) && anchor.parentElement && anchor.parentElement !== document.body; i++) anchor = anchor.parentElement;
+            if(anchor.parentNode) anchor.parentNode.insertBefore(box, anchor.nextSibling);
+        }
+
+        // Last guard, on the real layout: if the notice still meets something the game drew — a
+        // banner built differently than any we know, or an image spilling out of it — it gets out
+        // of the way instead of sitting on top of it. In the strip we can only move up (away from
+        // the item bar); below the banner we can move down, away from either.
+        const flowing = box.classList.contains('oih_remFlow');
+        [spot.bar, flowing ? spot.roof : null].forEach(other =>
+        {
+            if(!other) return;
+            const b = box.getBoundingClientRect(), r = other.getBoundingClientRect();
+            const cross = Math.min(b.bottom, r.bottom) - Math.max(b.top, r.top);
+            const along = Math.min(b.right, r.right) - Math.max(b.left, r.left);
+            if(cross <= 0 || along <= 0) return;
+            if(flowing) box.style.marginTop = ((parseFloat(getComputedStyle(box).marginTop) || 0) + cross + 4) + 'px';
+            else box.style.bottom = ((parseFloat(box.style.bottom) || 0) + cross + 4) + 'px';
+        });
+        box.style.visibility = '';
         return true;
     }
 
