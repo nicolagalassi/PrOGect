@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         OGame Item Activation Helper
-// @namespace    https://github.com/nicolagalassi/progect
-// @version      0.14.2
-// @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone companion to PrOGect.
+// @name         Item Helper for OGame
+// @namespace    https://github.com/nicolagalassi
+// @version      1.0.0
+// @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone userscript, no dependencies.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
 // @icon         https://gf1.geo.gfsrv.net/cdn3d/favicon.ico
@@ -12,7 +12,7 @@
 // ==/UserScript==
 
 /*
-  OGame Item Activation Helper — a small, self-contained userscript.
+  Item Helper for OGame — a small, self-contained userscript.
 
   THE PROBLEM IT SOLVES
   Activating an item (e.g. a +10% metal booster) on every planet is tedious: open the
@@ -34,7 +34,7 @@
     expands to the per-duration choices, instead of one button per version.
   - The action button opens the game's OWN item panel for that item. You press the game's button —
     that is the one game action.
-  - "Pianeta succ." navigates to the next planet using the GAME'S OWN inventory deep-link URL
+  - The "»" button opens the same item on the next planet, using the GAME'S OWN deep-link URL
     (#category=..&item=..&page=inventory&panel1-1=), so OGame itself opens the inventory on the
     SAME item, ready. It never presses the activate button: the activation is yours.
   - Items that carry a DEADLINE (they are lost if not used by a date) are listed like any other
@@ -53,7 +53,7 @@
     counted. When even that does not fit it goes below the banner instead, so it never sits on top
     of the game's own bar.
 
-  COMPLIANCE (OGame Origin tool rules — see PrOGect/AGENTS.md):
+  COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
   - §1.1  1 click = 1 action. The helper never activates anything itself; it only opens the
           game's native item panel. The activation is the player's click on the game's button.
   - §1.3/§4  No auto-refresh, no polling, no timers hitting the server. It reads data already
@@ -742,7 +742,7 @@
         parent.insertBefore(box, insertBefore);
 
         const head = el('div', 'oih_head', box);
-        el('div', 'oih_title', head, '<span>&#9670;</span> Item helper');
+        el('div', 'oih_title', head, '<span>&#9670;</span> Item Helper');
         const search = el('input', null, head);
         search.type = 'text';
         search.placeholder = '🔍'; // language-neutral search glyph
@@ -761,12 +761,12 @@
         remChk.type = 'checkbox';
         remChk.checked = reminderOn();
         remFlag.appendChild(document.createTextNode(' ⏳'));
-        remFlag.title = 'Promemoria degli item in scadenza nel Riepilogo';
+        remFlag.title = 'Reminder of the items with a deadline, on the overview page';
         remChk.addEventListener('change', () => { try { localStorage.setItem(REM_OFF_KEY, remChk.checked ? '0' : '1'); } catch(e) {} });
 
         // Scan button: one accountInfo read (on click) to learn the active items of ALL planets.
         const scan = el('div', 'oih_scan', head, '⟳');
-        scan.title = 'Scansiona account: legge una volta gli item attivi di tutti i pianeti';
+        scan.title = 'Scan account: one read of the items active on every planet';
         scan.addEventListener('click', () => scanAccount(scan));
 
         const count = el('div', 'oih_count', head, '');
@@ -789,7 +789,7 @@
         const nextPlanet = getNextPlanet();
 
         // Localized button words, straight from OGame.
-        const T = { activate: L('activate', 'Attiva'), extend: L('extend', 'Prolunga'), buy: locaBuy() };
+        const T = { activate: L('activate', 'Activate'), extend: L('extend', 'Extend'), buy: locaBuy() };
         // Active → the game's own wording is "extend"; the `extendable` flag is only present in the
         // live tab data, so relying on it mislabelled scanned-active items as "activate".
         const labelFor = it => it.active ? T.extend : (!it.owned) ? T.buy : T.activate;
@@ -828,14 +828,14 @@
             // cached for 24h and seeded back on load, this naturally stays quiet for a day and only
             // re-asks once the cache has aged out — no separate timer needed.
             const missing = [];
-            if(!Object.keys(mem.inv).length) missing.push(L('LOCA_PREMIUM_INVENTORY', 'Inventario'));
+            if(!Object.keys(mem.inv).length) missing.push(L('LOCA_PREMIUM_INVENTORY', 'Inventory'));
             if(!Object.keys(mem.shop).length) missing.push(L('LOCA_PREMIUM_SHOP', 'Shop'));
             hint.innerHTML = '';
             if(missing.length)
             {
                 el('span', null, hint, '↻');
                 missing.forEach(nm => el('span', 'oih_pill', hint, nm));
-                hint.title = 'Apri queste schede una volta per aggiornare gli item (la cache dura ~24h)';
+                hint.title = 'Open these tabs once to refresh the item list (kept for ~24h)';
                 hint.classList.remove('oih_hidden');
             }
             else hint.classList.add('oih_hidden');
@@ -899,7 +899,7 @@
                 {
                     const left = expiresIn(use);
                     const tag = el('span', 'oih_exp' + (left < 86400 ? ' oih_soon' : ''), meta, '⏳ ' + fmtDur(left));
-                    tag.title = 'Scade il ' + new Date(use.expiresAt).toLocaleString();
+                    tag.title = 'Expires on ' + new Date(use.expiresAt).toLocaleString();
                 }
 
                 const actions = el('div', 'oih_actions', card);
@@ -942,7 +942,7 @@
                         const dLabel = durLabel(m) || ('#' + (i + 1));
                         const open = el('div', 'oih_btn oih_dur ' + styleFor(m) + (m.expiresAt > 0 ? ' oih_perish' : ''), sub, (m.expiresAt > 0 ? '⏳ ' : '') + dLabel);
                         open.title = labelFor(m) + ' · ' + m.name + (m.amount ? ' ×' + m.amount : '')
-                            + (m.expiresAt > 0 ? ' · scade il ' + new Date(m.expiresAt).toLocaleString() : '');
+                            + (m.expiresAt > 0 ? ' · expires on ' + new Date(m.expiresAt).toLocaleString() : '');
                         open.addEventListener('click', () => { sub.classList.add('oih_hidden'); paint(m); });
                     });
 
@@ -1063,7 +1063,7 @@
         host.appendChild(box);
 
         el('span', 'oih_remTitle', box, '⏳');
-        box.title = 'Item con una scadenza, letti nello Shop il ' + new Date(store.at).toLocaleString();
+        box.title = 'Items with a deadline, as read in the shop on ' + new Date(store.at).toLocaleString();
 
         const cat = commonCategory(store.items.map(r => r.cats || []));
         const row = el('div', 'oih_remRow', box);
@@ -1074,7 +1074,7 @@
             // The game's own inventory deep-link, on the planet we are already on: one click, one
             // navigation, and OGame opens the item itself (§1.1). No cp, so nothing switches planet.
             a.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop#category=${cat}&item=${r.uuid}&page=inventory&panel1-1=`;
-            a.title = r.name + (r.amount > 1 ? ' ×' + r.amount : '') + ' — scade il ' + new Date(r.expiresAt).toLocaleString();
+            a.title = r.name + (r.amount > 1 ? ' ×' + r.amount : '') + ' — expires on ' + new Date(r.expiresAt).toLocaleString();
             const th = el('span', 'oih_remImg', a);
             if(r.image) th.style.backgroundImage = `url('${r.image}')`;
             el('span', 'oih_remTime', a, fmtDur(left));
@@ -1098,7 +1098,7 @@
         setKept(chips.length);
 
         const off = el('span', 'oih_remOff', box, '&times;');
-        off.title = 'Nascondi il promemoria (si riattiva dal box Item helper, nello Shop)';
+        off.title = 'Hide this reminder (switch it back on from the Item Helper box, in the shop)';
         off.addEventListener('click', () =>
         {
             try { localStorage.setItem(REM_OFF_KEY, '1'); } catch(e) {}
