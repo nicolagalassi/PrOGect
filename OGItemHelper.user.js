@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Item Helper for OGame
 // @namespace    https://github.com/nicolagalassi
-// @version      1.0.0
-// @description  A searchable inventory box on the shop page that shows what is already active on the planet, opens the game's own item panel on click, and can carry the same item to the next planet ready to activate. Standalone userscript, no dependencies.
+// @version      1.1.1
+// @description  A searchable inventory box on the shop page: what is already active on the planet, the game's own item panel one click away, the same item carried to the next planet, and the time left written on active items and officers on every page. IT/EN/DE/FR/ES/PL/TR/PT/RU. Standalone userscript, no dependencies.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
 // @icon         https://gf1.geo.gfsrv.net/cdn3d/favicon.ico
@@ -28,13 +28,16 @@
     shop items you do not own. The game loads inventory and shop data only for the visible tab, so
     the helper accumulates, in memory for this page load, whatever the player opens: visit Shop
     once and Inventory once and the box has both. It never switches tabs by itself (that would be
-    forbidden auto-refresh, §1.3/§4). Button labels come from OGame's own `loca`, in the player's
-    language.
+    forbidden auto-refresh, §1.3/§4). Every switch in the box carries its own word and a full
+    sentence on hover; the ? button spells the same out as text.
   - The different DURATIONS of one item (7d / 30d / 90d) are grouped under a single button that
-    expands to the per-duration choices, instead of one button per version.
+    expands to the per-duration choices; picking one opens that copy straight away. Items that
+    merely share an effect — a Kraken and its lifeform counterpart — stay separate cards.
+  - On EVERY page it writes the remaining time on the active-item bar and under the officers —
+    the game knows both and shows neither. Switchable from the box, and off it draws nothing.
   - The action button opens the game's OWN item panel for that item. You press the game's button —
     that is the one game action.
-  - The "»" button opens the same item on the next planet, using the GAME'S OWN deep-link URL
+  - The "» coords" button opens the same item on the next planet, using the GAME'S OWN deep-link URL
     (#category=..&item=..&page=inventory&panel1-1=), so OGame itself opens the inventory on the
     SAME item, ready. It never presses the activate button: the activation is yours.
   - Items that carry a DEADLINE (they are lost if not used by a date) are listed like any other
@@ -79,11 +82,11 @@
     'use strict';
 
     const HREF = window.location.href;
-    // The box lives in the shop; the expiry reminder lives on the overview ("Riepilogo"). Anything
-    // else is none of our business and the script stops right here.
+    // The box lives in the shop; the expiry reminder lives on the overview ("Riepilogo"); the
+    // remaining-time badges belong wherever the game draws the active-item bar and the officers,
+    // which is every page. Each part decides for itself at the bottom of the file.
     const IS_SHOP = HREF.indexOf('component=shop') >= 0 || HREF.indexOf('page=shop') >= 0;
     const IS_OVERVIEW = HREF.indexOf('component=overview') >= 0 || HREF.indexOf('page=overview') >= 0;
-    if(!IS_SHOP && !IS_OVERVIEW) return;
 
     const PAGE = window; // @grant none → shares the page window, so inventoryObj is readable.
 
@@ -125,73 +128,157 @@
 
     // --------------------------------------------------------------------- styles
     const CSS = `
-        .oih_box{margin:6px 8px 10px;padding:8px;border:1px solid #3a4756;border-radius:4px;background:linear-gradient(192deg,rgba(37,46,58,.6),rgba(20,25,32,.6));box-sizing:border-box}
-        .oih_head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
-        .oih_title{font-size:12px;color:#f0a955;font-weight:bold;white-space:nowrap;display:flex;align-items:center;gap:4px}
-        .oih_head input[type=text]{flex:1;min-width:60px;padding:4px 8px;border-radius:3px;border:1px solid #3a4756;background:#0e131a !important;color:#fff !important;-webkit-text-fill-color:#fff;caret-color:#fff;font-size:12px}
-        .oih_head input[type=text]:focus{outline:none;border-color:#ffb800;background:#0e131a !important;color:#fff !important;-webkit-text-fill-color:#fff}
-        .oih_flag{font-size:11px;color:#9ec7ff;white-space:nowrap;display:inline-flex;align-items:center;gap:3px;cursor:pointer;user-select:none}
-        .oih_flag input{cursor:pointer;margin:0}
-        .oih_scan{cursor:pointer;color:#9ec7ff;font-size:14px;line-height:1;padding:2px 4px;user-select:none;border:1px solid #3a4756;border-radius:3px}
-        .oih_scan:hover{border-color:#ffb800;color:#ffb800}
-        .oih_scan.oih_busy{animation:oih_spin .8s linear infinite;color:#ffb800;pointer-events:none}
+        .oih_box{
+            --ink:#0C131B; --row:#16212C; --row-hi:#1D2A37; --line:#2B3A4A; --line-hi:#3F5568;
+            --acc:#48C8FF; --acc-hi:#B7ECFF; --acc-dim:#2C6E90;
+            --text:#E8F3FB; --mute:#8FA6B8; --faint:#5D7285;
+            --gold:#FFC24D; --mint:#3BE8B0; --warn:#FF9A5A; --alert:#FF7A6B;
+            --disp:"Bahnschrift","DIN Alternate","Roboto Condensed","Arial Narrow",Impact,sans-serif;
+            --body:"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+            margin:6px 8px 10px;padding:9px;border:1px solid var(--line);border-radius:5px;
+            background:linear-gradient(180deg,#141F29,var(--ink));box-sizing:border-box;font-family:var(--body);
+        }
+        .oih_box *{box-sizing:border-box}
+
+        /* ---- header: title, search, count ---- */
+        .oih_head{display:flex;align-items:center;gap:8px}
+        .oih_title{
+            font-family:var(--disp);font-size:13px;letter-spacing:1.4px;text-transform:uppercase;
+            color:var(--acc);white-space:nowrap;display:flex;align-items:center;gap:5px;
+        }
+        .oih_head input[type=text]{
+            flex:1 1 auto;min-width:60px;padding:5px 9px;border-radius:3px;border:1px solid var(--line);
+            background:#070E14 !important;color:var(--text) !important;-webkit-text-fill-color:var(--text);
+            caret-color:var(--acc);font-family:var(--body);font-size:12px;
+        }
+        .oih_head input[type=text]:focus{outline:none;border-color:var(--acc-dim)}
+        .oih_head input::placeholder{color:var(--faint)}
+        .oih_count{font-family:var(--disp);font-size:12px;letter-spacing:.6px;color:var(--mute);white-space:nowrap}
+        .oih_collapse{cursor:pointer;color:var(--mute);font-size:14px;line-height:1;padding:3px 5px;user-select:none;border:1px solid transparent;border-radius:3px}
+        .oih_collapse:hover{color:var(--acc-hi);border-color:var(--line-hi)}
+
+        /* ---- control bar: every switch says what it does ---- */
+        .oih_bar{display:flex;align-items:center;gap:6px;margin-top:7px;flex-wrap:wrap}
+        .oih_toggle{
+            display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;white-space:nowrap;
+            padding:3px 9px;border:1px solid var(--line);border-radius:3px;background:var(--row);
+            font-family:var(--disp);font-size:11.5px;letter-spacing:.9px;text-transform:uppercase;color:var(--mute);
+        }
+        .oih_toggle:hover{border-color:var(--line-hi);color:var(--text)}
+        .oih_toggle input{cursor:pointer;margin:0;accent-color:#48C8FF}
+        .oih_toggle.oih_tOn{border-color:var(--acc-dim);color:var(--acc);background:rgba(72,200,255,.12)}
+        .oih_act{
+            display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;white-space:nowrap;
+            padding:3px 10px;border:1px solid var(--acc-dim);border-radius:3px;background:var(--row);color:var(--acc);
+            font-family:var(--disp);font-size:11.5px;letter-spacing:.9px;text-transform:uppercase;
+        }
+        .oih_act:hover{border-color:var(--acc);color:var(--acc-hi);background:var(--row-hi)}
+        .oih_act.oih_busy{pointer-events:none;opacity:.7}
+        .oih_act.oih_busy span:first-child{display:inline-block;animation:oih_spin .8s linear infinite}
         @keyframes oih_spin{to{transform:rotate(360deg)}}
-        .oih_count{font-size:11px;color:#7c8b99;white-space:nowrap}
-        .oih_collapse{cursor:pointer;color:#9aa7b4;font-size:14px;line-height:1;padding:2px 4px;user-select:none}
-        .oih_collapse:hover{color:#ffb800}
-        .oih_grid{max-height:250px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px;padding-right:2px}
+        .oih_helpBtn{
+            cursor:pointer;user-select:none;margin-left:auto;width:20px;height:20px;line-height:18px;text-align:center;
+            border:1px solid var(--line);border-radius:3px;color:var(--mute);font-family:var(--disp);font-size:12px;
+        }
+        .oih_helpBtn:hover{border-color:var(--acc-dim);color:var(--acc)}
+        .oih_help{margin-top:7px;padding:7px 9px;border:1px solid var(--line);border-left:2px solid var(--acc-dim);
+            border-radius:3px;background:var(--row);font-size:11px;color:var(--mute);line-height:1.55}
+        .oih_help.oih_hidden{display:none}
+        .oih_help b{color:var(--text);font-weight:600}
+
+        /* ---- grid ---- */
+        .oih_grid{margin-top:8px;max-height:270px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px;padding-right:2px}
         .oih_grid.oih_hidden{display:none}
-        .oih_card{position:relative;display:flex;gap:8px;align-items:center;padding:6px;border-radius:3px;background:rgba(14,19,26,.75);border:1px solid #2b3542}
-        .oih_card:hover{border-color:#4a5a6c}
-        .oih_card.oih_on{border-color:#3f8f5f;background:rgba(20,34,26,.8)}
-        .oih_card.oih_buy{border-color:#3f5a80;background:rgba(18,24,34,.8)}
-        .oih_shopTag{color:#7fa8e0}
-        .oih_thumb{width:42px;height:42px;flex:0 0 auto;border-radius:3px;background-size:cover;background-position:center;background-repeat:no-repeat;background-color:#0b0f14;border:1px solid #333c47}
+        .oih_grid::-webkit-scrollbar{width:8px}
+        .oih_grid::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+
+        .oih_card{position:relative;display:flex;gap:8px;align-items:center;padding:7px;border-radius:4px;background:var(--row);border:1px solid var(--line)}
+        .oih_card:hover{border-color:var(--line-hi);background:var(--row-hi)}
+        .oih_card.oih_on{border-color:#2A8F73;box-shadow:inset 2px 0 0 var(--mint)}
+        .oih_card.oih_buy{border-color:#2C5A78}
+        .oih_shopTag{font-family:var(--disp);letter-spacing:.8px;text-transform:uppercase;color:#6FB4E0}
+        .oih_thumb{width:44px;height:44px;flex:0 0 auto;border-radius:3px;background-size:cover;background-position:center;background-repeat:no-repeat;background-color:#070E14;border:1px solid var(--line-hi)}
         /* Rarity = tier colour on the thumbnail: bronze / silver / gold / platinum→purple */
         .oih_thumb[class*="oih_r_"]{border-width:2px}
-        .oih_r_common{border-color:#c87f3a}.oih_r_uncommon{border-color:#c3ccd4}.oih_r_rare{border-color:#e6be23}.oih_r_epic{border-color:#a05bd0}
+        .oih_r_common{border-color:#C87F3A}.oih_r_uncommon{border-color:#C3CCD4}.oih_r_rare{border-color:#E6BE23}.oih_r_epic{border-color:#A05BD0}
         .oih_info{flex:1 1 auto;min-width:0}
-        .oih_name{font-size:11px;color:#e6ecf2;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
-        .oih_meta{font-size:10px;color:#8aa0b2;display:flex;gap:6px;margin-top:2px;flex-wrap:wrap}
+        .oih_name{font-size:11.5px;color:var(--text);line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+        .oih_meta{font-size:10px;color:var(--faint);display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;align-items:center}
         /* Owned quantity as a boxed chip, so it never reads as part of the percentage next to it */
-        .oih_amount{color:#ffb800;background:rgba(255,184,0,.1);border:1px solid rgba(255,184,0,.35);border-radius:3px;padding:0 4px;line-height:14px;font-weight:bold}
-        .oih_pct{color:#7fd6a0}
-        .oih_live{color:#59c98a;display:inline-flex;align-items:center;gap:3px}
-        .oih_live::before{content:"";width:6px;height:6px;border-radius:50%;background:#59c98a}
-        .oih_actions{display:flex;flex-direction:column;gap:3px;flex:0 0 auto}
-        .oih_btn{cursor:pointer;font-size:10px;padding:3px 7px;border-radius:3px;border:1px solid #3a4756;background:linear-gradient(192deg,#2b3542,#1a2029);color:#fff;text-align:center;text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
-        .oih_btn:hover{border-color:#ffb800}
-        .oih_btn.oih_activate{color:#bfeecf}
-        .oih_caret{padding-left:5px;opacity:.75}
-        .oih_btn.oih_extend{color:#ffd78a}
-        .oih_btn.oih_compra{color:#9ec7ff}
-        .oih_btn.oih_next{color:#9ec7ff}
-        .oih_hint{font-size:10px;color:#9ec7ff;margin:-2px 0 6px;display:flex;gap:5px;align-items:center;cursor:default}
+        .oih_amount{font-family:ui-monospace,Consolas,monospace;color:var(--gold);background:rgba(255,194,77,.12);border:1px solid #9B7527;border-radius:3px;padding:0 5px;line-height:15px}
+        .oih_pct{color:var(--mint)}
+        .oih_live{color:var(--mint);display:inline-flex;align-items:center;gap:4px}
+        .oih_live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--mint);box-shadow:0 0 6px var(--mint)}
+
+        /* ---- actions: readable words, not cryptic glyphs ---- */
+        .oih_actions{display:flex;flex-direction:column;gap:4px;flex:0 0 auto;align-items:stretch}
+        .oih_btn{
+            cursor:pointer;font-family:var(--disp);font-size:11.5px;letter-spacing:.9px;text-transform:uppercase;
+            padding:5px 10px;border-radius:3px;border:1px solid var(--line-hi);background:linear-gradient(180deg,#22303D,#161F29);
+            color:var(--text);text-align:center;text-decoration:none;white-space:nowrap;display:inline-flex;
+            align-items:center;justify-content:center;gap:5px;
+        }
+        .oih_btn:hover{border-color:var(--acc);color:var(--acc-hi)}
+        .oih_btn.oih_activate{border-color:#2A8F73;color:var(--mint)}
+        .oih_btn.oih_extend{border-color:#9B7527;color:var(--gold)}
+        .oih_btn.oih_compra{border-color:#2C5A78;color:#7FC7F0}
+        .oih_btn.oih_next{font-size:10.5px;padding:3px 8px;border-color:var(--line);color:var(--mute)}
+        .oih_btn.oih_next:hover{border-color:var(--acc-dim);color:var(--acc)}
+        .oih_caret{opacity:.8;font-size:10px}
+
+        .oih_hint{font-size:10.5px;color:var(--mute);margin-top:7px;display:flex;gap:6px;align-items:center;cursor:default;flex-wrap:wrap}
         .oih_hint.oih_hidden{display:none}
-        .oih_hint .oih_pill{background:rgba(63,90,128,.35);border:1px solid #3f5a80;border-radius:10px;padding:0 7px;line-height:16px}
-        .oih_sub{position:absolute;inset:0;z-index:5;display:flex;flex-direction:row;gap:6px;align-items:center;justify-content:center;padding:4px 6px;border-radius:3px;background:rgba(10,14,20,.45);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);cursor:pointer}
+        .oih_hint .oih_pill{font-family:var(--disp);letter-spacing:.8px;text-transform:uppercase;background:var(--row);border:1px solid var(--line-hi);border-radius:3px;padding:1px 8px;color:var(--acc)}
+
+        /* ---- duration picker: one click, one action ---- */
+        .oih_sub{
+            position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;gap:5px;align-items:center;
+            justify-content:center;padding:5px;border-radius:4px;background:rgba(7,14,20,.9);
+            backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);cursor:pointer;
+        }
         .oih_sub.oih_hidden{display:none}
-        .oih_dur{min-width:40px;padding:6px 8px;font-size:12px;font-weight:bold}
-        .oih_empty{color:#8aa0b2;font-size:12px;padding:14px;text-align:center;grid-column:1/-1}
+        .oih_subTitle{font-family:var(--disp);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--mute)}
+        .oih_subRow{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+        .oih_dur{min-width:52px;padding:6px 10px;font-size:12.5px}
+        .oih_empty{color:var(--mute);font-size:11.5px;padding:16px;text-align:center;grid-column:1/-1}
+
         /* A deadline reads as a warning, and turns red in the last day */
-        .oih_exp{color:#ffb14e;font-weight:bold}
-        .oih_exp.oih_soon{color:#ff8b7a}
-        .oih_card.oih_perish{border-color:#8a6323}
-        .oih_dur.oih_perish{border-color:#8a6323;color:#ffb14e}
+        .oih_exp{color:var(--warn);font-weight:600}
+        .oih_exp.oih_soon{color:var(--alert)}
+        .oih_card.oih_perish{border-color:#8A6323}
+        .oih_dur.oih_perish{border-color:#8A6323;color:var(--warn)}
+
+        /* ---- remaining-time badges on active items and officers ---- */
+        .oih_tmrHost{position:relative !important}
+        .oih_tmr{
+            position:absolute;z-index:20;pointer-events:none;text-align:center;
+            border-radius:2px;border:1px solid #2C6E90;background:rgba(7,14,20,.92);
+            color:#48C8FF;font-family:"Bahnschrift","DIN Alternate","Roboto Condensed",Arial,sans-serif;
+            font-size:9px;line-height:12px;letter-spacing:.2px;white-space:nowrap;overflow:hidden;
+            box-shadow:0 1px 4px rgba(0,0,0,.7);
+        }
+        /* Item tiles: the label spans the bottom edge of its own tile and cannot reach the next
+           one — they sit shoulder to shoulder, so a centred badge wider than the tile overlapped. */
+        .oih_tmrItem{left:1px;right:1px;bottom:1px}
+        .oih_tmrOfficer,.oih_tmr:not(.oih_tmrItem){left:50%;transform:translateX(-50%);padding:0 4px}
+        /* Officers are monetized content: the badge hangs BELOW the icon, covering none of it. */
+        .oih_tmrOfficer{bottom:-15px;border-color:#9B7527;color:#FFC24D}
+        .oih_tmr.oih_tmrSoon{border-color:#8A3A2E;color:#FF7A6B}
+
         /* Overview reminder: sits in the empty corner of the planet banner, covers nothing */
-        .oih_rem{position:absolute;left:10px;bottom:10px;z-index:2;display:flex;align-items:center;gap:4px;padding:2px 4px;border:1px solid #5a4a24;border-radius:4px;background:rgba(12,16,22,.85);box-shadow:0 2px 8px rgba(0,0,0,.45);font-family:Verdana,Arial,sans-serif;box-sizing:border-box;white-space:nowrap;overflow:hidden}
+        .oih_rem{position:absolute;left:10px;bottom:10px;z-index:2;display:flex;align-items:center;gap:5px;padding:3px 5px;border:1px solid #8A6323;border-radius:4px;background:rgba(9,14,20,.9);box-shadow:0 2px 8px rgba(0,0,0,.5);font-family:"Segoe UI",Roboto,Arial,sans-serif;box-sizing:border-box;white-space:nowrap;overflow:hidden}
         /* When the banner leaves no free strip, the notice goes under it in normal flow instead */
         .oih_rem.oih_remFlow{position:static;margin:4px 0 6px;max-width:none;width:-moz-fit-content;width:fit-content}
-        .oih_remTitle{font-size:11px;color:#ffb14e;flex:0 0 auto}
-        .oih_remRow{display:flex;flex-wrap:wrap;gap:3px;min-width:0}
-        .oih_remOff{cursor:pointer;color:#8aa0b2;padding:0 2px;line-height:1;font-size:12px;flex:0 0 auto}
-        .oih_remOff:hover{color:#ffb800}
-        .oih_remItem{display:flex;align-items:center;gap:4px;padding:1px 5px 1px 1px;border:1px solid #3a4756;border-radius:3px;background:rgba(20,26,34,.85);text-decoration:none;flex:0 0 auto}
-        .oih_remItem:hover{border-color:#ffb800}
-        .oih_remImg{width:20px;height:20px;border-radius:2px;background-size:cover;background-position:center;background-color:#0b0f14;display:block;flex:0 0 auto}
-        .oih_remTime{font-size:10px;color:#ffd78a;white-space:nowrap}
-        .oih_remItem.oih_soon .oih_remTime{color:#ff8b7a}
-        .oih_remMore{font-size:10px;color:#8aa0b2;align-self:center}
+        .oih_remTitle{font-size:11px;color:#FF9A5A;flex:0 0 auto}
+        .oih_remRow{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+        .oih_remOff{cursor:pointer;color:#8FA6B8;padding:0 2px;line-height:1;font-size:12px;flex:0 0 auto}
+        .oih_remOff:hover{color:#48C8FF}
+        .oih_remItem{display:flex;align-items:center;gap:4px;padding:1px 5px 1px 1px;border:1px solid #2B3A4A;border-radius:3px;background:rgba(22,33,44,.9);text-decoration:none;flex:0 0 auto}
+        .oih_remItem:hover{border-color:#48C8FF}
+        .oih_remImg{width:20px;height:20px;border-radius:2px;background-size:cover;background-position:center;background-color:#070E14;display:block;flex:0 0 auto}
+        .oih_remTime{font-size:10px;color:#FFC24D;white-space:nowrap}
+        .oih_remItem.oih_soon .oih_remTime{color:#FF7A6B}
+        .oih_remMore{font-size:10px;color:#8FA6B8;align-self:center}
     `;
     function injectStyle()
     {
@@ -290,18 +377,207 @@
     }
     const expiresIn = r => Math.floor(((r && r.expiresAt || 0) - Date.now()) / 1000);
 
-    // Localization — read OGame's own strings from the page's `loca` so the buttons/labels match
-    // the player's language automatically. Fallbacks keep it working if a key is missing.
-    const loca = () => PAGE.loca || {};
-    const L = (key, fb) => { const v = loca()[key]; return (typeof v === 'string' && v) ? stripTags(v) : fb; };
-    function locaBuy()
+    // Localization. We used to read OGame's own `loca` object, but the keys we needed are not
+    // exposed on every build, so every label silently fell back to English. The wording here is
+    // ours: it is picked from the language the page declares, and English covers the rest.
+    const DICT = {
+        it: {
+            activate: 'Attiva', extend: 'Prolunga', buy: 'Compra', shop: 'Shop', inventory: 'Inventario',
+            search: 'Cerca un oggetto…', scan: 'Scansiona', reminder: 'Scadenze', help: 'Guida', timers: 'Timer',
+            nextPlanet: 'Pianeta succ.', chooseDuration: 'Quale durata?', close: 'Chiudi',
+            none: 'Nessun oggetto con questi filtri.',
+            tipShop: 'Shop: mostra anche gli oggetti che NON possiedi, comprabili nel negozio.',
+            tipReminder: 'Scadenze: nella panoramica appare un avviso per gli oggetti che stanno per scadere.',
+            tipScan: 'Scansiona: una sola lettura per sapere quali oggetti sono attivi su ogni pianeta.',
+            tipTimers: 'Timer: quanto manca alla fine, scritto sugli oggetti attivi e sotto gli ufficiali, in ogni pagina.',
+            tipOpen: 'Apre il pannello del gioco per questo oggetto: il tasto Attiva lo premi tu.',
+            tipNext: 'Va sul pianeta successivo e apre lo stesso oggetto, pronto da attivare.',
+            tipMissing: 'Apri una volta queste schede per aggiornare la lista (resta in memoria ~24h).',
+            expiresOn: 'Scade il', unitDay: 'g',
+        },
+        en: {
+            activate: 'Activate', extend: 'Extend', buy: 'Buy', shop: 'Shop', inventory: 'Inventory',
+            search: 'Search an item…', scan: 'Scan', reminder: 'Deadlines', help: 'Help', timers: 'Timers',
+            nextPlanet: 'Next planet', chooseDuration: 'Which duration?', close: 'Close',
+            none: 'No item matches these filters.',
+            tipShop: 'Shop: also list items you do NOT own, buyable in the shop.',
+            tipReminder: 'Deadlines: a notice on the overview page for items about to expire.',
+            tipScan: 'Scan: a single read telling which items are active on every planet.',
+            tipTimers: 'Timers: time left, written on the active items and under the officers, on every page.',
+            tipOpen: "Opens the game's own panel for this item: you press Activate yourself.",
+            tipNext: 'Goes to the next planet and opens the same item, ready to activate.',
+            tipMissing: 'Open these tabs once to refresh the list (kept for ~24h).',
+            expiresOn: 'Expires on', unitDay: 'd',
+        },
+        de: {
+            activate: 'Aktivieren', extend: 'Verlängern', buy: 'Kaufen', shop: 'Shop', inventory: 'Inventar',
+            search: 'Gegenstand suchen…', scan: 'Scannen', reminder: 'Fristen', help: 'Hilfe', timers: 'Timer',
+            nextPlanet: 'Nächster Planet', chooseDuration: 'Welche Laufzeit?', close: 'Schließen',
+            none: 'Kein Gegenstand passt zu diesen Filtern.',
+            tipShop: 'Shop: zeigt auch Gegenstände, die du NICHT besitzt und im Shop kaufen kannst.',
+            tipReminder: 'Fristen: ein Hinweis auf der Übersicht für Gegenstände, die bald ablaufen.',
+            tipScan: 'Scannen: ein einziger Abruf zeigt, welche Gegenstände auf jedem Planeten aktiv sind.',
+            tipTimers: 'Timer: die Restzeit auf aktiven Gegenständen und unter den Offizieren, auf jeder Seite.',
+            tipOpen: 'Öffnet das Fenster des Spiels für diesen Gegenstand: Aktivieren drückst du selbst.',
+            tipNext: 'Geht zum nächsten Planeten und öffnet denselben Gegenstand, bereit zum Aktivieren.',
+            tipMissing: 'Öffne diese Reiter einmal, um die Liste zu aktualisieren (bleibt ~24h gespeichert).',
+            expiresOn: 'Läuft ab am', unitDay: 'T',
+        },
+        fr: {
+            activate: 'Activer', extend: 'Prolonger', buy: 'Acheter', shop: 'Boutique', inventory: 'Inventaire',
+            search: 'Chercher un objet…', scan: 'Analyser', reminder: 'Échéances', help: 'Aide', timers: 'Minuteurs',
+            nextPlanet: 'Planète suiv.', chooseDuration: 'Quelle durée ?', close: 'Fermer',
+            none: 'Aucun objet ne correspond à ces filtres.',
+            tipShop: 'Boutique : affiche aussi les objets que tu ne possèdes PAS, achetables en boutique.',
+            tipReminder: 'Échéances : un avis sur la vue générale pour les objets bientôt expirés.',
+            tipScan: 'Analyser : une seule lecture pour savoir quels objets sont actifs sur chaque planète.',
+            tipTimers: 'Minuteurs : le temps restant sur les objets actifs et sous les officiers, sur chaque page.',
+            tipOpen: "Ouvre le panneau du jeu pour cet objet : c'est toi qui appuies sur Activer.",
+            tipNext: 'Va sur la planète suivante et ouvre le même objet, prêt à activer.',
+            tipMissing: 'Ouvre ces onglets une fois pour actualiser la liste (gardée ~24h).',
+            expiresOn: 'Expire le', unitDay: 'j',
+        },
+        es: {
+            activate: 'Activar', extend: 'Prolongar', buy: 'Comprar', shop: 'Tienda', inventory: 'Inventario',
+            search: 'Buscar un objeto…', scan: 'Escanear', reminder: 'Caducidades', help: 'Ayuda', timers: 'Temporizadores',
+            nextPlanet: 'Planeta sig.', chooseDuration: '¿Qué duración?', close: 'Cerrar',
+            none: 'Ningún objeto coincide con estos filtros.',
+            tipShop: 'Tienda: muestra también los objetos que NO tienes, comprables en la tienda.',
+            tipReminder: 'Caducidades: un aviso en la vista general para los objetos a punto de caducar.',
+            tipScan: 'Escanear: una sola lectura para saber qué objetos están activos en cada planeta.',
+            tipTimers: 'Temporizadores: el tiempo restante en los objetos activos y bajo los oficiales, en cada página.',
+            tipOpen: 'Abre el panel del juego para este objeto: Activar lo pulsas tú.',
+            tipNext: 'Va al siguiente planeta y abre el mismo objeto, listo para activar.',
+            tipMissing: 'Abre estas pestañas una vez para actualizar la lista (se guarda ~24h).',
+            expiresOn: 'Caduca el', unitDay: 'd',
+        },
+        pl: {
+            activate: 'Aktywuj', extend: 'Przedłuż', buy: 'Kup', shop: 'Sklep', inventory: 'Ekwipunek',
+            search: 'Szukaj przedmiotu…', scan: 'Skanuj', reminder: 'Terminy', help: 'Pomoc', timers: 'Liczniki',
+            nextPlanet: 'Nast. planeta', chooseDuration: 'Jaki czas trwania?', close: 'Zamknij',
+            none: 'Żaden przedmiot nie pasuje do tych filtrów.',
+            tipShop: 'Sklep: pokazuje też przedmioty, których NIE masz, do kupienia w sklepie.',
+            tipReminder: 'Terminy: informacja na przeglądzie o przedmiotach, które wkrótce wygasną.',
+            tipScan: 'Skanuj: jeden odczyt pokazuje, które przedmioty są aktywne na każdej planecie.',
+            tipTimers: 'Liczniki: pozostały czas na aktywnych przedmiotach i pod oficerami, na każdej stronie.',
+            tipOpen: 'Otwiera okno gry dla tego przedmiotu: Aktywuj klikasz sam.',
+            tipNext: 'Przechodzi na następną planetę i otwiera ten sam przedmiot, gotowy do aktywacji.',
+            tipMissing: 'Otwórz te zakładki raz, aby odświeżyć listę (zapisana ~24h).',
+            expiresOn: 'Wygasa', unitDay: 'd',
+        },
+        tr: {
+            activate: 'Etkinleştir', extend: 'Uzat', buy: 'Satın al', shop: 'Mağaza', inventory: 'Envanter',
+            search: 'Eşya ara…', scan: 'Tara', reminder: 'Süreler', help: 'Yardım', timers: 'Sayaçlar',
+            nextPlanet: 'Sonraki gezegen', chooseDuration: 'Hangi süre?', close: 'Kapat',
+            none: 'Bu filtrelere uyan eşya yok.',
+            tipShop: 'Mağaza: sahip OLMADIĞIN, mağazadan alınabilen eşyaları da gösterir.',
+            tipReminder: 'Süreler: genel bakışta, süresi dolmak üzere olan eşyalar için uyarı.',
+            tipScan: 'Tara: hangi eşyaların her gezegende etkin olduğunu tek okumada gösterir.',
+            tipTimers: 'Sayaçlar: etkin eşyaların üzerinde ve subayların altında kalan süre, her sayfada.',
+            tipOpen: 'Bu eşya için oyunun kendi panelini açar: Etkinleştir düğmesine sen basarsın.',
+            tipNext: 'Sonraki gezegene gider ve aynı eşyayı etkinleştirmeye hazır açar.',
+            tipMissing: 'Listeyi yenilemek için bu sekmeleri bir kez aç (~24 saat saklanır).',
+            expiresOn: 'Bitiş', unitDay: 'g',
+        },
+        pt: {
+            activate: 'Ativar', extend: 'Prolongar', buy: 'Comprar', shop: 'Loja', inventory: 'Inventário',
+            search: 'Procurar um item…', scan: 'Escanear', reminder: 'Prazos', help: 'Ajuda', timers: 'Cronômetros',
+            nextPlanet: 'Próx. planeta', chooseDuration: 'Qual duração?', close: 'Fechar',
+            none: 'Nenhum item corresponde a estes filtros.',
+            tipShop: 'Loja: mostra também os itens que você NÃO possui, compráveis na loja.',
+            tipReminder: 'Prazos: um aviso na visão geral para os itens prestes a expirar.',
+            tipScan: 'Escanear: uma única leitura para saber quais itens estão ativos em cada planeta.',
+            tipTimers: 'Cronômetros: o tempo restante nos itens ativos e sob os oficiais, em todas as páginas.',
+            tipOpen: 'Abre o painel do próprio jogo para este item: o Ativar você aperta.',
+            tipNext: 'Vai para o próximo planeta e abre o mesmo item, pronto para ativar.',
+            tipMissing: 'Abra estas abas uma vez para atualizar a lista (guardada ~24h).',
+            expiresOn: 'Expira em', unitDay: 'd',
+        },
+        ru: {
+            activate: 'Активировать', extend: 'Продлить', buy: 'Купить', shop: 'Магазин', inventory: 'Инвентарь',
+            search: 'Поиск предмета…', scan: 'Сканировать', reminder: 'Сроки', help: 'Справка', timers: 'Таймеры',
+            nextPlanet: 'След. планета', chooseDuration: 'Какая длительность?', close: 'Закрыть',
+            none: 'Нет предметов по этим фильтрам.',
+            tipShop: 'Магазин: показывает и предметы, которых у вас НЕТ, доступные в магазине.',
+            tipReminder: 'Сроки: напоминание на обзоре о предметах, срок которых истекает.',
+            tipScan: 'Сканировать: одно чтение показывает, какие предметы активны на каждой планете.',
+            tipTimers: 'Таймеры: оставшееся время на активных предметах и под офицерами, на каждой странице.',
+            tipOpen: 'Открывает окно игры для этого предмета: «Активировать» нажимаете вы.',
+            tipNext: 'Переходит на следующую планету и открывает тот же предмет, готовый к активации.',
+            tipMissing: 'Откройте эти вкладки один раз, чтобы обновить список (хранится ~24 ч).',
+            expiresOn: 'Истекает', unitDay: 'д',
+        },
+    };
+
+    // Which language to speak. `meta[name="ogame-language"]` is the SERVER's community, not the
+    // interface: on an .it server played in English it answers "it" and every label came out
+    // Italian. The interface itself is the only honest source, so we read the menu the game just
+    // drew and score it against words we know. The verdict is cached, because the pages that only
+    // draw badges may not carry the menu. Force it by hand with localStorage.oih_lang = 'en'.
+    const PROBE = {
+        it: ['riepilogo', 'risorse', 'strutture', 'ricerca', 'cantiere', 'difesa', 'flotta', 'galassia',
+             'impero', 'alleanza', 'ricompense', 'mercante', 'sala ufficiali', 'simul'],
+        en: ['overview', 'resources', 'facilities', 'research', 'shipyard', 'defence', 'defense', 'fleet',
+             'galaxy', 'empire', 'alliance', 'rewards', 'merchant', 'recruit officers', 'combat simulation'],
+        de: ['übersicht', 'rohstoffe', 'anlagen', 'forschung', 'werft', 'verteidigung', 'flotte', 'galaxie',
+             'imperium', 'allianz', 'belohnungen', 'händler', 'offiziere', 'kampfsimulator'],
+        fr: ['vue générale', 'ressources', 'installations', 'recherche', 'chantier', 'défense', 'flotte',
+             'galaxie', 'empire', 'alliance', 'récompenses', 'boutique', 'marchand', 'mess des officiers',
+             'simulation de combat'],
+        es: ['vista general', 'recursos', 'instalaciones', 'investigación', 'hangar', 'defensa', 'flota',
+             'galaxia', 'imperio', 'alianza', 'recompensas', 'mercader', 'oficiales', 'simulador'],
+        pl: ['przegląd', 'surowce', 'budynki', 'badania', 'stocznia', 'obrona', 'flota', 'galaktyka',
+             'imperium', 'sojusz', 'nagrody', 'kupiec', 'oficerowie', 'symulator'],
+        tr: ['genel bakış', 'hammadde', 'tesisler', 'araştırma', 'tersane', 'savunma', 'filo', 'galaksi',
+             'imparatorluk', 'ittifak', 'ödüller', 'tüccar', 'subay', 'savaş simülasyonu'],
+        pt: ['visão geral', 'recursos', 'instalações', 'pesquisa', 'estaleiro', 'defesa', 'frota', 'galáxia',
+             'império', 'aliança', 'recompensas', 'mercador', 'oficiais', 'simulador'],
+        ru: ['обзор', 'ресурсы', 'сооружения', 'исследования', 'верфь', 'оборона', 'флот', 'галактика',
+             'империя', 'альянс', 'награды', 'торговец', 'офицеры', 'симулятор'],
+    };
+    // Two stores on purpose. `oih_lang_force` is a manual override and always wins; `oih_lang_seen`
+    // is only what we worked out last time, and a fresh look at the menu overrules it — otherwise a
+    // verdict from one session would outlive the day the player switches the interface language.
+    // `oih_lang` is the old key: earlier builds wrote the DETECTED language there, so a value in it
+    // is a leftover, not a choice, and it is demoted to a cache instead of overriding anything.
+    const LANG_FORCE = 'oih_lang_force', LANG_SEEN = 'oih_lang_seen', LANG_LEGACY = 'oih_lang';
+    const lsGet = k => { try { return localStorage.getItem(k); } catch(e) { return null; } };
+    const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch(e) {} };
+    function detectLang()
     {
-        const lo = loca();
-        if(lo.buy) return stripTags(lo.buy);
-        const ba = lo.buyAndActivate || lo.buyAndExtend; // e.g. "Compra & Attiva" → take the first word
-        if(ba) { const first = stripTags(ba).split(/&|\+/)[0].trim(); if(first) return first; }
-        return 'Buy';
+        const forced = lsGet(LANG_FORCE);
+        if(forced && DICT[forced]) return forced;
+
+        const legacy = lsGet(LANG_LEGACY);
+        if(legacy)
+        {
+            if(!lsGet(LANG_SEEN) && DICT[legacy]) lsSet(LANG_SEEN, legacy);
+            try { localStorage.removeItem(LANG_LEGACY); } catch(e) {}
+        }
+
+        // The menu is the interface talking. Cast the net wider than #menuTable: other scripts add
+        // their own entries there, and layouts differ between pages.
+        const menu = [...document.querySelectorAll('#menuTable a, #menuTable span, #links a, .menubutton')]
+            .map(n => (n.textContent || '').trim().toLowerCase()).filter(Boolean);
+        if(menu.length)
+        {
+            let best = '', score = 0;
+            Object.keys(PROBE).forEach(code =>
+            {
+                const hits = PROBE[code].filter(w => menu.some(m => m === w || m.indexOf(w) === 0)).length;
+                if(hits > score) { score = hits; best = code; }
+            });
+            // Two matching entries is already beyond coincidence between these languages, and the
+            // highest score settles the words they share ("empire" and "alliance" are both).
+            if(best && score >= 2) { lsSet(LANG_SEEN, best); return best; }
+        }
+        const seen = lsGet(LANG_SEEN);
+        return (seen && DICT[seen]) ? seen : 'en';
     }
+    const LANG = detectLang();
+    // One line, so a wrong guess can be diagnosed without reading the code.
+    console.info('[OGItemHelper] language:', LANG, '— force another with localStorage.oih_lang_force');
+    const T = key => (DICT[LANG] && DICT[LANG][key]) || DICT.en[key] || key;
 
     // The two shop sections read as ONE. OGame only populates the inventory data
     // (items_inventory / inventory slider) or the shop data (items_shop / shop slider) for the
@@ -615,7 +891,7 @@
         return Object.values(map).filter(e => e.name);
     }
 
-    // A compact "+7d / +30d / +90d" label for one duration variant. The item names are long, so we
+    // A compact "+7g / +30g / +90g" label for one duration variant. The item names are long, so we
     // trim to just the days: from the duration seconds when known, else parsed from the name/tooltip
     // (day or week words, language-agnostic).
     function durLabel(it)
@@ -631,7 +907,18 @@
             const wm = (it.name || '').match(/(\d+)\s*(settiman|week|woche|semaine|semana|hafta|tyzd|týžd)/i);
             if(wm) days = +wm[1] * 7;
         }
-        return days ? '+' + days + 'd' : '';
+        return days ? '+' + days + T('unitDay') : '';
+    }
+
+    // The item's name with its duration stripped out, so "Booster 7 giorni" and "Booster 30
+    // giorni" share one base while two different items never do.
+    function baseName(it)
+    {
+        return (it.name || '')
+            .toLowerCase()
+            .replace(/\d+\s*(giorni?|days?|tage?|jours?|d[ií]as?|dni|dní|gün|dagen|settiman\w*|weeks?|wochen?|semaines?|semanas?)/gi, '')
+            .replace(/[^\p{L}\p{N}]+/gu, ' ')
+            .trim();
     }
 
     // Read the tiles of one slider. isShop tags them buyable; inventory tiles are owned.
@@ -741,37 +1028,69 @@
         box.className = 'oih_box';
         parent.insertBefore(box, insertBefore);
 
+        // Header row: what this is, what you are looking for, how much is listed.
         const head = el('div', 'oih_head', box);
         el('div', 'oih_title', head, '<span>&#9670;</span> Item Helper');
         const search = el('input', null, head);
         search.type = 'text';
-        search.placeholder = '🔍'; // language-neutral search glyph
-
-        // Flag: also show buyable shop items (default off → inventory + active only).
-        const flag = el('label', 'oih_flag', head, '');
-        const chk = el('input', null, flag);
-        chk.type = 'checkbox';
-        chk.checked = sessionStorage.getItem('oih_showShop') === '1';
-        flag.appendChild(document.createTextNode(' ' + L('LOCA_PREMIUM_SHOP', 'Shop')));
-
-        // Flag: the expiry reminder on the overview page. It is switched from here because this is
-        // where the items are — the reminder itself only knows how to hide.
-        const remFlag = el('label', 'oih_flag', head, '');
-        const remChk = el('input', null, remFlag);
-        remChk.type = 'checkbox';
-        remChk.checked = reminderOn();
-        remFlag.appendChild(document.createTextNode(' ⏳'));
-        remFlag.title = 'Reminder of the items with a deadline, on the overview page';
-        remChk.addEventListener('change', () => { try { localStorage.setItem(REM_OFF_KEY, remChk.checked ? '0' : '1'); } catch(e) {} });
-
-        // Scan button: one accountInfo read (on click) to learn the active items of ALL planets.
-        const scan = el('div', 'oih_scan', head, '⟳');
-        scan.title = 'Scan account: one read of the items active on every planet';
-        scan.addEventListener('click', () => scanAccount(scan));
+        search.placeholder = T('search');
 
         const count = el('div', 'oih_count', head, '');
         const collapsed0 = sessionStorage.getItem('oih_collapsed') === '1';
         const caret = el('div', 'oih_collapse', head, collapsed0 ? '&#9656;' : '&#9662;');
+
+        // Control bar. Every switch used to be a bare checkbox or a lone glyph, which said
+        // nothing about what it did; each one now carries its own word plus a full sentence on
+        // hover, and the ? opens the same explanations as text for anyone who never hovers.
+        const bar = el('div', 'oih_bar', box);
+
+        const mkToggle = (label, on, tip, onChange) =>
+        {
+            const wrap = el('label', 'oih_toggle' + (on ? ' oih_tOn' : ''), bar, '');
+            const input = el('input', null, wrap);
+            input.type = 'checkbox';
+            input.checked = on;
+            wrap.appendChild(document.createTextNode(label));
+            wrap.title = tip;
+            input.addEventListener('change', () =>
+            {
+                wrap.classList.toggle('oih_tOn', input.checked);
+                onChange(input.checked);
+            });
+            return input;
+        };
+
+        // Flag: also show buyable shop items (default off → inventory + active only).
+        const chk = mkToggle(T('shop'), sessionStorage.getItem('oih_showShop') === '1', T('tipShop'),
+                             on => { sessionStorage.setItem('oih_showShop', on ? '1' : '0'); render(); });
+
+        // Flag: the expiry reminder on the overview page. It is switched from here because this is
+        // where the items are — the reminder itself only knows how to hide.
+        mkToggle('⏳ ' + T('reminder'), reminderOn(), T('tipReminder'),
+                 on => { try { localStorage.setItem(REM_OFF_KEY, on ? '0' : '1'); } catch(e) {} });
+
+        // Flag: the remaining-time badges on active items and officers, on every page. Stored in
+        // localStorage because the pages that draw them are not this one.
+        mkToggle('⌛ ' + T('timers'), timersOn(), T('tipTimers'),
+                 on => { try { localStorage.setItem(TMR_OFF_KEY, on ? '0' : '1'); } catch(e) {} paintTimers(); });
+
+        // Scan button: one accountInfo read (on click) to learn the active items of ALL planets.
+        const scan = el('div', 'oih_act', bar, '<span>⟳</span><span>' + T('scan') + '</span>');
+        scan.title = T('tipScan');
+        scan.addEventListener('click', () => scanAccount(scan));
+
+        const helpBtn = el('div', 'oih_helpBtn', bar, '?');
+        helpBtn.title = T('help');
+        // The tips read "Name: what it does"; the help panel prints the name in bold and the
+        // rest as the sentence. Languages punctuate differently (French spaces its colon), so we
+        // cut at the first colon there is and fall back to the whole line when there is none.
+        const tipBody = k => { const t = T(k), c = t.indexOf(':'); return c >= 0 ? t.slice(c + 1).trim() : t; };
+        const help = el('div', 'oih_help oih_hidden', box,
+            '<b>' + T('shop') + '</b> — ' + tipBody('tipShop') + '<br>' +
+            '<b>⏳ ' + T('reminder') + '</b> — ' + tipBody('tipReminder') + '<br>' +
+            '<b>⟳ ' + T('scan') + '</b> — ' + tipBody('tipScan') + '<br>' +
+            '<b>⌛ ' + T('timers') + '</b> — ' + tipBody('tipTimers'));
+        helpBtn.addEventListener('click', () => help.classList.toggle('oih_hidden'));
 
         // Hint: which sections are not yet loaded. Opening that tab once fills the box (manual,
         // player-driven — the script never switches tabs by itself).
@@ -788,11 +1107,9 @@
 
         const nextPlanet = getNextPlanet();
 
-        // Localized button words, straight from OGame.
-        const T = { activate: L('activate', 'Activate'), extend: L('extend', 'Extend'), buy: locaBuy() };
         // Active → the game's own wording is "extend"; the `extendable` flag is only present in the
         // live tab data, so relying on it mislabelled scanned-active items as "activate".
-        const labelFor = it => it.active ? T.extend : (!it.owned) ? T.buy : T.activate;
+        const labelFor = it => it.active ? T('extend') : (!it.owned) ? T('buy') : T('activate');
         const styleFor = it => it.active ? 'oih_extend' : (!it.owned) ? 'oih_compra' : 'oih_activate';
 
         // Open an item's native panel, remembering the current search for the "repeat" comfort.
@@ -800,10 +1117,10 @@
 
         // A "next planet" link for one item, using OGame's own inventory deep-link URL so the game
         // opens the inventory on that item itself (1 user click = 1 navigation, §1.1).
-        const nextLink = (it, textLabel) =>
+        const nextLink = it =>
         {
-            const link = el('a', 'oih_btn oih_next', null, textLabel);
-            link.title = (nextPlanet.coords || '') + ' »';
+            const link = el('a', 'oih_btn oih_next', null, '» ' + (nextPlanet.coords || T('nextPlanet')));
+            link.title = T('tipNext') + (nextPlanet.coords ? ' [' + nextPlanet.coords + ']' : '');
             // Land on the section the item lives in: owned/active → inventory, otherwise the
             // shop, so a buyable variant can be bought and activated on the next planet too.
             const inInventory = it.owned || it.active;
@@ -828,14 +1145,14 @@
             // cached for 24h and seeded back on load, this naturally stays quiet for a day and only
             // re-asks once the cache has aged out — no separate timer needed.
             const missing = [];
-            if(!Object.keys(mem.inv).length) missing.push(L('LOCA_PREMIUM_INVENTORY', 'Inventory'));
-            if(!Object.keys(mem.shop).length) missing.push(L('LOCA_PREMIUM_SHOP', 'Shop'));
+            if(!Object.keys(mem.inv).length) missing.push(T('inventory'));
+            if(!Object.keys(mem.shop).length) missing.push(T('shop'));
             hint.innerHTML = '';
             if(missing.length)
             {
                 el('span', null, hint, '↻');
                 missing.forEach(nm => el('span', 'oih_pill', hint, nm));
-                hint.title = 'Open these tabs once to refresh the item list (kept for ~24h)';
+                hint.title = T('tipMissing');
                 hint.classList.remove('oih_hidden');
             }
             else hint.classList.add('oih_hidden');
@@ -847,14 +1164,18 @@
             let visible = items.filter(it => showShop || it.owned || it.active);
             visible = visible.filter(it => !needle || it.name.toLowerCase().indexOf(needle) >= 0);
 
-            if(!visible.length) { el('div', 'oih_empty', grid, '—'); return; }
+            if(!visible.length) { el('div', 'oih_empty', grid, T('none')); return; }
 
             // Group the different DURATIONS of the same item (same effect text) under one card, so
             // e.g. the 7d / 30d / 90d versions of one booster are one entry with a duration menu.
             const groups = {};
             visible.forEach(it =>
             {
-                const key = (it.effect || it.name).toLowerCase();
+                // Group by the item's name WITHOUT its duration, plus its effect. Grouping on the
+                // effect alone merged genuinely different items that happen to do the same thing —
+                // e.g. a Kraken and its lifeform counterpart — into one card whose variants had no
+                // duration to name, so they came out as a meaningless "#1 / #2" picker.
+                const key = baseName(it) + '|' + (it.effect || '').toLowerCase().slice(0, 60);
                 (groups[key] || (groups[key] = [])).push(it);
             });
             let list = Object.values(groups);
@@ -864,7 +1185,7 @@
             const rank = g => Math.min(...g.map(it => (it.owned && it.expiresAt > 0) ? -1 : it.active ? 0 : it.owned ? 1 : 2));
             const soonest = g => Math.min(...g.map(it => (it.owned && it.expiresAt > 0) ? it.expiresAt : Infinity));
             list.sort((a, b) => (rank(a) - rank(b)) || (rank(a) < 0 ? soonest(a) - soonest(b) : 0));
-            count.textContent = list.length + (showShop ? ' (+' + L('LOCA_PREMIUM_SHOP', 'Shop').toLowerCase() + ')' : '');
+            count.textContent = list.length + (showShop ? ' +' + T('shop').toLowerCase() : '');
 
             list.forEach(group =>
             {
@@ -893,13 +1214,13 @@
                 const pct = (rep.name || '').match(/[+-]?\d+\s*%/) || (rep.effect || '').match(/^\s*[+-]?\d+\s*%/);
                 if(pct) el('span', 'oih_pct', meta, pct[0].trim().replace(/\s+/g, ''));
                 if(rep.active) el('span', 'oih_live', meta, rep.timeLeft ? fmtDur(rep.timeLeft) : (rep.timeText || ''));
-                else if(buyOnly) el('span', 'oih_shopTag', meta, L('LOCA_PREMIUM_SHOP', 'Shop').toLowerCase());
+                else if(buyOnly) el('span', 'oih_shopTag', meta, T('shop').toLowerCase());
                 // The deadline of the copy the button would open, not of the whole group.
                 if(use.expiresAt > 0)
                 {
                     const left = expiresIn(use);
                     const tag = el('span', 'oih_exp' + (left < 86400 ? ' oih_soon' : ''), meta, '⏳ ' + fmtDur(left));
-                    tag.title = 'Expires on ' + new Date(use.expiresAt).toLocaleString();
+                    tag.title = T('expiresOn') + ' ' + new Date(use.expiresAt).toLocaleString();
                 }
 
                 const actions = el('div', 'oih_actions', card);
@@ -908,47 +1229,41 @@
                 {
                     // Single version → button acts directly.
                     const act = el('div', 'oih_btn ' + styleFor(use), actions, labelFor(use));
+                    act.title = T('tipOpen');
                     act.addEventListener('click', () => doOpen(use));
-                    if(nextPlanet) actions.appendChild(nextLink(use, '»'));
+                    if(nextPlanet) actions.appendChild(nextLink(use));
                 }
                 else
                 {
-                    // Multiple durations → choose one first. Picking a duration does not open
-                    // anything: it selects the variant, and the card then offers the action for it
-                    // plus the jump to the next planet (which needs a concrete variant to carry).
+                    // Several durations of the same item. One click used to only SELECT a duration
+                    // and you had to press the action again — two clicks for one intention. Now the
+                    // duration IS the action: picking 7d opens the game's panel for the 7d copy.
                     const sub = el('div', 'oih_sub oih_hidden', card); // overlays the whole card
-                    sub.addEventListener('click', e => { if(e.target === sub) sub.classList.add('oih_hidden'); }); // backdrop closes
+                    const closeSub = () => sub.classList.add('oih_hidden');
+                    sub.addEventListener('click', e => { if(e.target === sub) closeSub(); }); // backdrop closes
+                    el('div', 'oih_subTitle', sub, T('chooseDuration'));
+                    const row = el('div', 'oih_subRow', sub);
 
-                    const paint = sel =>
-                    {
-                        actions.innerHTML = '';
-                        const base = sel || rep;
-                        const main = el('div', 'oih_btn ' + styleFor(base), actions, '');
-                        el('span', null, main, labelFor(base) + (sel ? ' ' + (durLabel(sel) || '') : ''));
-                        const caret = el('span', 'oih_caret', main, '▾');
-                        main.addEventListener('click', e =>
-                        {
-                            e.stopPropagation();
-                            // No duration chosen yet, or the caret was clicked → (re)open the picker.
-                            if(!sel || e.target === caret) { sub.classList.remove('oih_hidden'); return; }
-                            doOpen(sel);
-                        });
-                        if(sel && nextPlanet) actions.appendChild(nextLink(sel, '»'));
-                    };
+                    const main = el('div', 'oih_btn oih_main ' + styleFor(rep), actions, '');
+                    el('span', null, main, labelFor(rep));
+                    el('span', 'oih_caret', main, '▾');
+                    main.title = T('tipOpen');
+                    main.addEventListener('click', e => { e.stopPropagation(); sub.classList.toggle('oih_hidden'); });
 
                     group.forEach((m, i) =>
                     {
-                        // Just the days (+7d/+30d/+90d), trimming the long item name.
-                        const dLabel = durLabel(m) || ('#' + (i + 1));
-                        const open = el('div', 'oih_btn oih_dur ' + styleFor(m) + (m.expiresAt > 0 ? ' oih_perish' : ''), sub, (m.expiresAt > 0 ? '⏳ ' : '') + dLabel);
+                        // Just the days (+7g/+30g), trimming the long item name.
+                        const dLabel = durLabel(m) || (m.amount ? '×' + m.amount : '#' + (i + 1));
+                        const open = el('div', 'oih_btn oih_dur ' + styleFor(m) + (m.expiresAt > 0 ? ' oih_perish' : ''), row,
+                                        (m.expiresAt > 0 ? '⏳ ' : '') + dLabel);
                         open.title = labelFor(m) + ' · ' + m.name + (m.amount ? ' ×' + m.amount : '')
-                            + (m.expiresAt > 0 ? ' · expires on ' + new Date(m.expiresAt).toLocaleString() : '');
-                        open.addEventListener('click', () => { sub.classList.add('oih_hidden'); paint(m); });
+                            + (m.expiresAt > 0 ? ' · ' + T('expiresOn') + ' ' + new Date(m.expiresAt).toLocaleString() : '');
+                        open.addEventListener('click', e => { e.stopPropagation(); closeSub(); doOpen(m); });
                     });
 
-                    // A copy with a deadline is pre-picked, so the card offers it straight away
-                    // instead of asking which duration first.
-                    paint(use.expiresAt > 0 ? use : null);
+                    // The jump to the next planet needs a concrete copy: the one a click would
+                    // reach for (perishable first, else the representative).
+                    if(nextPlanet) actions.appendChild(nextLink(use));
                 }
             });
         };
@@ -967,11 +1282,6 @@
 
         search.value = initialFilter;
         search.addEventListener('input', render);
-        chk.addEventListener('change', () =>
-        {
-            sessionStorage.setItem('oih_showShop', chk.checked ? '1' : '0');
-            render();
-        });
         render();
         if(initialFilter) requestAnimationFrame(() => search.focus());
 
@@ -1205,6 +1515,120 @@
         });
     }
 
+    // --------------------------------------------------------------------- remaining-time badges
+    // The game shows WHICH items and officers are running, never for how long: the active-item
+    // bar carries the end time in an attribute nobody reads, and the officers keep it inside a
+    // tooltip. This writes that number where the thing itself is, on every page.
+    //
+    // COMPLIANCE
+    // §1.3/§4  Nothing here talks to the server. The end times are already in the page; the only
+    //          interval is a local repaint so a countdown does not go stale, and a DOM observer
+    //          for when the game redraws the bar. No request, no auto-refresh.
+    // §1.4     Not an alarm: a label you read when you look, notifying nobody, nowhere.
+    // §1.7     It adds a badge, and never hides, resizes, moves or replaces anything the game
+    //          draws. Officers are monetized content, so their badge sits BELOW the icon, outside
+    //          it — the artwork stays untouched. Item tiles take a small corner label. The whole
+    //          thing is a switch away from off.
+    const TMR_OFF_KEY = 'oih_timers_off';
+    const timersOn = () => { try { return localStorage.getItem(TMR_OFF_KEY) !== '1'; } catch(e) { return true; } };
+
+    // Officers keep their remaining time as words inside the tooltip, in the player's language.
+    const OFFICER_RE = [
+        /(\d+)\s*(settiman\w*|weeks?|wochen?|semaines?|semanas?|hafta|tygodni\w*|недел\w*)/i,
+        /(\d+)\s*(giorn\w*|days?|tage?n?|jours?|d[ií]as?|gün|dni|dní|дн\w*|день|суток)/i,
+        /(\d+)\s*(or[ae]|hours?|stunden?|heures?|horas?|saat|godzin\w*|час\w*)/i,
+        /(\d+)\s*(minut\w*|mins?|dakika|минут\w*)/i,
+    ];
+    function officerLeft(tooltip)
+    {
+        const t = stripTags(tooltip || '');
+        for(let i = 0; i < OFFICER_RE.length; i++)
+        {
+            const m = t.match(OFFICER_RE[i]);
+            if(!m) continue;
+            const n = parseInt(m[1], 10);
+            if(!(n > 0)) continue;
+            if(i === 0) return (n * 7) + T('unitDay');   // weeks → days, one unit to compare at a glance
+            if(i === 1) return n + T('unitDay');
+            if(i === 2) return n + 'h';
+            return n + 'm';
+        }
+        return '';
+    }
+
+    // The biggest unit and nothing else: an item tile is about 34px wide, and "2g 3h" ran over
+    // its neighbours. The day letter follows the interface language (g / d / T / j).
+    function compactLeft(ms)
+    {
+        const sec = Math.floor(ms / 1000);
+        if(sec <= 0) return '';
+        const d = Math.floor(sec / 86400), h = Math.floor(sec / 3600), m = Math.floor(sec / 60);
+        if(d > 0) return d + T('unitDay');
+        if(h > 0) return h + 'h';
+        return Math.max(1, m) + 'm';
+    }
+
+    function badge(host, cls, text)
+    {
+        let b = host.querySelector(':scope > .oih_tmr');
+        if(!b)
+        {
+            host.classList.add('oih_tmrHost');
+            b = el('div', 'oih_tmr ' + cls, host, '');
+        }
+        b.textContent = text;
+        return b;
+    }
+
+    function paintTimers()
+    {
+        if(!timersOn()) { clearTimers(); return; }
+
+        // Active items: the bar entry carries the end timestamp; 'permanent' has nothing to count.
+        document.querySelectorAll('div[data-uuid][ogt-active-until]').forEach(box =>
+        {
+            const host = box.querySelector('a.active_item') || box;
+            const raw = box.getAttribute('ogt-active-until');
+            if(!raw || raw === 'permanent') return;
+            const end = parseInt(raw, 10);
+            if(!(end > 0)) return;
+            const left = compactLeft(end - Date.now());
+            if(!left) { const old = host.querySelector(':scope > .oih_tmr'); if(old) old.remove(); return; }
+            badge(host, 'oih_tmrItem' + ((end - Date.now()) < 86400000 ? ' oih_tmrSoon' : ''), left);
+        });
+
+        // Officers: the number lives in the tooltip and never changes while the page is open, so
+        // it is written once. The badge hangs below the icon and covers none of it (§1.7).
+        document.querySelectorAll('#officers a.on').forEach(a =>
+        {
+            if(a.querySelector(':scope > .oih_tmr')) return;
+            const left = officerLeft(a.getAttribute('data-tooltip-title') || a.getAttribute('title'));
+            if(left) badge(a, 'oih_tmrOfficer', left);
+        });
+    }
+
+    function clearTimers()
+    {
+        document.querySelectorAll('.oih_tmr').forEach(n => n.remove());
+        document.querySelectorAll('.oih_tmrHost').forEach(n => n.classList.remove('oih_tmrHost'));
+    }
+
+    let tmrTimer = null;
+    function startTimers()
+    {
+        try
+        {
+            injectStyle();
+            paintTimers();
+            // A local repaint keeps the countdown honest; a minute is the smallest unit shown, so
+            // that is the cadence. It touches the DOM only — never the server (§1.3).
+            if(!tmrTimer) tmrTimer = setInterval(paintTimers, 60000);
+            const bar = document.querySelector('#countdownbar') || document.querySelector('#officers') || document.body;
+            new MutationObserver(() => paintTimers()).observe(bar, { childList: true, subtree: true });
+        }
+        catch(e) { console.error('[OGItemHelper] timers failed:', e); }
+    }
+
     function start()
     {
         try
@@ -1228,5 +1652,6 @@
     }
 
     if(IS_SHOP) start();
-    else startOverview();
+    else if(IS_OVERVIEW) startOverview();
+    startTimers();
 })();
