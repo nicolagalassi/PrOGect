@@ -4,7 +4,7 @@ Mappa delle API OGame sfruttabili da PrOGect e di come usarle **in modo leggero 
 Ogni endpoint riporta il suo vincolo di conformità **al punto d'uso** (riferimenti a `AGENTS.md`).
 
 **Fonti:** `AGENTS.md` §1.3/§1.5.1/§4/§6 (autorevoli) · doc `ogame-one/docs/EXTERNALDATAEXPORT.md`
-(verificata live su Singularity `s808-en`, 13.0.0-beta) · endpoint realmente usati in `PrOGect.user.js`.
+(verificata live su Singularity `s808-en`, 13.0.0-beta) · endpoint realmente usati in `archived/progect/PrOGect.user.js`.
 
 > Regola d'oro: **una feature nuova ≈ funzione pura sui dati GIÀ idratati + un po' di UI**, non un
 > nuovo sistema di fetch/sync. Vedi "Inventario data-layer" e "Regola operativa" in fondo.
