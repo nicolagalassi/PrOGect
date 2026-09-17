@@ -35,8 +35,12 @@
     deuterium = cap/3), so metal, crystal and deuterium finds are directly comparable.
   - Histogram over the 5-100% range with a selectable slice width, the rarity bands drawn in,
     and the MOST HIT slice called out per band: "in 5-25% the peak is 12.5-15%, 7 finds".
-  - A per-day history (default 90 days, in your browser only), so today can be read against
-    yesterday, the last 7 days, or everything recorded.
+  - A per-day history, kept indefinitely and in your browser only, so today can be read against
+    yesterday, the last 7 days, or years of it. Nothing is deleted by age: a year of expeditions
+    is a normal sample to read statistics on, and the whole archive costs about 230 kB a year at
+    20 expeditions a day — a browser's 5 MB of storage holds a couple of decades of it. The only
+    thing let go is the message ids past 180 days, which exist solely to avoid counting a report
+    still sitting in the folder twice; the figures they were attached to stay.
   - A comparison ACROSS UNIVERSES, which is the one thing raw resources cannot give you: a 168M
     cap and a 43M cap have nothing in common in metal. What compares is how much of YOUR OWN cap
     an expedition brings back — caps collected divided by expeditions sent. That figure ignores
@@ -656,6 +660,12 @@
         noCapFinds:IT ? 'ritrovamenti registrati senza cap noto.' : 'finds recorded with no known cap.',
         keptDays:  IT ? 'giorni in archivio' : 'days on record',
         keepFor:   IT ? 'Conserva gli ultimi' : 'Keeps the last',
+        keepAll:   IT ? 'Niente viene cancellato: l\u2019archivio tiene tutto, anche anni. Gli id dei messaggi, che servono solo a non contare due volte un rapporto ancora in cartella, vengono lasciati andare dopo 180 giorni; i numeri restano.'
+                      : 'Nothing is deleted: the archive keeps everything, years included. Message ids — which only exist to avoid counting a report still in the folder twice — are let go after 180 days; the figures stay.',
+        archive:   IT ? 'Archivio' : 'Archive',
+        size:      IT ? 'Spazio usato' : 'Space used',
+        full:      IT ? 'Il browser ha rifiutato l\u2019ultimo salvataggio: lo spazio è esaurito. Esporta l\u2019archivio e poi cancellalo, oppure libera spazio per questo sito — finché resta pieno, le spedizioni nuove non vengono registrate.'
+                      : 'The browser refused the last save: storage is full. Export the archive and then clear it, or free space for this site — while it stays full, new expeditions are not recorded.',
         // outcome labels
         o_resource:IT ? 'Risorse' : 'Resources',
         o_darkmatter: IT ? 'Materia oscura' : 'Dark matter',
@@ -674,7 +684,20 @@
 
     // --------------------------------------------------------------------- storage
     const readJSON = (k, fb) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? fb : v; } catch(e) { return fb; } };
-    const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {} };
+    // The archive is kept for as long as the player wants it, so the browser's storage quota is
+    // a real ceiling rather than a theoretical one. A write that fails must never pass unnoticed:
+    // silently dropping today's expeditions is the one failure this tool cannot afford.
+    // Tracked per key: the settings are a few hundred bytes and will keep saving long after the
+    // archive has stopped fitting, so letting a successful write clear the flag would hide
+    // exactly the failure that matters.
+    const writeFailed = {};
+    const storageProblem = () => Object.keys(writeFailed).length > 0;
+    function writeRaw(k, raw)
+    {
+        try { localStorage.setItem(k, raw); delete writeFailed[k]; return true; }
+        catch(e) { writeFailed[k] = 1; return false; }
+    }
+    const writeJSON = (k, v) => writeRaw(k, JSON.stringify(v));
 
     // db.days[key] = { ids:[msgId], out:{outcome:count}, f:[[clientTs, resIndex, amount, capUsed, gameTier, depletion]] }
     // A find keeps its AMOUNT and the cap in force when it was read, never a percentage: the cap
@@ -684,7 +707,7 @@
 
     const CFG_DEFAULT = {
         manualCap: 0,
-        keepDays: 90,
+        keepDays: 0, // 0 = keep everything; a year of expeditions is a perfectly normal sample
         // last passive readings, each with the moment it was taken
         topScore: 0, topScoreAt: 0,
         isExplorer: null, classAt: 0,
@@ -693,6 +716,10 @@
         items: [], itemsAt: 0, itemPick: {},
     };
     let cfg = Object.assign({}, CFG_DEFAULT, readJSON(LS.cfg, {}));
+    // 90 days was this script's own first default and nothing in the UI could set it, so anyone
+    // carrying it never chose it. Statistics are read over a year as readily as over a week.
+    let cfgMigrated = false;
+    if(cfg.keepDays === 90) { cfg.keepDays = 0; cfgMigrated = true; }
     // Items used to be stored as bare ids, back when a fixed table was the only way to read one.
     if(Array.isArray(cfg.items) && typeof cfg.items[0] === 'string')
     {
@@ -701,6 +728,18 @@
     // Whether an item counts towards the cap: the player's own answer if they gave one, else
     // whether it was recognised as an expedition booster.
     const itemOn = it => cfg.itemPick[it.u] == null ? !!it.a : !!cfg.itemPick[it.u];
+
+    // How many expeditions a day holds. This used to be the length of the message-id list, which
+    // tied the COUNT to the dedupe list and meant the ids could never be dropped — and they are
+    // the one part of the archive that grows without ever being read again. The count is its own
+    // number now; days written before this carry it over from the ids they still have.
+    const dayN = day => !day ? 0 : (day.n != null ? day.n : (day.ids || []).length);
+    Object.keys(db.days).forEach(k => { const d = db.days[k]; if(d.n == null) d.n = (d.ids || []).length; });
+
+    // Message ids exist only to not count the same report twice while it is still in the game's
+    // message folder. Long after OGame has purged it there is nothing left to deduplicate
+    // against, so past this window the ids go and the day keeps its figures.
+    const ID_KEEP_DAYS = 180;
     let ui = Object.assign({ view: 'dist', scope: 'today', res: 'all', slice: 2.5 }, readJSON(LS.ui, {}));
     let uiState = localStorage.getItem(LS.state) || 'closed'; // closed by default → covers nothing (§1.7)
 
@@ -734,9 +773,10 @@
         try
         {
             const raw = JSON.stringify(all);
-            if(GM_OK) GM_setValue(LS.roll, raw); else localStorage.setItem(LS.roll, raw);
+            if(GM_OK) { GM_setValue(LS.roll, raw); delete writeFailed[LS.roll]; }
+            else writeRaw(LS.roll, raw);
         }
-        catch(e) {}
+        catch(e) { writeFailed[LS.roll] = 1; }
     }
 
     // The cap feeds every percentage in the roll-up, so any settings change refreshes it.
@@ -745,14 +785,31 @@
     // Day keys are zero-padded, so a plain string compare is a date compare.
     function dropOldDays()
     {
-        const limit = shiftKey(Math.max(1, cfg.keepDays) - 1);
+        if(!(cfg.keepDays > 0)) return 0; // keeping everything is the default
+        const limit = shiftKey(cfg.keepDays - 1);
         let dropped = 0;
         Object.keys(db.days).forEach(k => { if(k < limit) { delete db.days[k]; dropped++; } });
+        return dropped;
+    }
+    // Everything the archive no longer needs, without losing a single figure.
+    function dropOldIds()
+    {
+        const limit = shiftKey(ID_KEEP_DAYS - 1);
+        let dropped = 0;
+        Object.keys(db.days).forEach(k =>
+        {
+            const d = db.days[k];
+            if(k >= limit || !d.ids) return;
+            if(d.n == null) d.n = d.ids.length;
+            delete d.ids;
+            dropped++;
+        });
         return dropped;
     }
     function saveDb()
     {
         dropOldDays();
+        dropOldIds();
         writeJSON(LS.db, db);
         rollUp(); // this universe's line in the shared comparison
     }
@@ -1023,9 +1080,11 @@
             if(!ts) return;
             const key = dayKeyOf(ts);
 
-            const day = db.days[key] = db.days[key] || { ids: [], out: {}, f: [] };
+            const day = db.days[key] = db.days[key] || { n: 0, ids: [], out: {}, f: [] };
+            day.ids = day.ids || [];
             if(day.ids.indexOf(id) >= 0) return; // already counted — re-reading a page is free
             day.ids.push(id);
+            day.n = (day.n || 0) + 1;
             added++;
 
             const outcome = outcomeOf(d);
@@ -1093,7 +1152,7 @@
         {
             const day = db.days[k];
             if(!day) return;
-            expes += (day.ids || []).length;
+            expes += dayN(day);
             Object.keys(day.out || {}).forEach(o => { out[o] = (out[o] || 0) + day.out[o]; });
             (day.f || []).forEach(f =>
             {
@@ -1211,7 +1270,7 @@
     // account, and THAT is where the item and the cap show up.
     function dayRoll(key, capMax)
     {
-        const day = db.days[key] || { ids: [], out: {}, f: [] };
+        const day = db.days[key] || { n: 0, out: {}, f: [] };
         let caps = 0, abs = 0, finds = 0;
         const t = [0, 0, 0];
         (day.f || []).forEach(f =>
@@ -1222,7 +1281,7 @@
             if(r.pct != null) caps += r.pct / 100;
             if(r.tier >= 0) t[r.tier]++;
         });
-        return [(day.ids || []).length, finds, Math.round(caps * 1000) / 1000, abs, t[0], t[1], t[2]];
+        return [dayN(day), finds, Math.round(caps * 1000) / 1000, abs, t[0], t[1], t[2]];
     }
     const R_EXPES = 0, R_FINDS = 1, R_CAPS = 2, R_ABS = 3, R_T0 = 4;
 
@@ -1269,13 +1328,17 @@
         }
         entry.seen = Date.now();
         all.uni[UNI.key] = entry;
-        // Another universe's days age out on the same rule as this one's.
-        const limit = shiftKey(Math.max(1, cfg.keepDays) - 1);
-        Object.keys(all.uni).forEach(k =>
+        // Another universe's days age out on the same rule as this one's — which, by default,
+        // means they do not: a comparison over a year is exactly what this view is for.
+        if(cfg.keepDays > 0)
         {
-            const u = all.uni[k];
-            Object.keys(u.d || {}).forEach(day => { if(day < limit) delete u.d[day]; });
-        });
+            const limit = shiftKey(cfg.keepDays - 1);
+            Object.keys(all.uni).forEach(k =>
+            {
+                const u = all.uni[k];
+                Object.keys(u.d || {}).forEach(day => { if(day < limit) delete u.d[day]; });
+            });
+        }
         writeRoll(all);
     }
 
@@ -1326,14 +1389,14 @@
     // One day, summarised for the history list.
     function daySummary(key, capNow)
     {
-        const day = db.days[key] || { ids: [], out: {}, f: [] };
+        const day = db.days[key] || { n: 0, out: {}, f: [] };
         const rows = (day.f || []).map(f => decorate(f, capNow));
         const tiers = [0, 0, 0];
         let sum = 0;
         rows.forEach(r => { if(r.tier >= 0) tiers[r.tier]++; sum += r.amount; });
         const h = histogram(rows, ui.slice);
         return {
-            key: key, expes: (day.ids || []).length, finds: rows.length, tiers: tiers, sum: sum,
+            key: key, expes: dayN(day), finds: rows.length, tiers: tiers, sum: sum,
             peak: peakOf(h.bins, null), nothing: day.out.nothing || 0,
         };
     }
@@ -1551,6 +1614,7 @@
         if(stat.noPct) bad.push('<b>' + stat.noPct + '</b> ' + T.noCapFinds);
         if(bad.length) el('div', 'ogxs_warn', body, bad.join('<br>'));
         if(!cap.known) el('div', 'ogxs_warn', body, T.capUnknown);
+        if(storageProblem()) el('div', 'ogxs_warn', body, T.full);
     }
 
     function renderDays(body)
@@ -1624,7 +1688,7 @@
         if(!rows.length)
         {
             // Say what the archive does hold, so an empty range is never mistaken for lost data.
-            const held = Object.keys(db.days).reduce((n, k) => n + (db.days[k].ids || []).length, 0);
+            const held = Object.keys(db.days).reduce((n, k) => n + dayN(db.days[k]), 0);
             el('div', 'ogxs_empty', body, T.noUniData +
                 (held ? '<br><br>' + T.heldHere.replace('{n}', '<b>' + held + '</b>').replace('{d}', '<b>' + Object.keys(db.days).length + '</b>') : ''));
             return;
@@ -1780,7 +1844,23 @@
             saveDb(); render();
         });
 
-        el('div', 'ogxs_note', body).textContent = T.keepFor + ' ' + cfg.keepDays + ' ' + (IT ? 'giorni' : 'days') + '.';
+        // What the archive holds and what it costs, since it is kept indefinitely.
+        const dayKeys = sortedDays();
+        const expes = dayKeys.reduce((n, k) => n + dayN(db.days[k]), 0);
+        const finds = dayKeys.reduce((n, k) => n + (db.days[k].f || []).length, 0);
+        let bytes = 0;
+        try { bytes = (localStorage.getItem(LS.db) || '').length; } catch(e) {}
+
+        el('div', 'ogxs_sec', body).textContent = T.archive;
+        const kv2 = (k, v) => { const d = el('div', 'ogxs_kv', body); el('span', '', d).textContent = k; el('b', '', d).textContent = v; };
+        kv2(T.keptDays, dayKeys.length + (dayKeys.length ? '  (' + prettyDay(dayKeys[0]) + ' \u2192 ' + prettyDay(dayKeys[dayKeys.length - 1]) + ')' : ''));
+        kv2(T.expes, fmtInt(expes));
+        kv2(T.finds, fmtInt(finds));
+        kv2(T.size, bytes < 1024 ? bytes + ' B' : (Math.round(bytes / 102.4) / 10) + ' kB');
+        el('div', 'ogxs_note', body).textContent = cfg.keepDays > 0
+            ? T.keepFor + ' ' + cfg.keepDays + ' ' + (IT ? 'giorni' : 'days') + '.'
+            : T.keepAll;
+        if(storageProblem()) el('div', 'ogxs_warn', body, T.full);
     }
 
     // Writes a file to the player's own disk. Nothing is uploaded anywhere (§1.9).
@@ -1804,7 +1884,7 @@
     function render()
     {
         if(!wrap) return;
-        const todayCount = (db.days[todayKey()] || { ids: [] }).ids.length;
+        const todayCount = dayN(db.days[todayKey()]);
 
         tab.innerHTML = '';
         el('span', '', tab).textContent = T.title;
@@ -1873,9 +1953,11 @@
         try
         {
             build();
-            // Retention on the way in as well: an install that stops reading reports would
-            // otherwise keep every day it ever saw.
-            if(dropOldDays()) saveDb();
+            if(cfgMigrated) { cfgMigrated = false; saveCfg(); }
+            // Grooming runs on load: with nothing being deleted by age any more, the message ids
+            // are the only part that would otherwise grow forever, and no new report is needed
+            // to know that a day has aged past the dedupe window.
+            if(dropOldDays() + dropOldIds()) saveDb();
             rollUp(); // whatever is already on record belongs in the comparison
             readSources();
             ingestMessages();
