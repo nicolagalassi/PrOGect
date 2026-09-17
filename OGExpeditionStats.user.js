@@ -355,6 +355,7 @@
         .ogxs_src.ogxs_ok>span:first-child{color:#3BE8B0}
         .ogxs_src>span:nth-child(2){flex:1 1 auto;min-width:0}
         .ogxs_src b{font-family:var(--mono);font-weight:400;color:var(--cream)}
+        .ogxs_age{flex:0 0 auto;font-family:var(--mono);font-size:9.5px;color:var(--faint)}
         .ogxs_src a{color:var(--acc);text-decoration:none}
         .ogxs_src a:hover{color:var(--acc-hi);text-decoration:underline}
         .ogxs_foot{
@@ -394,6 +395,35 @@
     };
     const int = v => Math.round(num(v));
     const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+    // The biggest number in a string, read token by token. A cell that holds several numbers
+    // must never be read as one: "4.863.506.275" next to a "+6.529.473" delta concatenates
+    // into a figure that is wrong by three orders of magnitude.
+    const maxNumber = str =>
+    {
+        let best = 0;
+        (String(str == null ? '' : str).match(/\d[\d.,\u00A0\u202F' ]*/g) || []).forEach(tok => { best = Math.max(best, int(tok)); });
+        return best;
+    };
+    // An element's OWN text, ignoring anything another tool injected into it as a child.
+    const ownText = node =>
+    {
+        if(!node) return '';
+        let out = '';
+        for(let i = 0; i < node.childNodes.length; i++) if(node.childNodes[i].nodeType === 3) out += node.childNodes[i].textContent;
+        return out;
+    };
+    // The score inside a cell other tools have written into. Each element's own text is parsed
+    // on its own and the largest result wins, because flattening the cell to one string is the
+    // whole problem: "4.863.506.275" and a "+6.529.473" delta sitting next to each other with
+    // no separator between them parse as one nonsense number whichever order they are in.
+    // A delta is always smaller than the score it annotates, so the largest is the score.
+    const numberIn = cell =>
+    {
+        if(!cell) return 0;
+        let best = maxNumber(ownText(cell));
+        cell.querySelectorAll('*').forEach(n => { best = Math.max(best, maxNumber(ownText(n))); });
+        return best;
+    };
     const fmtInt = n => Math.round(n || 0).toLocaleString();
     const fmtShort = n =>
     {
@@ -416,6 +446,18 @@
         return (s === '' ? '0' : s).replace('.', DEC) + '%';
     };
     const pad2 = n => (n < 10 ? '0' : '') + n;
+    // How old a reading is. An item boost expires and the top-1 score moves, so a cap computed
+    // from a week-old reading is worth being told about.
+    const ago = ts =>
+    {
+        if(!ts) return '';
+        const m = Math.floor((Date.now() - ts) / 60000);
+        if(m < 1) return T.justNow;
+        if(m < 60) return m + 'm';
+        const h = Math.floor(m / 60);
+        if(h < 24) return h + 'h';
+        return Math.floor(h / 24) + (IT ? 'g' : 'd');
+    };
 
     // Server day. OGame reports carry a client-side timestamp; the game's own day boundary is
     // the SERVER's, so the timestamp is shifted by the whole-hour difference the page exposes
@@ -501,6 +543,7 @@
         lfBoost:   IT ? 'Bonus LF spedizioni' : 'LF expedition bonus',
         items:     IT ? 'Item attivi' : 'Active items',
         never:     IT ? 'mai letto' : 'never read',
+        justNow:   IT ? 'ora' : 'now',
         step:      IT ? 'Scalino' : 'Step',
         calib:     IT ? 'Calibrazione dai rapporti' : 'Calibration from the reports',
         calibTT:   IT ? 'Ogni rapporto porta la propria rarità: rarità + importo stringono il cap fra due valori.'
@@ -620,6 +663,48 @@
         catch(e) { return ''; }
     };
 
+    // Which expedition boosters are RUNNING. The bar that lists them has changed shape between
+    // clients, so nothing here rests on a single selector: any element carrying a known booster
+    // id is taken, and failing that the bar's own markup is searched for those ids — they are
+    // 40-hex constants, so finding one is unambiguous.
+    // The overview is the only page this may read. On the shop page the very same id appears for
+    // an item you merely OWN, which says nothing about what is active.
+    const ITEM_ATTRS = ['data-uuid', 'ref', 'data-item', 'data-itemid', 'data-item-id'];
+    let deepScans = 0; // the text search is a fallback, not something to repeat on every mutation
+    function readActiveItems()
+    {
+        const bar = document.querySelector('#buffBar, [id*="buffBar"], [class*="buffBar"]');
+        const scope = bar || document.querySelector('#overviewcomponent') || document.body;
+        const found = {};
+
+        scope.querySelectorAll('[' + ITEM_ATTRS.join('],[') + ']').forEach(n =>
+        {
+            ITEM_ATTRS.forEach(a =>
+            {
+                const v = n.getAttribute(a);
+                if(v && ITEM_BOOST[v]) found[v] = 1;
+            });
+        });
+
+        if(!Object.keys(found).length)
+        {
+            // Nothing matched by attribute. Either no booster is running — the common case, and a
+            // perfectly good answer — or this client hangs the id somewhere else. Searching the
+            // bar's markup settles it; over the whole page it is a heavier read, so it is capped.
+            if(bar || deepScans < 3)
+            {
+                if(!bar) deepScans++;
+                const html = scope.innerHTML || '';
+                Object.keys(ITEM_BOOST).forEach(u => { if(html.indexOf(u) >= 0) found[u] = 1; });
+            }
+            // A page still building its bar is not an empty bar: say nothing rather than record
+            // "no items" over a reading that was right.
+            else if(!bar && !cfg.itemsAt) return null;
+        }
+
+        return Object.keys(found).sort();
+    }
+
     function readSources()
     {
         let changed = false;
@@ -640,22 +725,18 @@
             if(isExpl !== null && isExpl !== cfg.isExplorer) { cfg.isExplorer = isExpl; cfg.classAt = Date.now(); changed = true; }
         }
 
-        // Active items — the buff bar on the overview lists what is running right now.
+        // Active items — the buff bar on the overview is where the running ones are listed.
         if(page === 'overview')
         {
-            const found = [];
-            document.querySelectorAll('#buffBar [data-uuid], [id*="buffBar"] [data-uuid], [class*="buffBar"] [data-uuid]').forEach(n =>
+            const boosters = readActiveItems();
+            if(boosters)
             {
-                const u = n.dataset.uuid;
-                if(u && found.indexOf(u) < 0) found.push(u);
-            });
-            // Only expedition boosters matter here; every other buff is none of this tool's business.
-            const boosters = found.filter(u => ITEM_BOOST[u]).sort();
-            if(boosters.join(',') !== (cfg.items || []).join(','))
-            {
-                cfg.items = boosters; cfg.itemsAt = Date.now(); changed = true;
+                if(boosters.join(',') !== (cfg.items || []).join(','))
+                {
+                    cfg.items = boosters; cfg.itemsAt = Date.now(); changed = true;
+                }
+                else if(!cfg.itemsAt) { cfg.itemsAt = Date.now(); changed = true; }
             }
-            else if(!cfg.itemsAt) { cfg.itemsAt = Date.now(); changed = true; }
         }
 
         // Lifeform bonuses — the totals the bonus page prints per category.
@@ -692,7 +773,9 @@
                     const iconRank = (line.querySelector('.highscorePositionIcon') || {}).className || '';
                     const rank = int(posTxt) || int(iconRank.replace(/\D/g, ''));
                     if(rank !== 1) return;
-                    const score = int(txt(line.querySelector('.score')));
+                    // Other tools write into this cell: OGLight appends a since-last-read delta
+                    // ("+6.529.473") inside it, and the game's own Δ column can too.
+                    const score = numberIn(line.querySelector('.score'));
                     if(score > 0 && score !== cfg.topScore) { cfg.topScore = score; cfg.topScoreAt = Date.now(); changed = true; }
                     else if(score > 0 && !cfg.topScoreAt) { cfg.topScoreAt = Date.now(); changed = true; }
                 });
@@ -1206,7 +1289,7 @@
 
         // ---- the factors, each one named ----
         el('div', 'ogxs_sec', body).textContent = T.sources;
-        const src = (ok, label, value, link, linkLabel) =>
+        const src = (ok, label, value, link, linkLabel, at) =>
         {
             const d = el('div', 'ogxs_src' + (ok ? ' ogxs_ok' : ''), body);
             el('span', '', d).textContent = ok ? '●' : '○';
@@ -1214,17 +1297,18 @@
             mid.innerHTML = label + (value ? ': <b>' + value + '</b>' : '');
             if(!ok && link) { const a = el('a', '', d); a.href = link; a.textContent = linkLabel; }
             else if(!ok && linkLabel) el('span', '', d).textContent = linkLabel;
+            else if(ok && at) el('span', 'ogxs_age', d).textContent = ago(at);
             return d;
         };
         const gameUrl = c => 'https://' + HOST + '/game/index.php?page=ingame&component=' + c;
 
-        src(cfg.topScore > 0, T.topScore, cfg.topScore ? fmtInt(cfg.topScore) : '', gameUrl('highscore&category=1&type=0'), T.openRank);
+        src(cfg.topScore > 0, T.topScore, cfg.topScore ? fmtInt(cfg.topScore) : '', gameUrl('highscore&category=1&type=0'), T.openRank, cfg.topScoreAt);
         src(true, T.step, fmtInt(cap.step.max) + (cap.step.topScore === Infinity ? ' (max)' : ' (≤ ' + fmtShort(cap.step.topScore) + ')'));
-        src(cfg.isExplorer !== null, T.cls, cfg.isExplorer === null ? '' : (cfg.isExplorer ? T.explorer + ' (×3 ×' + cfg.speed + ')' : T.notExpl + ' (×2)'), '', T.unknownCls);
+        src(cfg.isExplorer !== null, T.cls, cfg.isExplorer === null ? '' : (cfg.isExplorer ? T.explorer + ' (×3 ×' + cfg.speed + ')' : T.notExpl + ' (×2)'), '', T.unknownCls, cfg.classAt);
         src(cfg.speed > 0, T.speed, '×' + cfg.speed);
-        src(cfg.lfAt > 0, T.lfBoost, fmtPct(cfg.lfBoost), '', T.openLf);
-        if(cfg.isExplorer) src(cfg.lfAt > 0, T.lfClass, fmtPct(cfg.lfClass), '', T.openLf);
-        src(cfg.itemsAt > 0, T.items, (cfg.items || []).length + ' (×' + (Math.round(cap.itemBoost * 100) / 100) + ')', gameUrl('overview'), T.openOver);
+        src(cfg.lfAt > 0, T.lfBoost, fmtPct(cfg.lfBoost), '', T.openLf, cfg.lfAt);
+        if(cfg.isExplorer) src(cfg.lfAt > 0, T.lfClass, fmtPct(cfg.lfClass), '', T.openLf, cfg.lfAt);
+        src(cfg.itemsAt > 0, T.items, (cfg.items || []).length + ' (×' + (Math.round(cap.itemBoost * 100) / 100) + ')', gameUrl('overview'), T.openOver, cfg.itemsAt);
 
         // ---- calibration from the reports themselves ----
         const g = gather(ui.scope === 'all' ? '7' : ui.scope, 'all');
