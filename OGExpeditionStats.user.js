@@ -130,7 +130,10 @@
         { topScore: 100000000, max: 4200000 },
         { topScore: Infinity,  max: 5000000 },
     ];
-    // Expedition-result items, by the uuid the buff bar carries, and what each adds.
+    // Expedition-result items by id, and what each adds. This is a FAST PATH, not a verdict:
+    // OGame keeps adding variants (the same amplifier comes in several tiers and durations, each
+    // with its own id), so an id missing from this list means nothing — readActiveItems falls
+    // back to what the item says about itself.
     const ITEM_BOOST = {
         '83e5d5b5e3e6ba16eb73edd6731a25ed1feff8a1': 0.10,
         'f2f1bf68ded681adf6b45b24a8084b3861a5ce94': 0.15,
@@ -140,6 +143,12 @@
         '23c859c9f8b4ea7c562719ac829bfc9799250b33': 0.35,
         'a5ab323cadd8c172957451f8ddd9950f1c101966': 0.40,
     };
+
+    // "expedition" in the languages OGame ships in. The buff bar names every item in the
+    // player's own language, so this word — next to a percentage — is what identifies a booster
+    // whose id this script has never seen. A miss is visible and fixable: every active item is
+    // listed in the cap view and can be ticked by hand.
+    const EXPE_WORD = /(exp[eé]d|sped|ekspe|wypraw|k[ae][sş]if|tutkimus|экспед|експед|αποστολ)/i;
 
     // Expedition outcomes, keyed the way OGame names them in `rawExpeditionresult`.
     const OUTCOMES = ['resource', 'darkmatter', 'ship', 'item', 'trader', 'pirate', 'alien', 'early', 'late', 'blackhole', 'nothing'];
@@ -277,7 +286,8 @@
         }
         .ogxs_bandName em{display:block;font-family:var(--mono);font-style:normal;font-size:9px;color:var(--faint);letter-spacing:0}
         .ogxs_bandMain{flex:1 1 auto;min-width:0}
-        .ogxs_bandPeak{font-family:var(--mono);font-size:12px;color:var(--acc-hi);white-space:nowrap}
+        .ogxs_bandPeak{font-family:var(--mono);font-size:11px;color:var(--faint);white-space:nowrap}
+        .ogxs_bandPeak b{font-weight:400;font-size:13px;color:var(--acc-hi)}
         .ogxs_bandAbs{font-size:9.5px;color:var(--faint);font-family:var(--mono);margin-top:1px}
         .ogxs_bandCount{flex:0 0 auto;text-align:right;font-family:var(--mono);font-size:11px;color:var(--mute)}
         .ogxs_bandCount em{display:block;font-style:normal;font-size:9px;color:var(--faint)}
@@ -356,6 +366,17 @@
         .ogxs_src>span:nth-child(2){flex:1 1 auto;min-width:0}
         .ogxs_src b{font-family:var(--mono);font-weight:400;color:var(--cream)}
         .ogxs_age{flex:0 0 auto;font-family:var(--mono);font-size:9.5px;color:var(--faint)}
+        .ogxs_item{
+            display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;
+            padding:3px 5px 3px 17px;font-size:10.5px;color:var(--faint);border-bottom:1px solid rgba(38,52,68,.5);
+        }
+        .ogxs_item:hover{color:var(--cream);background:var(--row)}
+        .ogxs_item.ogxs_on{color:var(--mute)}
+        .ogxs_tick{flex:0 0 auto;font-size:12px;line-height:1}
+        .ogxs_item.ogxs_on .ogxs_tick{color:var(--acc)}
+        .ogxs_itemName{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .ogxs_item b{flex:0 0 auto;font-family:var(--mono);font-weight:400;color:var(--cream)}
+        .ogxs_item.ogxs_on b{color:var(--acc-hi)}
         .ogxs_src a{color:var(--acc);text-decoration:none}
         .ogxs_src a:hover{color:var(--acc-hi);text-decoration:underline}
         .ogxs_foot{
@@ -505,6 +526,8 @@
         crystal:   IT ? 'Cristallo' : 'Crystal',
         deut:      IT ? 'Deuterio' : 'Deuterium',
         slice:     IT ? 'Fetta' : 'Slice',
+        sliceTT:   IT ? 'Larghezza di una barra dell\u2019istogramma. Con 2,5% ogni barra conta i ritrovamenti caduti in una finestra larga 2,5 punti di cap: più stretta = più dettaglio, più rumore.'
+                      : 'Width of one histogram bar. At 2.5% each bar counts the finds that landed in a 2.5-point window of the cap: narrower = more detail, more noise.',
         mostHit:   IT ? 'Fetta più colpita' : 'Most hit slice',
         ofFinds:   IT ? 'dei ritrovamenti' : 'of the finds',
         finds:     IT ? 'ritrovamenti' : 'finds',
@@ -514,6 +537,8 @@
         rare:      IT ? 'Raro' : 'Rare',
         epic:      IT ? 'Epico' : 'Epic',
         peak:      IT ? 'picco' : 'peak',
+        meanShort: IT ? 'media' : 'avg',
+        spread:    IT ? 'da' : 'range',
         avg:       IT ? 'Media' : 'Average',
         median:    IT ? 'Mediana' : 'Median',
         best:      IT ? 'Migliore' : 'Best',
@@ -542,6 +567,8 @@
         lfClass:   IT ? 'Bonus LF classe' : 'LF class bonus',
         lfBoost:   IT ? 'Bonus LF spedizioni' : 'LF expedition bonus',
         items:     IT ? 'Item attivi' : 'Active items',
+        itemHint:  IT ? 'Spunta un item se amplifica le spedizioni e non è stato riconosciuto.'
+                      : 'Tick an item if it boosts expeditions and was not recognised.',
         never:     IT ? 'mai letto' : 'never read',
         justNow:   IT ? 'ora' : 'now',
         step:      IT ? 'Scalino' : 'Step',
@@ -597,9 +624,17 @@
         isExplorer: null, classAt: 0,
         speed: 1,
         lfClass: 0, lfBoost: 0, lfAt: 0,
-        items: [], itemsAt: 0,
+        items: [], itemsAt: 0, itemPick: {},
     };
     let cfg = Object.assign({}, CFG_DEFAULT, readJSON(LS.cfg, {}));
+    // Items used to be stored as bare ids, back when a fixed table was the only way to read one.
+    if(Array.isArray(cfg.items) && typeof cfg.items[0] === 'string')
+    {
+        cfg.items = cfg.items.map(u => ({ u: u, n: '', p: Math.round((ITEM_BOOST[u] || 0) * 100), a: true }));
+    }
+    // Whether an item counts towards the cap: the player's own answer if they gave one, else
+    // whether it was recognised as an expedition booster.
+    const itemOn = it => cfg.itemPick[it.u] == null ? !!it.a : !!cfg.itemPick[it.u];
     let ui = Object.assign({ view: 'dist', scope: 'today', res: 'all', slice: 2.5 }, readJSON(LS.ui, {}));
     let uiState = localStorage.getItem(LS.state) || 'closed'; // closed by default → covers nothing (§1.7)
 
@@ -643,7 +678,7 @@
 
         const explorer = cfg.isExplorer === true;
         out.base = explorer ? out.step.max * 3 * (cfg.speed || 1) : out.step.max * 2;
-        (cfg.items || []).forEach(uuid => { if(ITEM_BOOST[uuid]) out.itemBoost += ITEM_BOOST[uuid]; });
+        (cfg.items || []).forEach(it => { if(itemOn(it)) out.itemBoost += (it.p || 0) / 100; });
         // The explorer-class lifeform bonus amplifies the discoverer class itself, so it is
         // applied only to a discoverer. OGLight multiplies it in for every class; on any other
         // class that inflates the cap by a bonus the account cannot use.
@@ -663,14 +698,46 @@
         catch(e) { return ''; }
     };
 
-    // Which expedition boosters are RUNNING. The bar that lists them has changed shape between
-    // clients, so nothing here rests on a single selector: any element carrying a known booster
-    // id is taken, and failing that the bar's own markup is searched for those ids — they are
-    // 40-hex constants, so finding one is unambiguous.
-    // The overview is the only page this may read. On the shop page the very same id appears for
-    // an item you merely OWN, which says nothing about what is active.
+    // Which expedition boosters are RUNNING, read off the buff bar. Two things had to be
+    // loosened here against a real account: the bar spells the id differently depending on the
+    // client (`data-uuid` on the wrapper, `ref` on the link), and the id itself may be one this
+    // script has never seen — the account that reported this was running
+    // "Amplificatore risorse per spedizioni (40 %) Bronzo", whose id is in no OGLight table.
+    // So an item is identified by what it declares: its own tooltip carries the name and the
+    // percentage, in the player's language. Everything found is reported, flagged with whether
+    // it was recognised, and the cap view lets the player correct the flag.
+    // The shop page is deliberately excluded: there the same id appears for an item you merely
+    // OWN, which says nothing about what is active.
     const ITEM_ATTRS = ['data-uuid', 'ref', 'data-item', 'data-itemid', 'data-item-id'];
-    let deepScans = 0; // the text search is a fallback, not something to repeat on every mutation
+    const ITEM_ID = /^[0-9a-f]{40}$/i;
+    const attrOf = (node, name) => (node && node.getAttribute && node.getAttribute(name)) || '';
+
+    function parseItem(node)
+    {
+        let uuid = '';
+        for(let i = 0; i < ITEM_ATTRS.length && !uuid; i++)
+        {
+            const v = attrOf(node, ITEM_ATTRS[i]);
+            if(ITEM_ID.test(v)) uuid = v.toLowerCase();
+        }
+        if(!uuid) return null;
+
+        // The tooltip is "<name>|<html description>", on the element itself or on the link in it.
+        let tip = attrOf(node, 'data-tooltip-title');
+        if(!tip) tip = attrOf(node.querySelector && node.querySelector('[data-tooltip-title]'), 'data-tooltip-title');
+        const name = (tip.split('|')[0] || '').replace(/\s+/g, ' ').trim();
+
+        const known = ITEM_BOOST[uuid];
+        // The percentage in the item's own NAME ("... (40 %) Bronzo"), which is the effect; the
+        // description also carries a price and a duration, so the name is read first.
+        const m = (name || tip).match(/(\d+(?:[.,]\d+)?)\s*%/);
+        const pct = known != null ? Math.round(known * 100) : (m ? num(m[1]) : 0);
+        if(!pct) return null;
+
+        return { u: uuid, n: name.slice(0, 48), p: pct, a: known != null || EXPE_WORD.test(tip) };
+    }
+
+    let deepScans = 0; // the text search is a last resort, not something to repeat every mutation
     function readActiveItems()
     {
         const bar = document.querySelector('#buffBar, [id*="buffBar"], [class*="buffBar"]');
@@ -679,30 +746,32 @@
 
         scope.querySelectorAll('[' + ITEM_ATTRS.join('],[') + ']').forEach(n =>
         {
-            ITEM_ATTRS.forEach(a =>
-            {
-                const v = n.getAttribute(a);
-                if(v && ITEM_BOOST[v]) found[v] = 1;
-            });
+            const it = parseItem(n);
+            // The wrapper and the link inside it carry the same id; keep whichever read a name.
+            if(it && (!found[it.u] || (!found[it.u].n && it.n))) found[it.u] = it;
         });
 
         if(!Object.keys(found).length)
         {
-            // Nothing matched by attribute. Either no booster is running — the common case, and a
-            // perfectly good answer — or this client hangs the id somewhere else. Searching the
-            // bar's markup settles it; over the whole page it is a heavier read, so it is capped.
+            // Nothing matched. Either no booster is running — the common case, and a perfectly
+            // good answer — or this client hangs the id somewhere unusual. Searching the bar's
+            // markup for the ids we do know settles that; over the whole page it is a heavier
+            // read, so it is capped.
             if(bar || deepScans < 3)
             {
                 if(!bar) deepScans++;
                 const html = scope.innerHTML || '';
-                Object.keys(ITEM_BOOST).forEach(u => { if(html.indexOf(u) >= 0) found[u] = 1; });
+                Object.keys(ITEM_BOOST).forEach(u =>
+                {
+                    if(html.indexOf(u) >= 0) found[u] = { u: u, n: '', p: Math.round(ITEM_BOOST[u] * 100), a: true };
+                });
             }
             // A page still building its bar is not an empty bar: say nothing rather than record
             // "no items" over a reading that was right.
             else if(!bar && !cfg.itemsAt) return null;
         }
 
-        return Object.keys(found).sort();
+        return Object.keys(found).sort().map(u => found[u]);
     }
 
     function readSources()
@@ -731,7 +800,8 @@
             const boosters = readActiveItems();
             if(boosters)
             {
-                if(boosters.join(',') !== (cfg.items || []).join(','))
+                const sig = list => list.map(i => i.u + ':' + i.p + ':' + (i.a ? 1 : 0)).join(',');
+                if(sig(boosters) !== sig(cfg.items || []))
                 {
                     cfg.items = boosters; cfg.itemsAt = Date.now(); changed = true;
                 }
@@ -1103,8 +1173,10 @@
         el('span', 'ogxs_chipLabel', r2).textContent = T.res;
         [['all', T.allRes], ['metal', T.metal], ['crystal', T.crystal], ['deut', T.deut]].forEach(s =>
             chip(r2, s[1], ui.res === s[0], () => { ui.res = s[0]; saveUi(); render(); }));
-        el('span', 'ogxs_chipLabel', r2).textContent = T.slice;
-        [1, 2.5, 5].forEach(w => chip(r2, fmtPct(w), ui.slice === w, () => { ui.slice = w; saveUi(); render(); }));
+        const sliceLabel = el('span', 'ogxs_chipLabel', r2);
+        sliceLabel.textContent = T.slice;
+        sliceLabel.title = T.sliceTT;
+        [1, 2.5, 5].forEach(w => chip(r2, fmtPct(w), ui.slice === w, () => { ui.slice = w; saveUi(); render(); }, T.sliceTT));
     }
 
     function renderDist(body)
@@ -1175,10 +1247,17 @@
 
         // ---- one row per band: this is the "inside 5-25, what actually paid" readout ----
         const bands = el('div', 'ogxs_bands', body);
+        // Per band: the average is what the panel leads with — "commons pay 15% of the cap on
+        // average" is the sentence people actually want — with the most hit slice behind it.
+        const byTier = [[], [], []];
+        g.rows.forEach(r => { if(r.tier >= 0 && r.pct != null) byTier[r.tier].push(r.pct); });
+        const mean = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+
         TIERS.forEach((band, t) =>
         {
             const p = peakOf(h.bins, t);
             const count = stat.tiers[t];
+            const avg = mean(byTier[t]);
             const row = el('div', 'ogxs_bandRow', bands);
             row.setAttribute('data-t', t);
             el('i', 'ogxs_dot', row);
@@ -1186,12 +1265,17 @@
             name.innerHTML = TIER_NAME[t] + '<em>' + band.from + '–' + band.to + '%</em>';
             const main = el('div', 'ogxs_bandMain', row);
             const pk = el('div', 'ogxs_bandPeak', main);
-            pk.textContent = p ? T.peak + ' ' + fmtPct(p.from) + ' – ' + fmtPct(p.to) + '  (' + p.count + ')' : '—';
-            if(p && cap.known)
+            if(count)
             {
+                pk.innerHTML = '<b>' + T.meanShort + ' ' + fmtPct(avg) + '</b>' +
+                    (p ? '  ·  ' + T.peak + ' ' + fmtPct(p.from) + '–' + fmtPct(p.to) + ' ×' + p.count : '');
+                const lo = Math.min.apply(null, byTier[t]), hi = Math.max.apply(null, byTier[t]);
                 el('div', 'ogxs_bandAbs', main).textContent =
-                    fmtShort(absOf(p.from, cap.max, res)) + ' – ' + fmtShort(absOf(p.to, cap.max, res)) + ' ' + RES_NAME[res].toLowerCase();
+                    (cap.known ? '\u2248 ' + fmtShort(absOf(avg, cap.max, res)) + ' ' + RES_NAME[res].toLowerCase() : '') +
+                    // A spread only says something once there are two finds to spread between.
+                    (count > 1 && hi > lo ? (cap.known ? '  ·  ' : '') + T.spread + ' ' + fmtPct(lo) + '–' + fmtPct(hi) : '');
             }
+            else pk.textContent = '—';
             const share = el('div', 'ogxs_share', main);
             el('i', '', share).style.width = (stat.withPct ? (count / stat.withPct) * 100 : 0) + '%';
             const c = el('div', 'ogxs_bandCount', row);
@@ -1308,7 +1392,26 @@
         src(cfg.speed > 0, T.speed, '×' + cfg.speed);
         src(cfg.lfAt > 0, T.lfBoost, fmtPct(cfg.lfBoost), '', T.openLf, cfg.lfAt);
         if(cfg.isExplorer) src(cfg.lfAt > 0, T.lfClass, fmtPct(cfg.lfClass), '', T.openLf, cfg.lfAt);
-        src(cfg.itemsAt > 0, T.items, (cfg.items || []).length + ' (×' + (Math.round(cap.itemBoost * 100) / 100) + ')', gameUrl('overview'), T.openOver, cfg.itemsAt);
+        const itemList = cfg.items || [];
+        const itemsOn = itemList.filter(itemOn).length;
+        src(cfg.itemsAt > 0, T.items, itemsOn + '/' + itemList.length + ' (×' + (Math.round(cap.itemBoost * 100) / 100) + ')', gameUrl('overview'), T.openOver, cfg.itemsAt);
+        // Every item the buff bar showed, whether or not it was recognised — an amplifier this
+        // script has never seen is listed here, unticked, instead of being silently dropped.
+        itemList.forEach(it =>
+        {
+            const on = itemOn(it);
+            const row = el('div', 'ogxs_item' + (on ? ' ogxs_on' : ''), body);
+            row.title = it.u;
+            el('span', 'ogxs_tick', row).textContent = on ? '\u2611' : '\u2610';
+            el('span', 'ogxs_itemName', row).textContent = it.n || it.u.slice(0, 12) + '\u2026';
+            el('b', '', row).textContent = '+' + fmtPct(it.p, 0);
+            row.addEventListener('click', () =>
+            {
+                cfg.itemPick[it.u] = !on;
+                saveCfg(); render();
+            });
+        });
+        if(itemList.length && itemsOn < itemList.length) el('div', 'ogxs_note', body).textContent = T.itemHint;
 
         // ---- calibration from the reports themselves ----
         const g = gather(ui.scope === 'all' ? '7' : ui.scope, 'all');
