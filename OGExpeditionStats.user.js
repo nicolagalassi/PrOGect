@@ -578,6 +578,8 @@
         noShare:   IT ? 'Senza i permessi di Tampermonkey il confronto resta su questo universo: ogni universo ha un archivio separato.'
                       : 'Without the Tampermonkey grants the comparison stays on this universe: each universe keeps a separate archive.',
         noUniData: IT ? 'Nessuna spedizione registrata in questo periodo.' : 'No expedition recorded in this range.',
+        heldHere:  IT ? 'In archivio su questo universo: {n} spedizioni su {d} giorni. Allarga il periodo per vederle.'
+                      : 'On record for this universe: {n} expeditions over {d} days. Widen the range to see them.',
         scope:     IT ? 'Periodo' : 'Range',
         today:     IT ? 'Oggi' : 'Today',
         yest:      IT ? 'Ieri' : 'Yesterday',
@@ -737,7 +739,8 @@
         catch(e) {}
     }
 
-    const saveCfg = () => writeJSON(LS.cfg, cfg);
+    // The cap feeds every percentage in the roll-up, so any settings change refreshes it.
+    const saveCfg = () => { writeJSON(LS.cfg, cfg); rollUp(); };
     const saveUi = () => writeJSON(LS.ui, ui);
     // Day keys are zero-padded, so a plain string compare is a date compare.
     function dropOldDays()
@@ -952,8 +955,7 @@
             }
         }
 
-        // The cap feeds every percentage, so a change to it rewrites this universe's roll-up too.
-        if(changed) { saveCfg(); rollUp(); }
+        if(changed) saveCfg();
         return changed;
     }
 
@@ -1224,11 +1226,14 @@
     }
     const R_EXPES = 0, R_FINDS = 1, R_CAPS = 2, R_ABS = 3, R_T0 = 4;
 
+    // Rebuilt from the local history, which is the source of truth — so an archive that predates
+    // this view, or one whose cap has just been corrected, lands in the comparison on the next
+    // page load rather than waiting for the next expedition report to arrive.
     function rollUp()
     {
         const cap = computeCap();
         const entry = {
-            n: UNI.name, l: UNI.lang, s: UNI.id, seen: Date.now(),
+            n: UNI.name, l: UNI.lang, s: UNI.id,
             cap: cap.known ? cap.max : 0,
             item: Math.round((cap.itemBoost - 1) * 100),
             speed: cfg.speed, expl: !!cfg.isExplorer,
@@ -1238,6 +1243,31 @@
 
         const all = readRoll();
         all.uni = all.uni || {};
+        const prev = all.uni[UNI.key];
+        // MERGE, never replace. The local archive is the truth for the days it still covers, but
+        // it is not the only record: it is pruned by retention and a browser cleanup can empty it
+        // outright, and neither of those is a reason to forget a universe's past in the
+        // comparison. Days the archive still has are recomputed and win; days only the roll-up
+        // remembers are kept. Clearing the history on purpose drops both — see the reset button.
+        if(prev && prev.d) entry.d = Object.assign({}, prev.d, entry.d);
+
+        // A universe with no days has nothing to compare. Not writing one keeps the roll-up to
+        // the universes actually played, and stops a cleared history from coming straight back
+        // as an empty entry on the save that follows it.
+        if(!Object.keys(entry.d).length)
+        {
+            if(prev) { delete all.uni[UNI.key]; writeRoll(all); }
+            return;
+        }
+        // Rebuilding on every page load is right; WRITING on every page load is not. The entry
+        // carries no clock of its own, so an unchanged one compares equal and costs nothing.
+        if(prev)
+        {
+            const bare = Object.assign({}, prev);
+            delete bare.seen;
+            if(JSON.stringify(bare) === JSON.stringify(entry)) return;
+        }
+        entry.seen = Date.now();
         all.uni[UNI.key] = entry;
         // Another universe's days age out on the same rule as this one's.
         const limit = shiftKey(Math.max(1, cfg.keepDays) - 1);
@@ -1591,7 +1621,14 @@
             }
         }
 
-        if(!rows.length) { el('div', 'ogxs_empty', body, T.noUniData); return; }
+        if(!rows.length)
+        {
+            // Say what the archive does hold, so an empty range is never mistaken for lost data.
+            const held = Object.keys(db.days).reduce((n, k) => n + (db.days[k].ids || []).length, 0);
+            el('div', 'ogxs_empty', body, T.noUniData +
+                (held ? '<br><br>' + T.heldHere.replace('{n}', '<b>' + held + '</b>').replace('{d}', '<b>' + Object.keys(db.days).length + '</b>') : ''));
+            return;
+        }
 
         el('div', 'ogxs_sec', body).textContent = T.vUni + ' · ' + rows.length;
         const best = rows[0].s.yield || 1;
@@ -1736,6 +1773,10 @@
         {
             if(!confirm(T.resetAsk)) return;
             db = { v: 1, days: {} };
+            // Deliberate erasure, so the merge above must not bring this universe back.
+            const all = readRoll();
+            if(all.uni) delete all.uni[UNI.key];
+            writeRoll(all);
             saveDb(); render();
         });
 
@@ -1835,6 +1876,7 @@
             // Retention on the way in as well: an install that stops reading reports would
             // otherwise keep every day it ever saw.
             if(dropOldDays()) saveDb();
+            rollUp(); // whatever is already on record belongs in the comparison
             readSources();
             ingestMessages();
             render();
