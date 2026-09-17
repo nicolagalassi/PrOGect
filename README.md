@@ -17,9 +17,10 @@ you can run one, all of them, or none.
 |---|---|
 | [`OGItemHelper.user.js`](OGItemHelper.user.js) | A searchable inventory box on the shop page: what you own, what is already active on this planet, the different durations of an item grouped under one button, and a jump to the same item on the next planet. It never activates anything — it opens the game's own item panel and you press the button. |
 | [`OGSeasonTracker.user.js`](OGSeasonTracker.user.js) | A panel beside the game menu with the running season's achievements: tier ladder, progress per tier, and the prize each tier pays out shown as artwork (avatar, planet skin, title). Pin the ones you are working on. Read-only, and it disables itself on universes without a season. |
+| [`OGExpeditionStats.user.js`](OGExpeditionStats.user.js) | A panel beside the game menu that turns your expedition reports into a distribution: each resource find as a percentage of its own cap (metal = cap, crystal = cap/2, deuterium = cap/3), a histogram over the 5-100% range with the rarity bands drawn in, and the most hit slice called out per band — what actually paid inside 5-25%, not just "common". Keeps a per-day history so today can be read against the days before. Reads only reports you already have open; it makes no server call at all. |
 
-Both read the pages you already have open; where they need more, it is a single read you trigger
-with a click, never a background loop.
+They all read the pages you already have open; where one needs more, it is a single read you
+trigger with a click, never a background loop.
 
 ## Install
 
