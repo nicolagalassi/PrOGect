@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Expedition Stats for OGame
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.1.0
-// @description  Reads the expedition reports you already have open and turns them into a distribution: where inside each rarity band (common / rare / epic) your resource finds actually land, which slice gets hit most, today and on the days before. Standalone userscript, no dependencies.
+// @version      0.2.0
+// @description  Reads the expedition reports you already have open and turns them into a distribution: what a common / rare / epic find actually pays as a share of your cap, today and on the days before, and how your universes compare on the one figure that travels between them. Standalone userscript, no dependencies.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
 // @icon         https://gf1.geo.gfsrv.net/cdn3d/favicon.ico
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @license      MIT
 // ==/UserScript==
 
@@ -36,6 +37,15 @@
     and the MOST HIT slice called out per band: "in 5-25% the peak is 12.5-15%, 7 finds".
   - A per-day history (default 90 days, in your browser only), so today can be read against
     yesterday, the last 7 days, or everything recorded.
+  - A comparison ACROSS UNIVERSES, which is the one thing raw resources cannot give you: a 168M
+    cap and a 43M cap have nothing in common in metal. What compares is how much of YOUR OWN cap
+    an expedition brings back — caps collected divided by expeditions sent. That figure ignores
+    cap size, economy speed, how many expedition slots you run, and the active item (which
+    raises cap and loot together), so a difference between two universes is luck, depletion or
+    position, not equipment. The absolute resources sit next to it, because that is what
+    actually lands in the account, and that is where the cap and the item do show.
+    It also answers "is today normal?" — today's yield against this universe's own 30-day
+    average.
   - A cap panel showing the number it computed and every factor that went into it, plus a
     manual override, plus a CALIBRATION: the game labels each find with its own rarity, and
     a label plus an amount bracket the cap. Ten reports narrow it down considerably, and a
@@ -75,8 +85,11 @@
   - §1.7  CLOSED by default, anchored to the LEFT edge of the menu column and opening into the
           empty margin beside the game frame. It never hides, moves, resizes or covers the menu,
           the banners, the top ad bar, the footer, or Merchant / Officers / Shop.
-  - §1.9  Nothing leaves the machine. History and settings are localStorage; the export button
-          writes a file to your own disk.
+  - §1.9  Nothing leaves the machine. The per-universe history and settings are localStorage;
+          the cross-universe roll-up uses Tampermonkey's own storage, which is per SCRIPT rather
+          than per origin — the only way a panel on one universe can see another, since every
+          universe is its own subdomain. Both are local; the export button writes a file to your
+          own disk. Without the grants the script still runs and simply shows one universe.
   - §5    Runs inside the OGame page and reads live game data -> needs toleration before it is
           distributed publicly.
 */
@@ -85,13 +98,17 @@
 {
     'use strict';
 
-    const PAGE = window; // @grant none → shares the page window (serverTime, ogame, LocalizationStrings)
+    // The page's own window (serverTime, ogame, LocalizationStrings). With the GM grants above
+    // the script runs in its own scope, so the page globals come from unsafeWindow; without them
+    // (or in a plain browser) `window` already IS the page.
+    const PAGE = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
     const HOST = window.location.host;
     const LS = {
         db:    'ogxs_db',    // per-day history: reports counted, finds recorded
         cfg:   'ogxs_cfg',   // cap sources + manual override + retention
         ui:    'ogxs_ui',    // scope / resource filter / slice width / view
         state: 'ogxs_state', // 'open' | 'closed'
+        roll:  'ogxs_roll',  // one compact line per universe per day, shared across universes
     };
 
     // ------------------------------------------------------------------ the find model
@@ -332,6 +349,33 @@
         .ogxs_dayPeak{flex:0 0 auto;font-family:var(--mono);font-size:10.5px;color:var(--acc-hi);text-align:right}
         .ogxs_dayPeak em{display:block;font-style:normal;font-size:9px;color:var(--faint)}
 
+        /* ---- universe comparison ---- */
+        .ogxs_uni{border:1px solid var(--line);border-radius:3px;background:var(--row);padding:7px 8px;margin-bottom:6px}
+        .ogxs_uni.ogxs_here{border-color:var(--acc-dim);box-shadow:inset 2px 0 0 var(--acc)}
+        .ogxs_uniTop{display:flex;align-items:baseline;gap:6px}
+        .ogxs_uniName{
+            flex:1 1 auto;min-width:0;font-family:var(--disp);font-size:13px;letter-spacing:.9px;text-transform:uppercase;
+            color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+        }
+        .ogxs_uniTag{flex:0 0 auto;font-family:var(--mono);font-size:9.5px;color:var(--faint)}
+        .ogxs_uniHere{flex:0 0 auto;font-family:var(--disp);font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--acc)}
+        .ogxs_uniNums{display:flex;gap:5px;margin-top:6px}
+        .ogxs_uniNums>div{flex:1 1 0;min-width:0;padding:4px 5px;border:1px solid var(--line);border-radius:3px;background:var(--ink)}
+        .ogxs_uniNums b{display:block;font-family:var(--mono);font-size:14px;font-weight:400;color:var(--cream);white-space:nowrap}
+        .ogxs_uniNums.ogxs_lead b{color:var(--acc-hi)}
+        .ogxs_uniNums em{
+            display:block;font-style:normal;font-family:var(--disp);font-size:8.5px;letter-spacing:.7px;
+            text-transform:uppercase;color:var(--faint);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+        }
+        .ogxs_uniNums>div:first-child b{color:var(--acc-hi);font-size:16px}
+        .ogxs_uniBar{height:3px;margin-top:6px;background:#0A1017;border-radius:2px;overflow:hidden}
+        .ogxs_uniBar>i{display:block;height:100%;background:linear-gradient(90deg,var(--acc-dim),var(--acc))}
+        .ogxs_uniMeta{margin-top:5px;font-size:9.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .ogxs_uniMeta b{font-family:var(--mono);font-weight:400;color:var(--mute)}
+        .ogxs_delta{font-family:var(--mono);font-size:11px}
+        .ogxs_delta.ogxs_up{color:#3BE8B0}
+        .ogxs_delta.ogxs_down{color:#FF8A7A}
+
         /* ---- cap view ---- */
         .ogxs_cap{
             margin-top:8px;padding:9px;border:1px solid var(--line);border-radius:3px;
@@ -514,6 +558,26 @@
         vDist:     IT ? 'Distribuzione' : 'Distribution',
         vDays:     IT ? 'Giorni' : 'Days',
         vCap:      IT ? 'Cap' : 'Cap',
+        vUni:      IT ? 'Universi' : 'Universes',
+        yield:     IT ? 'resa' : 'yield',
+        yieldOf:   IT ? 'di cap per spedizione' : 'of cap per expedition',
+        capsDay:   IT ? 'cap / giorno' : 'caps / day',
+        resDay:    IT ? 'risorse / g' : 'resources / day',
+        expesDay:  IT ? 'sped / g' : 'exp / day',
+        hitRate:   IT ? 'spedizioni con risorse' : 'expeditions paying resources',
+        here:      IT ? 'sei qui' : 'you are here',
+        inLine:    IT ? 'Oggi rispetto a te stesso' : 'Today against yourself',
+        vsAvg:     IT ? 'media' : 'avg',
+        onPar:     IT ? 'in linea' : 'on par',
+        above:     IT ? 'sopra' : 'above',
+        below:     IT ? 'sotto' : 'below',
+        uniHint:   IT ? 'La <b>resa</b> è quanto rende una spedizione in frazione del TUO cap. Non dipende da quanto è grande il cap, da quante spedizioni lanci né dall\u2019item attivo (l\u2019item alza cap e bottino insieme): è l\u2019unico numero confrontabile fra universi. Le risorse assolute lì accanto sono ciò che incassi davvero, e lì l\u2019item si vede.'
+                      : 'The <b>yield</b> is what one expedition brings back as a fraction of YOUR cap. It does not depend on how big that cap is, how many expeditions you run, or the active item (the item raises cap and loot together): it is the one figure that compares across universes. The absolute resources next to it are what actually lands in the account, and that is where the item shows.',
+        oneUni:    IT ? 'Gli altri universi compaiono qui da soli, appena ci giochi con lo script installato.'
+                      : 'Other universes appear here on their own, as soon as you play them with the script installed.',
+        noShare:   IT ? 'Senza i permessi di Tampermonkey il confronto resta su questo universo: ogni universo ha un archivio separato.'
+                      : 'Without the Tampermonkey grants the comparison stays on this universe: each universe keeps a separate archive.',
+        noUniData: IT ? 'Nessuna spedizione registrata in questo periodo.' : 'No expedition recorded in this range.',
         scope:     IT ? 'Periodo' : 'Range',
         today:     IT ? 'Oggi' : 'Today',
         yest:      IT ? 'Ieri' : 'Yesterday',
@@ -638,6 +702,41 @@
     let ui = Object.assign({ view: 'dist', scope: 'today', res: 'all', slice: 2.5 }, readJSON(LS.ui, {}));
     let uiState = localStorage.getItem(LS.state) || 'closed'; // closed by default → covers nothing (§1.7)
 
+    // Which universe this is. The name is the one the game prints under its logo.
+    const UNI =
+    {
+        id:   (HOST.match(/\d+/) || [''])[0],
+        lang: (document.querySelector('head meta[name="ogame-language"]') || {}).content || (HOST.split(/[-.]/)[1] || ''),
+        name: (document.querySelector('head meta[name="ogame-universe-name"]') || {}).content || HOST.split('.')[0],
+    };
+    UNI.key = HOST.split('.')[0]; // "s999-en" — one origin, one universe
+
+    // Comparing universes is the one thing localStorage cannot do: it is per origin, and every
+    // universe is its own subdomain, so a panel on one can never see another. Tampermonkey's
+    // storage is per SCRIPT instead, which is exactly what this needs. It is optional: without
+    // the grants the roll-up falls back to localStorage and the panel simply shows the universe
+    // you are on. Nothing leaves the machine either way (§1.9).
+    const GM_OK = typeof GM_getValue === 'function' && typeof GM_setValue === 'function';
+    function readRoll()
+    {
+        try
+        {
+            const raw = GM_OK ? GM_getValue(LS.roll, '') : (localStorage.getItem(LS.roll) || '');
+            const v = raw ? JSON.parse(raw) : null;
+            return v && v.v === 1 ? v : { v: 1, uni: {} };
+        }
+        catch(e) { return { v: 1, uni: {} }; }
+    }
+    function writeRoll(all)
+    {
+        try
+        {
+            const raw = JSON.stringify(all);
+            if(GM_OK) GM_setValue(LS.roll, raw); else localStorage.setItem(LS.roll, raw);
+        }
+        catch(e) {}
+    }
+
     const saveCfg = () => writeJSON(LS.cfg, cfg);
     const saveUi = () => writeJSON(LS.ui, ui);
     // Day keys are zero-padded, so a plain string compare is a date compare.
@@ -652,6 +751,7 @@
     {
         dropOldDays();
         writeJSON(LS.db, db);
+        rollUp(); // this universe's line in the shared comparison
     }
 
     // --------------------------------------------------------------------- the cap
@@ -852,7 +952,8 @@
             }
         }
 
-        if(changed) saveCfg();
+        // The cap feeds every percentage, so a change to it rewrites this universe's roll-up too.
+        if(changed) { saveCfg(); rollUp(); }
         return changed;
     }
 
@@ -1091,6 +1192,107 @@
         return { n: n, lo: lo, hi: hi, ok: n > 0 && lo <= hi };
     }
 
+    // ---- the cross-universe roll-up ---------------------------------------------------------
+    // What makes two universes comparable is NOT the resources: a 168M cap and a 43M cap can
+    // never be compared in metal. What compares is how much of YOUR OWN cap an expedition
+    // brings back. A find is already stored as a fraction of its own ceiling, so summing those
+    // fractions gives "how many whole caps did this day pay", and dividing by the number of
+    // expeditions gives the one number that travels between universes:
+    //
+    //      yield = caps collected / expeditions sent      ("% of cap per expedition")
+    //
+    // It is blind, by construction, to everything that differs between universes: cap size,
+    // economy speed, how many expedition slots you run — and to the item boost too, since the
+    // boost raises the cap and the finds together. Which is the useful part: if the two
+    // universes have different yields, that is luck, depletion or position, not equipment.
+    // The absolute resources are kept alongside it, because that is what actually lands in your
+    // account, and THAT is where the item and the cap show up.
+    function dayRoll(key, capMax)
+    {
+        const day = db.days[key] || { ids: [], out: {}, f: [] };
+        let caps = 0, abs = 0, finds = 0;
+        const t = [0, 0, 0];
+        (day.f || []).forEach(f =>
+        {
+            const r = decorate(f, capMax);
+            finds++;
+            abs += r.amount;
+            if(r.pct != null) caps += r.pct / 100;
+            if(r.tier >= 0) t[r.tier]++;
+        });
+        return [(day.ids || []).length, finds, Math.round(caps * 1000) / 1000, abs, t[0], t[1], t[2]];
+    }
+    const R_EXPES = 0, R_FINDS = 1, R_CAPS = 2, R_ABS = 3, R_T0 = 4;
+
+    function rollUp()
+    {
+        const cap = computeCap();
+        const entry = {
+            n: UNI.name, l: UNI.lang, s: UNI.id, seen: Date.now(),
+            cap: cap.known ? cap.max : 0,
+            item: Math.round((cap.itemBoost - 1) * 100),
+            speed: cfg.speed, expl: !!cfg.isExplorer,
+            d: {},
+        };
+        Object.keys(db.days).forEach(k => { entry.d[k] = dayRoll(k, cap.known ? cap.max : 0); });
+
+        const all = readRoll();
+        all.uni = all.uni || {};
+        all.uni[UNI.key] = entry;
+        // Another universe's days age out on the same rule as this one's.
+        const limit = shiftKey(Math.max(1, cfg.keepDays) - 1);
+        Object.keys(all.uni).forEach(k =>
+        {
+            const u = all.uni[k];
+            Object.keys(u.d || {}).forEach(day => { if(day < limit) delete u.d[day]; });
+        });
+        writeRoll(all);
+    }
+
+    // The calendar days a range covers, built from the CALENDAR and not from what this universe
+    // happens to have recorded: another universe's days are its own, and filtering them through
+    // this one's archive would hide every day you played there and not here.
+    function rangeKeys(scope, all)
+    {
+        if(scope === 'today') return [todayKey()];
+        if(scope === 'yest') return [shiftKey(1)];
+        if(scope.indexOf('day:') === 0) return [scope.slice(4)];
+        if(scope === '7' || scope === '30')
+        {
+            const out = [];
+            for(let i = 0; i < parseInt(scope, 10); i++) out.push(shiftKey(i));
+            return out;
+        }
+        // "all" — every day any universe has on record
+        const seen = {};
+        Object.keys((all && all.uni) || {}).forEach(k => Object.keys(all.uni[k].d || {}).forEach(d => { seen[d] = 1; }));
+        Object.keys(db.days).forEach(d => { seen[d] = 1; });
+        return Object.keys(seen).sort();
+    }
+
+    // One universe over a range of days, reduced to the figures the comparison shows. Days the
+    // player did not play are left out: a universe you touched twice this week must not look
+    // weak because of the five days you were not there.
+    function uniStats(entry, keys)
+    {
+        let expes = 0, finds = 0, caps = 0, abs = 0, days = 0;
+        keys.forEach(k =>
+        {
+            const d = (entry.d || {})[k];
+            if(!d || !d[R_EXPES]) return;
+            days++;
+            expes += d[R_EXPES]; finds += d[R_FINDS]; caps += d[R_CAPS]; abs += d[R_ABS];
+        });
+        return {
+            days: days, expes: expes, finds: finds, caps: caps, abs: abs,
+            yield: expes ? (caps / expes) * 100 : 0,   // % of cap per expedition — the comparable one
+            capsDay: days ? caps / days : 0,
+            absDay: days ? abs / days : 0,
+            expesDay: days ? expes / days : 0,
+            hit: expes ? (finds / expes) * 100 : 0,
+        };
+    }
+
     // One day, summarised for the history list.
     function daySummary(key, capNow)
     {
@@ -1158,7 +1360,7 @@
         return c;
     }
 
-    function renderFilters(parent)
+    function renderFilters(parent, rangeOnly)
     {
         const r1 = el('div', 'ogxs_chips', parent);
         el('span', 'ogxs_chipLabel', r1).textContent = T.scope;
@@ -1168,6 +1370,8 @@
         {
             chip(r1, prettyDay(ui.scope.slice(4)), true, () => { ui.scope = 'today'; saveUi(); render(); });
         }
+
+        if(rangeOnly) return;
 
         const r2 = el('div', 'ogxs_chips', parent);
         el('span', 'ogxs_chipLabel', r2).textContent = T.res;
@@ -1356,6 +1560,70 @@
         });
     }
 
+    function renderUnis(body)
+    {
+        const all = readRoll();
+        const keys = rangeKeys(ui.scope, all);
+        const rows = Object.keys(all.uni || {})
+            .map(k => ({ key: k, e: all.uni[k], s: uniStats(all.uni[k], keys) }))
+            .filter(r => r.s.expes > 0)
+            .sort((a, b) => b.s.yield - a.s.yield);
+
+        // "Am I having a normal day?" is a question about yourself, not about other universes:
+        // today's yield against this universe's own 30-day average answers it in one line.
+        const here = (all.uni || {})[UNI.key];
+        if(here)
+        {
+            const today = uniStats(here, [todayKey()]);
+            const ref = uniStats(here, rangeKeys('30', all).filter(k => k !== todayKey()));
+            if(today.expes && ref.expes)
+            {
+                const d = today.yield - ref.yield;
+                const near = Math.abs(d) < ref.yield * 0.1;
+                const lead = el('div', 'ogxs_lead', body);
+                el('div', 'ogxs_leadTop', lead).textContent = T.inLine;
+                el('div', 'ogxs_leadMain', lead).innerHTML = fmtPct(today.yield) +
+                    '  <span class="ogxs_delta ' + (near ? '' : (d > 0 ? 'ogxs_up' : 'ogxs_down')) + '">' +
+                    (d >= 0 ? '+' : '\u2212') + fmtPct(Math.abs(d)) + '</span>';
+                el('div', 'ogxs_leadSub', lead).innerHTML =
+                    (near ? T.onPar : (d > 0 ? T.above : T.below)) + ' · ' + T.vsAvg + ' 30' + (IT ? 'gg' : 'd') +
+                    ' <b>' + fmtPct(ref.yield) + '</b> · ' + T.yieldOf;
+            }
+        }
+
+        if(!rows.length) { el('div', 'ogxs_empty', body, T.noUniData); return; }
+
+        el('div', 'ogxs_sec', body).textContent = T.vUni + ' · ' + rows.length;
+        const best = rows[0].s.yield || 1;
+
+        rows.forEach(r =>
+        {
+            const st = r.s;
+            const box = el('div', 'ogxs_uni' + (r.key === UNI.key ? ' ogxs_here' : ''), body);
+            const top = el('div', 'ogxs_uniTop', box);
+            el('div', 'ogxs_uniName', top).textContent = r.e.n || r.key;
+            el('div', 'ogxs_uniTag', top).textContent = r.key;
+            if(r.key === UNI.key) el('div', 'ogxs_uniHere', top).textContent = T.here;
+
+            const nums = el('div', 'ogxs_uniNums', box);
+            const cell = (v, label) => { const d = el('div', '', nums); el('b', '', d).textContent = v; el('em', '', d).textContent = label; };
+            cell(fmtPct(st.yield), T.yield + ' / ' + T.expesDay.split(' ')[0]);
+            cell((Math.round(st.capsDay * 100) / 100).toString().replace('.', DEC), T.capsDay);
+            cell(fmtShort(st.absDay), T.resDay);
+
+            el('i', '', el('div', 'ogxs_uniBar', box)).style.width = clamp((st.yield / best) * 100, 2, 100) + '%';
+
+            el('div', 'ogxs_uniMeta', box).innerHTML =
+                'cap <b>' + (r.e.cap ? fmtShort(r.e.cap) : '?') + '</b> · item <b>' + (r.e.item ? '+' + r.e.item + '%' : '—') +
+                '</b> · <b>' + (Math.round(st.expesDay * 10) / 10).toString().replace('.', DEC) + '</b> ' + T.expesDay +
+                ' · <b>' + fmtPct(st.hit, 0) + '</b> ' + T.hitRate +
+                ' · <b>' + st.days + '</b> ' + (IT ? 'gg' : 'd');
+        });
+
+        el('div', 'ogxs_note', body).innerHTML = T.uniHint;
+        if(rows.length < 2) el('div', 'ogxs_note', body).innerHTML = GM_OK ? T.oneUni : T.noShare;
+    }
+
     function renderCap(body)
     {
         const cap = computeCap();
@@ -1513,18 +1781,19 @@
         close.addEventListener('click', () => setState('closed'));
 
         const views = el('div', 'ogxs_views', panel);
-        [['dist', T.vDist], ['days', T.vDays], ['cap', T.vCap]].forEach(v =>
+        [['dist', T.vDist], ['days', T.vDays], ['uni', T.vUni], ['cap', T.vCap]].forEach(v =>
         {
             const n = el('div', 'ogxs_view' + (ui.view === v[0] ? ' ogxs_on' : ''), views);
             n.textContent = v[1];
             n.addEventListener('click', () => { ui.view = v[0]; saveUi(); render(); });
         });
 
-        if(ui.view === 'dist') renderFilters(panel);
+        if(ui.view === 'dist' || ui.view === 'uni') renderFilters(panel, ui.view === 'uni');
         const body = el('div', 'ogxs_body', panel);
 
         if(ui.view === 'dist') renderDist(body);
         else if(ui.view === 'days') renderDays(body);
+        else if(ui.view === 'uni') renderUnis(body);
         else renderCap(body);
 
         const foot = el('div', 'ogxs_foot', panel);
