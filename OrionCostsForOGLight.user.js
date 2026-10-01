@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orion Costs for OGLight
 // @namespace    https://github.com/nicolagalassi
-// @version      0.6.0
+// @version      0.7.0
 // @description  Add-on for OGLight: fills in the cost of buildings and researches OGLight does not know yet (Project Orion: Interstellar Anomaly Scanner and its researches), reading the price the game itself puts on the page. Display only.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -49,8 +49,9 @@
      different levels of the same tech have been seen, we estimate the growth factor per resource
      (cost(L) = cost(L0) * f^(L - L0), the standard OGame shape) and use it, marked with "~".
      Until then other levels show "?". A formula verified against the game can be typed into
-     MANUAL_FORMULAS below and wins over the estimate (Scanner 45, Recovery Center 4001 and
-     Lithium Electrolysis Lab 4002 are already there).
+     MANUAL_FORMULAS below and wins over the estimate (Scanner 45 and control-center buildings
+     4001, 4002, 4007 are already there). The other control-center buildings, seen at one level only,
+     are estimated with the 1.5 factor all the verified ones share.
 
   COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
   - §1.1/§1.2  Display only. It never builds, queues or clicks anything; no game action at all.
@@ -90,6 +91,11 @@
         // Control center — Lithium Electrolysis Lab. Exact values from the game, s808-en: level 3 =
         // 118,125 / 84,375 / 84,375 and level 5 = 265,781 / 189,843 / 189,843 → factor 1.5 to the unit.
         4002: { metal:52500, crystal:37500, deut:37500, factor:1.5 },
+
+        // Control center — Conversion Catalyst. Level 11 from the game, s808-en: 7,352,292 / 6,487,316 /
+        // 3,027,414. Only 1.5 turns that into round bases (1.4, 1.6, 1.75, 2 do not), and
+        // floor(127,500|112,500|52,500 * 1.5^10) gives back all three figures to the unit.
+        4007: { metal:127500, crystal:112500, deut:52500, factor:1.5 },
     };
 
     const STORAGE_KEY = 'oglOrionCosts_v1';
@@ -172,6 +178,20 @@
         return { refLevel:hi, refCost:observed[hi][resource], factor:factor };
     };
 
+    // Every control-center building verified so far (4001, 4002, 4007) grows by exactly 1.5 per level. For
+    // one seen at a single level only, that factor is the best guess for its other levels: used ONLY in
+    // that case, and always shown as an estimate ("~"), never as a verified price.
+    const CONTROL_CENTER_FACTOR = 1.5;
+    const familyEstimate = (id, observed, resource) =>
+    {
+        if(id < 4001 || id > 4099) return null;
+
+        const levels = Object.keys(observed).map(Number).filter(l => observed[l][resource] > 0);
+        if(levels.length !== 1) return null;
+
+        return { refLevel:levels[0], refCost:observed[levels[0]][resource], factor:CONTROL_CENTER_FACTOR };
+    };
+
     // { value, exact } for one resource at one level, or null when we cannot know it.
     const costAt = (id, level, resource, store) =>
     {
@@ -186,7 +206,7 @@
         const seen = Object.values(observed);
         if(seen.length && seen.every(c => !c[resource])) return { value:0, exact:true };
 
-        const fit = estimate(observed, resource);
+        const fit = estimate(observed, resource) || familyEstimate(id, observed, resource);
         if(!fit) return null;
 
         return { value:Math.floor(fit.refCost * Math.pow(fit.factor, level - fit.refLevel)), exact:false };
@@ -368,10 +388,17 @@
         const msuRow = document.createElement('div');
         msuRow.className = 'ogl_icon ogl_msu';
         const levelCosts = {};
-        ['metal', 'crystal', 'deut'].forEach(r => { const c = costAt(id, level, r, store); levelCosts[r] = c ? c.value : 0; });
+        let levelExact = true;
+        ['metal', 'crystal', 'deut'].forEach(r =>
+        {
+            const c = costAt(id, level, r, store);
+            levelCosts[r] = c ? c.value : 0;
+            if(c && !c.exact) levelExact = false;
+        });
         const totalCosts = { metal:totals.metal?.value, crystal:totals.crystal?.value, deut:totals.deut?.value };
-        cell(msuRow, unknown ? '?' : formatUnits(msuOf(levelCosts)), 'tooltip', unknown ? '' : formatFull(msuOf(levelCosts)));
-        cell(msuRow, unknown ? '?' : formatUnits(msuOf(totalCosts)), 'ogl_text tooltip', unknown ? '' : formatFull(msuOf(totalCosts)));
+        const totalExact = ['metal', 'crystal', 'deut'].every(r => !totals[r] || totals[r].exact);
+        cell(msuRow, unknown ? '?' : estimated(formatUnits(msuOf(levelCosts)), levelExact), 'tooltip', unknown ? '' : formatFull(msuOf(levelCosts)));
+        cell(msuRow, unknown ? '?' : estimated(formatUnits(msuOf(totalCosts)), totalExact), 'ogl_text tooltip', unknown ? '' : formatFull(msuOf(totalCosts)));
         wrapper.appendChild(msuRow);
 
         if(!wrapper.parentElement) costs.appendChild(wrapper);
