@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orion Costs for OGLight
 // @namespace    https://github.com/nicolagalassi
-// @version      0.7.0
+// @version      0.8.0
 // @description  Add-on for OGLight: fills in the cost of buildings and researches OGLight does not know yet (Project Orion: Interstellar Anomaly Scanner and its researches), reading the price the game itself puts on the page. Display only.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -50,8 +50,8 @@
      (cost(L) = cost(L0) * f^(L - L0), the standard OGame shape) and use it, marked with "~".
      Until then other levels show "?". A formula verified against the game can be typed into
      MANUAL_FORMULAS below and wins over the estimate (Scanner 45 and control-center buildings
-     4001, 4002, 4007 are already there). The other control-center buildings, seen at one level only,
-     are estimated with the 1.5 factor all the verified ones share.
+     4001-4007 are all there). A NEW control-center building seen at one level only is estimated with
+     the 1.5 factor all the verified ones share.
 
   COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
   - §1.1/§1.2  Display only. It never builds, queues or clicks anything; no game action at all.
@@ -88,9 +88,17 @@
         // 118.1k / 50.6k — factor 1.5 to the display's 0.1k precision on all three resources.
         4001: { metal:75000, crystal:52500, deut:22500, factor:1.5 },
 
-        // Control center — Lithium Electrolysis Lab. Exact values from the game, s808-en: level 3 =
-        // 118,125 / 84,375 / 84,375 and level 5 = 265,781 / 189,843 / 189,843 → factor 1.5 to the unit.
+        // Control center — Lithium Electrolysis Lab. Exact values from the game, s808-en: levels 3, 5 and
+        // 19 (118,125 / 265,781 / 77,589,323 metal) → factor 1.5 to the unit.
         4002: { metal:52500, crystal:37500, deut:37500, factor:1.5 },
+
+        // Control center — Metal Recycling Line, Crystal Processing, Anomaly Analysis Center, High-Pressure
+        // Deuterium Tanks. Each checked to the unit against two levels read from the game on s808-en:
+        // 4003 levels 1 and 11, 4004 levels 1 and 3, 4005 levels 2 and 3, 4006 levels 1 and 3.
+        4003: { metal:112500, crystal:37500, deut:18000, factor:1.5 },
+        4004: { metal:37500, crystal:67500, deut:27000, factor:1.5 },
+        4005: { metal:67500, crystal:37500, deut:22500, factor:1.5 },
+        4006: { metal:30000, crystal:37500, deut:45000, factor:1.5 },
 
         // Control center — Conversion Catalyst. Level 11 from the game, s808-en: 7,352,292 / 6,487,316 /
         // 3,027,414. Only 1.5 turns that into round bases (1.4, 1.6, 1.75, 2 do not), and
@@ -178,8 +186,8 @@
         return { refLevel:hi, refCost:observed[hi][resource], factor:factor };
     };
 
-    // Every control-center building verified so far (4001, 4002, 4007) grows by exactly 1.5 per level. For
-    // one seen at a single level only, that factor is the best guess for its other levels: used ONLY in
+    // Every control-center building (4001-4007) grows by exactly 1.5 per level. For a future one seen at a
+    // single level only, that factor is the best guess for its other levels: used ONLY in
     // that case, and always shown as an estimate ("~"), never as a verified price.
     const CONTROL_CENTER_FACTOR = 1.5;
     const familyEstimate = (id, observed, resource) =>
