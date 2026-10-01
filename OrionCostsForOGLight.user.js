@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orion Costs for OGLight
 // @namespace    https://github.com/nicolagalassi
-// @version      0.4.0
+// @version      0.5.0
 // @description  Add-on for OGLight: fills in the cost of buildings and researches OGLight does not know yet (Project Orion: Interstellar Anomaly Scanner and its researches), reading the price the game itself puts on the page. Display only.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -49,7 +49,8 @@
      different levels of the same tech have been seen, we estimate the growth factor per resource
      (cost(L) = cost(L0) * f^(L - L0), the standard OGame shape) and use it, marked with "~".
      Until then other levels show "?". A formula verified against the game can be typed into
-     MANUAL_FORMULAS below and wins over the estimate (the Scanner, id 45, is already there).
+     MANUAL_FORMULAS below and wins over the estimate (the Scanner, 45, and the Recovery Center, 4001,
+     are already there).
 
   COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
   - §1.1/§1.2  Display only. It never builds, queues or clicks anything; no game action at all.
@@ -77,6 +78,11 @@
         // 01 Oct 2026): level 49 = 867,810,695 / 433,905,347 / 144,635,115, i.e. exactly
         // floor(84|42|14 * 1.4^48). Demolition matches too: 84 * 1.4^46 * (1 - 64% ion bonus).
         45: { metal:84, crystal:42, deut:14, factor:1.4 },
+
+        // Control center — Intergalactic Recovery Center. Levels 1, 2 and 3 read off the game on s808-en
+        // (beta, 01 Oct 2026): 75,000 / 52,500 / 22,500, then 112.5k / 78.8k / 33.8k, then 168.8k /
+        // 118.1k / 50.6k — factor 1.5 to the display's 0.1k precision on all three resources.
+        4001: { metal:75000, crystal:52500, deut:22500, factor:1.5 },
     };
 
     const STORAGE_KEY = 'oglOrionCosts_v1';
@@ -400,6 +406,30 @@
         });
     };
 
+    // On the Orion control center OGLight does not run, so its ‹ × › buttons are missing too. We add the
+    // same three, with OGLight's classes and in OGLight's place, so every Orion panel steps through
+    // levels the same way. Display only: they change the level shown, nothing is sent to the game.
+    const addArrows = details =>
+    {
+        if(details.querySelector('.ogl_actions')) return;
+
+        const sprite = details.querySelector('.sprite') || details.querySelector('.sprite_large');
+        if(!sprite) return;
+
+        const actions = document.createElement('div');
+        actions.className = 'ogl_actions oglOrion_actions';
+
+        ['chevron_left', 'close', 'chevron_right'].forEach(icon =>
+        {
+            const button = document.createElement('div');
+            button.className = 'material-icons ogl_button';
+            button.textContent = icon;
+            actions.appendChild(button);
+        });
+
+        sprite.appendChild(actions);
+    };
+
     const patch = panel =>
     {
         const id = parseNumber(panel.querySelector('[data-technology-id]')?.getAttribute('data-technology-id'))
@@ -428,6 +458,7 @@
             const list = panel.querySelector('.costs > ul.ipiHintable');
             if(!list || getComputedStyle(list).display !== 'none') return;
 
+            addArrows(details);
             hookArrows(details, id);
             renderOwn(details, id);
             return;
