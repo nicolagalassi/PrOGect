@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orion Costs for OGLight
 // @namespace    https://github.com/nicolagalassi
-// @version      0.1.0
+// @version      0.2.0
 // @description  Add-on for OGLight: fills in the cost of buildings and researches OGLight does not know yet (Project Orion: Interstellar Anomaly Scanner and its researches), reading the price the game itself puts on the page. Display only.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -21,12 +21,18 @@
   Project Orion building "Interstellar Anomaly Scanner" and its researches — gets base cost 0, so
   OGLight shows 0 metal / 0 crystal / 0 deuterium and drops the build time.
 
+  On the Orion CONTROL CENTER (component=orion, tab "Centro controllo", techs 4001-4007) it is worse:
+  the panel is loaded later, inside a tab, so OGLight's script never draws its cost box there — but
+  OGLight's stylesheet still hides the game's own cost list. The player sees no price at all.
+
   WHY WE DO NOT PATCH OGLIGHT'S TABLE
   OGLight runs in its own userscript sandbox; another script cannot reach its Datafinder class.
   And the Orion formulas are not published yet (the public test started 30 Sep 2026): hard-coding
   guessed base costs/factors would print wrong numbers with a straight face.
 
   WHAT THIS ADD-ON DOES INSTEAD
+  0. Where OGLight drew no cost box at all (the control center), we just un-hide the game's own
+     cost list — only if something actually hides it, so without OGLight nothing changes.
   1. The game still puts the REAL price of the next level in the panel — OGLight only hides that
      list with CSS (.costs .ipiHintable). We read it from there. It is exact: it already includes
      every cost reduction the player has, because the server computed it.
@@ -230,15 +236,64 @@
         return range ? { mode:'level', level:shown, from:parseInt(range[1], 10), to:parseInt(range[2], 10) } : { mode:'amount', amount:Math.max(shown, 1) };
     };
 
+    // OGLight's stylesheet hides the game's own cost list everywhere (.costs .ipiHintable and the
+    // "Required for level N" line), on the assumption that its script draws a replacement. Its script
+    // only does that on pages where the game's technologyDetails object exists when OGLight starts.
+    // The Orion control center loads its panel later, inside a tab, so there OGLight draws nothing and
+    // the player sees no price at all. In that case we simply un-hide the game's list: it is the game's
+    // own UI and its own exact numbers. The CSS keeps a :has() guard so the list is hidden again the
+    // moment OGLight's wrapper does appear.
+    const STYLE = `
+        #technologydetails .costs.oglOrion_showGameCosts:not(:has(.ogl_costsWrapper)) > p { display:block !important; }
+        #technologydetails .costs.oglOrion_showGameCosts:not(:has(.ogl_costsWrapper)) > ul.ipiHintable { display:flex !important; gap:5px; }
+    `;
+
+    const injectStyle = () =>
+    {
+        if(document.querySelector('#oglOrion_style')) return;
+        const style = document.createElement('style');
+        style.id = 'oglOrion_style';
+        style.textContent = STYLE;
+        document.head.appendChild(style);
+    };
+
+    const showGameCosts = panel =>
+    {
+        const costs = panel.querySelector('.costs');
+        const list = costs?.querySelector(':scope > ul.ipiHintable');
+        if(!list || costs.classList.contains('oglOrion_showGameCosts')) return;
+
+        // only when something (OGLight's CSS) actually hides it: without OGLight the game's layout is untouched
+        if(getComputedStyle(list).display !== 'none') return;
+
+        injectStyle();
+        costs.classList.add('oglOrion_showGameCosts');
+    };
+
     const patch = panel =>
     {
         const id = parseNumber(panel.querySelector('[data-technology-id]')?.getAttribute('data-technology-id'))
             || parseNumber(document.querySelector('#technologies .technology.showsDetails')?.getAttribute('data-technology'));
-        const wrapper = panel.querySelector('.costs .ogl_costsWrapper');
-        if(!id || !wrapper) return;
+        if(!id) return;
 
         const gameCosts = readGameCosts(panel);
         if(!gameCosts) return;
+
+        const store = loadStore();
+        const gameLevel = readGameLevel(panel, id);
+
+        // remember what the game showed, so other levels can be estimated later
+        store[id] = store[id] || {};
+        store[id][gameLevel] = gameCosts;
+        saveStore(store);
+
+        const wrapper = panel.querySelector('.costs .ogl_costsWrapper');
+
+        if(!wrapper)
+        {
+            showGameCosts(panel);
+            return;
+        }
 
         if(!unknownToOGLight.has(id))
         {
@@ -246,15 +301,8 @@
             unknownToOGLight.add(id);
         }
 
-        const store = loadStore();
-        const gameLevel = readGameLevel(panel, id);
         const shown = readDisplayed(wrapper);
         if(!shown) return;
-
-        // remember what the game showed, so other levels can be estimated later
-        store[id] = store[id] || {};
-        store[id][gameLevel] = gameCosts;
-        saveStore(store);
 
         RESOURCES.forEach(resource =>
         {
