@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orion Costs for OGLight
 // @namespace    https://github.com/nicolagalassi
-// @version      0.5.0
+// @version      0.6.0
 // @description  Add-on for OGLight: fills in the cost of buildings and researches OGLight does not know yet (Project Orion: Interstellar Anomaly Scanner and its researches), reading the price the game itself puts on the page. Display only.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -49,8 +49,8 @@
      different levels of the same tech have been seen, we estimate the growth factor per resource
      (cost(L) = cost(L0) * f^(L - L0), the standard OGame shape) and use it, marked with "~".
      Until then other levels show "?". A formula verified against the game can be typed into
-     MANUAL_FORMULAS below and wins over the estimate (the Scanner, 45, and the Recovery Center, 4001,
-     are already there).
+     MANUAL_FORMULAS below and wins over the estimate (Scanner 45, Recovery Center 4001 and
+     Lithium Electrolysis Lab 4002 are already there).
 
   COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
   - §1.1/§1.2  Display only. It never builds, queues or clicks anything; no game action at all.
@@ -60,6 +60,9 @@
   - §1.6       Shows prices; it does not add any queue (no Commander imitation).
   - §1.7       Touches only the technology panel's cost rows; ads, banners, footer, Merchant,
                Officers and Shop are never touched.
+  - Other tool  The ☰ button hands the shown prices to OGLight's own addToTodolist() (window.ogl), so
+               they land in OGLight's per-planet to-do list. A planning note in another local tool —
+               no game action. Mention it in the toleration submission.
   - §1.9       Nothing leaves the machine: the observed prices stay in this browser's localStorage.
   - §5         Runs inside the OGame page → needs toleration before public distribution, like any
                userscript. (It also modifies another tool's display; mention that in the submission.)
@@ -83,6 +86,10 @@
         // (beta, 01 Oct 2026): 75,000 / 52,500 / 22,500, then 112.5k / 78.8k / 33.8k, then 168.8k /
         // 118.1k / 50.6k — factor 1.5 to the display's 0.1k precision on all three resources.
         4001: { metal:75000, crystal:52500, deut:22500, factor:1.5 },
+
+        // Control center — Lithium Electrolysis Lab. Exact values from the game, s808-en: level 3 =
+        // 118,125 / 84,375 / 84,375 and level 5 = 265,781 / 189,843 / 189,843 → factor 1.5 to the unit.
+        4002: { metal:52500, crystal:37500, deut:37500, factor:1.5 },
     };
 
     const STORAGE_KEY = 'oglOrionCosts_v1';
@@ -377,6 +384,10 @@
         const duration = panel.querySelector('.information .build_duration');
         if(duration) duration.style.visibility = offset === 0 ? '' : 'hidden';
 
+        // like OGLight: ☰ lit when the level shown is already on this planet's to-do list
+        const lists = Array.from(panel.querySelectorAll('.ogl_actions .ogl_button')).find(b => b.textContent.trim() === 'lists');
+        if(lists) lists.classList.toggle('ogl_active', pinnedLevel(id, level));
+
         if(typeof window.initTooltips === 'function') { try { window.initTooltips(); } catch(e) { /* cosmetic */ } }
     };
 
@@ -399,6 +410,7 @@
             if(action === 'chevron_left' && offset > 1 - initial) offset--;
             else if(action === 'chevron_right') offset++;
             else if(action === 'close') offset = 0;
+            else if(action === 'lists') { pinToOGLightTodolist(panel, id, button); return; }
             else return;
 
             panel.dataset.oglOrionOffset = String(offset);
@@ -406,8 +418,74 @@
         });
     };
 
-    // On the Orion control center OGLight does not run, so its ‹ × › buttons are missing too. We add the
-    // same three, with OGLight's classes and in OGLight's place, so every Orion panel steps through
+    // ---------- OGLight's ☰ to-do list ----------
+    //
+    // The ☰ button pins the shown levels' prices to OGLight's per-planet to-do list. OGLight's own handler
+    // computes those prices with getTechData() and throws for these techs, so nothing gets pinned. The
+    // list itself lives in OGLight's private Tampermonkey storage, which no other script can write — but
+    // OGLight puts its instance on the page (window.ogl), and its tech module exposes addToTodolist(),
+    // the very function its ☰ button ends up calling. We call it with the prices we know, in the shape
+    // OGLight's handler builds: { level: { id, level, metal, crystal, deut } }. OGLight then stores and
+    // saves the entry itself, exactly as for the shipyard.
+    // This only writes a planning note into the other tool; nothing is sent to the game (§1.1/§1.3).
+    const oglightTech = () =>
+    {
+        try { return window.ogl && window.ogl._tech && typeof window.ogl._tech.addToTodolist === 'function' ? window.ogl._tech : null; }
+        catch(e) { return null; }
+    };
+
+    const notify = (message, error) =>
+    {
+        // the game's own little message box, the one OGLight uses too
+        if(typeof window.fadeBox === 'function') { try { window.fadeBox(message, !!error); return; } catch(e) { /* fall through */ } }
+        console.info('[Orion Costs for OGLight] ' + message);
+    };
+
+    const pinnedLevel = (id, level) =>
+    {
+        try { return !!window.ogl.currentPlanet.obj.todolist[id][level]; }
+        catch(e) { return false; }
+    };
+
+    const pinToOGLightTodolist = (panel, id, button) =>
+    {
+        const tech = oglightTech();
+        if(!tech) { notify('OGLight to-do list not reachable from this page', true); return; }
+
+        const initial = readGameLevel(panel, id);
+        const offset = parseInt(panel.dataset.oglOrionOffset || '0', 10);
+        if(offset < 0) { notify('Cannot lock previous levels', true); return; } // same rule as OGLight
+
+        const store = loadStore();
+        const todo = {};
+
+        for(let level = initial; level <= initial + offset; level++)
+        {
+            const entry = { id:id, level:level };
+
+            for(const resource of ['metal', 'crystal', 'deut'])
+            {
+                const cost = costAt(id, level, resource, store);
+                if(!cost) { notify(`Price of level ${level} unknown: open the panel at two different levels first`, true); return; }
+                entry[resource] = cost.value;
+            }
+
+            todo[level] = entry;
+        }
+
+        try
+        {
+            tech.addToTodolist(todo);
+            button.classList.add('ogl_active');
+        }
+        catch(e)
+        {
+            notify('OGLight refused the to-do entry', true);
+        }
+    };
+
+    // On the Orion control center OGLight does not run, so its ‹ × › ☰ buttons are missing too. We add the
+    // same four, with OGLight's classes and in OGLight's place, so every Orion panel steps through
     // levels the same way. Display only: they change the level shown, nothing is sent to the game.
     const addArrows = details =>
     {
@@ -419,7 +497,7 @@
         const actions = document.createElement('div');
         actions.className = 'ogl_actions oglOrion_actions';
 
-        ['chevron_left', 'close', 'chevron_right'].forEach(icon =>
+        ['chevron_left', 'close', 'chevron_right', 'lists'].forEach(icon =>
         {
             const button = document.createElement('div');
             button.className = 'material-icons ogl_button';
