@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orion Costs for OGLight
 // @namespace    https://github.com/nicolagalassi
-// @version      0.8.1
+// @version      0.9.0
 // @description  Add-on for OGLight: fills in the cost of buildings and researches OGLight does not know yet (Project Orion: Interstellar Anomaly Scanner and its researches), reading the price the game itself puts on the page. Display only.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -499,7 +499,15 @@
     const pinToOGLightTodolist = (panel, id, button) =>
     {
         const tech = oglightTech();
-        if(!tech) { notify('OGLight to-do list not reachable from this page', true); return; }
+        if(!tech)
+        {
+            // OGLight reads the build queue while it starts and prices every entry with its own table. With an
+            // Orion building in the queue that lookup throws, OGLight's start-up aborts and window.ogl is never
+            // created — so there is no to-do list to write into until the queue is clear of Orion buildings.
+            notify(window.ogl ? 'OGLight to-do list not reachable from this page'
+                : 'OGLight did not start on this page (an Orion building in the build queue makes it fail): try again once it is out of the queue', true);
+            return;
+        }
 
         const initial = readGameLevel(panel, id);
         const offset = levelOffset(id);
@@ -569,10 +577,13 @@
         const store = loadStore();
         const gameLevel = readGameLevel(panel, id);
 
-        // remember what the game showed, so other levels can be estimated later
+        // remember what the game showed, so other levels can be estimated later (written only when new)
         store[id] = store[id] || {};
-        store[id][gameLevel] = gameCosts;
-        saveStore(store);
+        if(JSON.stringify(store[id][gameLevel]) !== JSON.stringify(gameCosts))
+        {
+            store[id][gameLevel] = gameCosts;
+            saveStore(store);
+        }
 
         const details = panel.querySelector('#technologydetails') || panel;
         const wrapper = panel.querySelector('.costs .ogl_costsWrapper');
@@ -701,18 +712,65 @@
 
     // ---------- wiring ----------
 
+    // ---------- OGLight's to-do clean-up ----------
+    //
+    // OGLight drops a to-do entry once the building tile shows that level (or a higher one queued):
+    // its checkTodolist() reads every .technology tile on the page. It only runs it while it starts, so
+    // on the Orion control center — whose tiles arrive later, inside a tab — finished Orion levels stayed
+    // on the list for good. When a tile list with Orion buildings appears, we ask OGLight to run that same
+    // check once. It is OGLight's own function on OGLight's own data; nothing is sent to the game.
+    const checkedTileLists = new WeakSet();
+
+    const syncTodolist = () =>
+    {
+        const tiles = document.querySelector('#technologies');
+        if(!tiles || checkedTileLists.has(tiles)) return;
+        checkedTileLists.add(tiles);
+
+        if(!tiles.querySelector('.technology[data-technology^="40"], .technology[data-technology="45"]')) return;
+
+        try { if(window.ogl && window.ogl._tech && typeof window.ogl._tech.checkTodolist === 'function') window.ogl._tech.checkTodolist(); }
+        catch(e) { /* OGLight not ready or changed: the list simply stays as it is */ }
+    };
+
+    // ---------- wiring ----------
+
     // DOM-only observer (no network): reacts when the player opens a technology panel or uses
     // OGLight's level arrows, both of which rebuild the cost rows.
+    //
+    // It used to do its work on EVERY change anywhere in the page (countdowns, resource ticks, OGLight's
+    // own redraws), including a localStorage read and write each time — the small lag on page load.
+    // Now a panel is handled once, and again only when its cost rows were rebuilt.
     let scheduled = false;
+
+    const needsWork = () =>
+    {
+        const details = document.querySelector('#technologydetails');
+        if(details && details.querySelector('.costs') && !details.querySelector('.oglOrion_own, .oglOrion_patched'))
+        {
+            // OGLight redrew zeros for a tech it does not know: always worth another look
+            if(unknownToOGLight.has(parseInt(details.getAttribute('data-technology-id'), 10))) return true;
+
+            // already looked at and nothing to do there (a tech OGLight knows, or no OGLight)?
+            if(details.dataset.oglOrionSeen === details.querySelector('.costs').childElementCount + '') return syncPending();
+            return true;
+        }
+        return syncPending();
+    };
+
+    const syncPending = () =>
+    {
+        const tiles = document.querySelector('#technologies');
+        return !!tiles && !checkedTileLists.has(tiles);
+    };
 
     const observer = new MutationObserver(() =>
     {
+        if(scheduled || !needsWork()) return;
+
         const panel = document.querySelector('#technologydetails_wrapper') || document.querySelector('#technologydetails');
-        if(!panel) return;
+        if(panel) captureDuration(panel);
 
-        captureDuration(panel);
-
-        if(scheduled) return;
         scheduled = true;
 
         // wait for OGLight's own requestAnimationFrame pass, then patch on top of it
@@ -720,7 +778,18 @@
         {
             scheduled = false;
             observer.disconnect();
-            try { patch(panel); }
+            try
+            {
+                const current = document.querySelector('#technologydetails_wrapper') || document.querySelector('#technologydetails');
+                if(current) patch(current);
+
+                // remember the panel as handled, keyed on its cost block, so OGLight redrawing it re-triggers us
+                const details = document.querySelector('#technologydetails');
+                const costs = details && details.querySelector('.costs');
+                if(costs) details.dataset.oglOrionSeen = costs.childElementCount + '';
+
+                syncTodolist();
+            }
             finally { observer.observe(document.body, { childList:true, subtree:true }); }
         }));
     });
