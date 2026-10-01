@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orion Costs for OGLight
 // @namespace    https://github.com/nicolagalassi
-// @version      0.3.0
+// @version      0.4.0
 // @description  Add-on for OGLight: fills in the cost of buildings and researches OGLight does not know yet (Project Orion: Interstellar Anomaly Scanner and its researches), reading the price the game itself puts on the page. Display only.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -21,9 +21,10 @@
   Project Orion building "Interstellar Anomaly Scanner" and its researches — gets base cost 0, so
   OGLight shows 0 metal / 0 crystal / 0 deuterium and drops the build time.
 
-  On the Orion CONTROL CENTER (component=orion, tab "Centro controllo", techs 4001-4007) it is worse:
-  the panel is loaded later, inside a tab, so OGLight's script never draws its cost box there — but
-  OGLight's stylesheet still hides the game's own cost list. The player sees no price at all.
+  In practice OGLight does not even get to the zeros: for an id missing from its table its code throws
+  after adding the ‹ × › buttons and before drawing the cost grid. On the Orion CONTROL CENTER
+  (component=orion, techs 4001-4007) the panel loads later, inside a tab, and OGLight does not run at
+  all. In both cases OGLight's stylesheet still hides the game's own cost list: no price is visible.
 
   WHY WE DO NOT PATCH OGLIGHT'S TABLE
   OGLight runs in its own userscript sandbox; another script cannot reach its Datafinder class.
@@ -31,8 +32,10 @@
   guessed base costs/factors would print wrong numbers with a straight face.
 
   WHAT THIS ADD-ON DOES INSTEAD
-  0. Where OGLight drew no cost box at all (the control center), we just un-hide the game's own
-     cost list — only if something actually hides it, so without OGLight nothing changes.
+  0. Where OGLight drew no cost grid, we draw it ourselves in OGLight's layout and class names (so it
+     looks like the shipyard's): level header, cost / cumulative / missing per resource, MSU, and the
+     "from → to" title. OGLight's ‹ × › buttons drive it. Only when OGLight's stylesheet is hiding the
+     game's list, so without OGLight nothing changes.
   1. The game still puts the REAL price of the next level in the panel — OGLight only hides that
      list with CSS (.costs .ipiHintable). We read it from there. It is exact: it already includes
      every cost reduction the player has, because the server computed it.
@@ -239,38 +242,162 @@
         return range ? { mode:'level', level:shown, from:parseInt(range[1], 10), to:parseInt(range[2], 10) } : { mode:'amount', amount:Math.max(shown, 1) };
     };
 
-    // OGLight's stylesheet hides the game's own cost list everywhere (.costs .ipiHintable and the
-    // "Required for level N" line), on the assumption that its script draws a replacement. Its script
-    // only does that on pages where the game's technologyDetails object exists when OGLight starts.
-    // The Orion control center loads its panel later, inside a tab, so there OGLight draws nothing and
-    // the player sees no price at all. In that case we simply un-hide the game's list: it is the game's
-    // own UI and its own exact numbers. The CSS keeps a :has() guard so the list is hidden again the
-    // moment OGLight's wrapper does appear.
-    const STYLE = `
-        #technologydetails .costs.oglOrion_showGameCosts:not(:has(.ogl_costsWrapper)) > p { display:block !important; }
-        #technologydetails .costs.oglOrion_showGameCosts:not(:has(.ogl_costsWrapper)) > ul.ipiHintable { display:flex !important; gap:5px; }
-    `;
+    // ---------- our own OGLight-style cost grid ----------
+    //
+    // For a tech missing from its table OGLight does not get as far as drawing zeros: its getTechData()
+    // reads `.metal` of an undefined table entry and throws, AFTER it has added the ‹ × › buttons but
+    // BEFORE it draws the cost grid or the "26 → 27" title. On the Orion control center it does not
+    // run at all. Either way its stylesheet still hides the game's own cost list, so the player saw
+    // no price. We draw the grid OGLight would have drawn, with OGLight's own class names so its
+    // stylesheet lays it out exactly like the shipyard's: level header, metal / crystal / deuterium
+    // (/ energy) rows with [cost of the level, cumulative over the range, missing on this planet], and
+    // the MSU row. The ‹ › buttons OGLight left behind drive it.
 
-    const injectStyle = () =>
+    // OGLight's default MSU ratio (options.msu = '3:2:1'). Its own setting lives in OGLight's private
+    // storage, which another script cannot read: a player with a custom ratio sees the default here.
+    const MSU_RATIO = [3, 2, 1];
+    const msuOf = c => Math.ceil((c.metal || 0) + (c.crystal || 0) * MSU_RATIO[0] / MSU_RATIO[1] + (c.deut || 0) * MSU_RATIO[0] / MSU_RATIO[2]);
+
+    // Same number format as OGLight's Util.formatToUnits: fr-FR compact notation mapped onto k / M / B / T.
+    const formatUnits = value =>
     {
-        if(document.querySelector('#oglOrion_style')) return;
-        const style = document.createElement('style');
-        style.id = 'oglOrion_style';
-        style.textContent = STYLE;
-        document.head.appendChild(style);
+        value = Math.round(value || 0);
+        const abs = Math.abs(value);
+        const precision = abs < 1000 ? 0 : abs < 1000000 ? 1 : 2;
+        const split = Intl.NumberFormat('fr-FR', { notation:'compact', minimumFractionDigits:precision, maximumFractionDigits:precision })
+            .format(value).match(/[a-zA-Z]+|[0-9,\-−]+/g) || [String(value)];
+        const number = split[0].replace(/,/g, '.').replace('−', '-');
+        const suffix = (split[1] || '').replace('Md', 'B').replace('Bn', 'T');
+        return `<span class="ogl_unit"><span>${number}</span><span class="ogl_suffix">${suffix}</span></span>`;
     };
 
-    const showGameCosts = panel =>
+    const cell = (parent, html, cls, title) =>
+    {
+        const div = document.createElement('div');
+        if(cls) div.className = cls;
+        if(title) div.setAttribute('title', title);
+        div.innerHTML = html;
+        parent.appendChild(div);
+        return div;
+    };
+
+    const estimated = (html, exact) => exact ? html : '~' + html;
+
+    const renderOwn = (panel, id) =>
     {
         const costs = panel.querySelector('.costs');
-        const list = costs?.querySelector(':scope > ul.ipiHintable');
-        if(!list || costs.classList.contains('oglOrion_showGameCosts')) return;
+        const gameCosts = readGameCosts(panel);
+        if(!costs || !gameCosts) return;
 
-        // only when something (OGLight's CSS) actually hides it: without OGLight the game's layout is untouched
-        if(getComputedStyle(list).display !== 'none') return;
+        const store = loadStore();
+        const initial = readGameLevel(panel, id);
+        const offset = parseInt(panel.dataset.oglOrionOffset || '0', 10);
+        const level = initial + offset;
 
-        injectStyle();
-        costs.classList.add('oglOrion_showGameCosts');
+        // OGLight's range: from the level owned to the level shown. Stepping below the next level shows
+        // that single level, as OGLight does.
+        const first = offset >= 0 ? initial : level;
+        const from = first - 1;
+
+        const wrapper = costs.querySelector('.ogl_costsWrapper.oglOrion_own') || document.createElement('div');
+        wrapper.className = 'ogl_costsWrapper oglOrion_own';
+        wrapper.textContent = '';
+
+        const header = document.createElement('div');
+        header.className = 'ogl_icon';
+        cell(header, '');
+        cell(header, String(level));
+        cell(header, `${from} <i class="material-icons">east</i> ${level}`);
+        cell(header, 'globe', 'material-icons');
+        wrapper.appendChild(header);
+
+        const totals = {};
+        let unknown = false;
+
+        RESOURCES.forEach(resource =>
+        {
+            if(!(resource in gameCosts)) return; // same rule as OGLight: a row per resource the game lists
+
+            const step = costAt(id, level, resource, store);
+            let total = { value:0, exact:true };
+
+            if(resource === 'energy') total = step; // energy is a requirement, not a sum
+            else
+            {
+                for(let l = first; l <= level; l++)
+                {
+                    const c = costAt(id, l, resource, store);
+                    if(!c) { total = null; break; }
+                    total.value += c.value;
+                    total.exact = total.exact && c.exact;
+                }
+            }
+
+            if(!step || !total) unknown = true;
+            if(total) totals[resource] = total;
+
+            const row = document.createElement('div');
+            row.className = `ogl_icon ogl_${resource}`;
+            const hint = 'Orion Costs for OGLight: open the panel at two different levels to estimate this';
+
+            cell(row, step ? estimated(formatUnits(step.value), step.exact) : '?', 'tooltip', step ? formatFull(step.value) : hint);
+            cell(row, total ? estimated(formatUnits(total.value), total.exact) : '?', 'ogl_text tooltip', total ? formatFull(total.value) : hint);
+
+            const have = planetResource(resource);
+            if(resource === 'energy' || have == null) cell(row, '');
+            else if(!total) cell(row, '?');
+            else if(have - total.value < 0) cell(row, formatUnits(have - total.value), 'ogl_danger tooltip', formatFull(have - total.value));
+            else cell(row, 'check', 'ogl_ok material-icons');
+
+            wrapper.appendChild(row);
+        });
+
+        const msuRow = document.createElement('div');
+        msuRow.className = 'ogl_icon ogl_msu';
+        const levelCosts = {};
+        ['metal', 'crystal', 'deut'].forEach(r => { const c = costAt(id, level, r, store); levelCosts[r] = c ? c.value : 0; });
+        const totalCosts = { metal:totals.metal?.value, crystal:totals.crystal?.value, deut:totals.deut?.value };
+        cell(msuRow, unknown ? '?' : formatUnits(msuOf(levelCosts)), 'tooltip', unknown ? '' : formatFull(msuOf(levelCosts)));
+        cell(msuRow, unknown ? '?' : formatUnits(msuOf(totalCosts)), 'ogl_text tooltip', unknown ? '' : formatFull(msuOf(totalCosts)));
+        wrapper.appendChild(msuRow);
+
+        if(!wrapper.parentElement) costs.appendChild(wrapper);
+
+        // OGLight writes the range into the title in place of "Level N"
+        const title = panel.querySelector('.information .level');
+        if(title) title.innerHTML = `${from} <i class="material-icons">east</i> ${level}`;
+
+        // the game's build time is for the next level only; hide it while another level is shown
+        const duration = panel.querySelector('.information .build_duration');
+        if(duration) duration.style.visibility = offset === 0 ? '' : 'hidden';
+
+        if(typeof window.initTooltips === 'function') { try { window.initTooltips(); } catch(e) { /* cosmetic */ } }
+    };
+
+    // OGLight's ‹ × › buttons. Its own handlers throw for these techs (see above); ours run alongside them.
+    // Display only: they change which level is SHOWN, nothing is sent to the game.
+    const hookArrows = (panel, id) =>
+    {
+        if(panel.dataset.oglOrionArrows) return;
+        panel.dataset.oglOrionArrows = '1';
+
+        panel.addEventListener('click', event =>
+        {
+            const button = event.target.closest('.ogl_actions .ogl_button');
+            if(!button) return;
+
+            const action = button.textContent.trim();
+            const initial = readGameLevel(panel, id);
+            let offset = parseInt(panel.dataset.oglOrionOffset || '0', 10);
+
+            if(action === 'chevron_left' && offset > 1 - initial) offset--;
+            else if(action === 'chevron_right') offset++;
+            else if(action === 'close') offset = 0;
+            else return;
+
+            panel.dataset.oglOrionOffset = String(offset);
+            renderOwn(panel, id);
+        });
     };
 
     const patch = panel =>
@@ -290,11 +417,19 @@
         store[id][gameLevel] = gameCosts;
         saveStore(store);
 
+        const details = panel.querySelector('#technologydetails') || panel;
         const wrapper = panel.querySelector('.costs .ogl_costsWrapper');
+
+        if(wrapper && wrapper.classList.contains('oglOrion_own')) return; // ours, already drawn
 
         if(!wrapper)
         {
-            showGameCosts(panel);
+            // only where OGLight's stylesheet hides the game's list: without OGLight the game is untouched
+            const list = panel.querySelector('.costs > ul.ipiHintable');
+            if(!list || getComputedStyle(list).display !== 'none') return;
+
+            hookArrows(details, id);
+            renderOwn(details, id);
             return;
         }
 
