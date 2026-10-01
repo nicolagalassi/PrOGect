@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orion Costs for OGLight
 // @namespace    https://github.com/nicolagalassi
-// @version      0.8.0
+// @version      0.8.1
 // @description  Add-on for OGLight: fills in the cost of buildings and researches OGLight does not know yet (Project Orion: Interstellar Anomaly Scanner and its researches), reading the price the game itself puts on the page. Display only.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -324,6 +324,20 @@
 
     const estimated = (html, exact) => exact ? html : '~' + html;
 
+    // Which level the ‹ › buttons are showing, as an offset from the next level, PER TECH. It used to live
+    // on the panel element, but the page rebuilds the panel from scratch now and then (a countdown that
+    // ends, resources ticking over): the new element had no offset and the grid jumped back to the next
+    // level under the player's fingers. Keeping it here survives those rebuilds; it is reset only when the
+    // player clicks a building tile, i.e. opens a panel on purpose — which is when OGLight resets it too.
+    const levelOffsets = new Map();
+    const levelOffset = id => levelOffsets.get(id) || 0;
+
+    document.addEventListener('click', event =>
+    {
+        const tile = event.target.closest && event.target.closest('#technologies .technology[data-technology]');
+        if(tile) levelOffsets.delete(parseInt(tile.getAttribute('data-technology'), 10));
+    }, true);
+
     const renderOwn = (panel, id) =>
     {
         const costs = panel.querySelector('.costs');
@@ -332,7 +346,7 @@
 
         const store = loadStore();
         const initial = readGameLevel(panel, id);
-        const offset = parseInt(panel.dataset.oglOrionOffset || '0', 10);
+        const offset = levelOffset(id);
         const level = initial + offset;
 
         // OGLight's range: from the level owned to the level shown. Stepping below the next level shows
@@ -440,7 +454,7 @@
 
             const action = button.textContent.trim();
             const initial = readGameLevel(panel, id);
-            let offset = parseInt(panel.dataset.oglOrionOffset || '0', 10);
+            let offset = levelOffset(id);
 
             if(action === 'chevron_left' && offset > 1 - initial) offset--;
             else if(action === 'chevron_right') offset++;
@@ -448,7 +462,7 @@
             else if(action === 'lists') { pinToOGLightTodolist(panel, id, button); return; }
             else return;
 
-            panel.dataset.oglOrionOffset = String(offset);
+            levelOffsets.set(id, offset);
             renderOwn(panel, id);
         });
     };
@@ -488,7 +502,7 @@
         if(!tech) { notify('OGLight to-do list not reachable from this page', true); return; }
 
         const initial = readGameLevel(panel, id);
-        const offset = parseInt(panel.dataset.oglOrionOffset || '0', 10);
+        const offset = levelOffset(id);
         if(offset < 0) { notify('Cannot lock previous levels', true); return; } // same rule as OGLight
 
         const store = loadStore();
