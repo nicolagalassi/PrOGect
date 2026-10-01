@@ -16,7 +16,7 @@ you can run one, all of them, or none.
 | Script | What it does |
 |---|---|
 | [`OGItemHelper.user.js`](OGItemHelper.user.js) | A searchable inventory box on the shop page: what you own, what is already active on this planet, the different durations of an item grouped under one button, and a jump to the same item on the next planet. It never activates anything — it opens the game's own item panel and you press the button. |
-| [`OGLightOrionCosts.user.js`](OGLightOrionCosts.user.js) | Add-on for **OGLight**: fills in the cost of techs OGLight does not know yet (Project Orion — Interstellar Anomaly Scanner and its researches), which OGLight shows as 0. It takes the real price the game already puts in the technology panel; for other levels (OGLight's ‹ › arrows) it estimates the growth factor once you have seen two levels, marked with `~`. Display only, no requests. |
+| [`OrionCostsForOGLight.user.js`](OrionCostsForOGLight.user.js) | Add-on for **OGLight**: fills in the cost of techs OGLight does not know yet (Project Orion — Interstellar Anomaly Scanner and its researches), which OGLight shows as 0. It takes the real price the game already puts in the technology panel; for other levels (OGLight's ‹ › arrows) it estimates the growth factor once you have seen two levels, marked with `~`. Display only, no requests. |
 | [`OGSeasonTracker.user.js`](OGSeasonTracker.user.js) | A panel beside the game menu with the running season's achievements: tier ladder, progress per tier, and the prize each tier pays out shown as artwork (avatar, planet skin, title). Pin the ones you are working on. Read-only, and it disables itself on universes without a season. |
 
 They read the pages you already have open; where they need more, it is a single read you trigger
