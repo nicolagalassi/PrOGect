@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orion Costs for OGLight
 // @namespace    https://github.com/nicolagalassi
-// @version      0.2.0
+// @version      0.3.0
 // @description  Add-on for OGLight: fills in the cost of buildings and researches OGLight does not know yet (Project Orion: Interstellar Anomaly Scanner and its researches), reading the price the game itself puts on the page. Display only.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -45,8 +45,8 @@
      the panel we remember (in localStorage) the price the game showed for that level. Once two
      different levels of the same tech have been seen, we estimate the growth factor per resource
      (cost(L) = cost(L0) * f^(L - L0), the standard OGame shape) and use it, marked with "~".
-     Until then other levels show "?". If the formula turns out to be published, it can be typed
-     into MANUAL_FORMULAS below and wins over the estimate.
+     Until then other levels show "?". A formula verified against the game can be typed into
+     MANUAL_FORMULAS below and wins over the estimate (the Scanner, id 45, is already there).
 
   COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
   - §1.1/§1.2  Display only. It never builds, queues or clicks anything; no game action at all.
@@ -65,12 +65,15 @@
 {
     'use strict';
 
-    // Formulas typed in by hand, once they are known for certain (e.g. confirmed by the game data or a
-    // ToolDev). Key = technology id as the game uses it (data-technology on the building tile).
-    // cost(level) = base * factor^(level - 1). Left empty on purpose: we do not guess. Example shape:
-    //   12345: { metal:84, crystal:42, deut:14, factor:1.5 },
+    // Formulas typed in by hand, once they are known for certain. Key = technology id as the game uses it
+    // (data-technology on the building tile). cost(level) = floor(base * factor^(level - 1)).
+    // Only verified entries go here: we do not guess.
     const MANUAL_FORMULAS =
     {
+        // Interstellar Anomaly Scanner. Verified against the game's own panel on s808-en (beta,
+        // 01 Oct 2026): level 49 = 867,810,695 / 433,905,347 / 144,635,115, i.e. exactly
+        // floor(84|42|14 * 1.4^48). Demolition matches too: 84 * 1.4^46 * (1 - 64% ion bonus).
+        45: { metal:84, crystal:42, deut:14, factor:1.4 },
     };
 
     const STORAGE_KEY = 'oglOrionCosts_v1';
