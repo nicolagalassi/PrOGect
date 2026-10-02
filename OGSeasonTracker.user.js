@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Season Mission Tracker
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.9.3
+// @version      0.9.4
 // @description  A collapsible panel beside the game menu listing the running season's achievements: tier ladder, progress and what each tier actually pays out (avatar, planet skin, title). Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -476,7 +476,7 @@
     //                            → <profile-picture class=ID> avatar (image lives on the CDN)
     //                            → .rewardTypeTitle           title (its own name)
     //                            → empty                      achievement points only
-    //   .seasonalSummary (per season) → the one flagged `.running` gives name and X/75.
+    //   .seasonalSummary (per season) → the one holding `<holderId>_X` of the active list gives name and X/75.
 
     // What a tier pays out. Detected by TAG, not by the localized label, so it works in any
     // language; the label is kept only for display.
@@ -568,13 +568,20 @@
                      root.querySelector('[id^="achievementContentList_season"]');
         if(!list) return null;
 
+        // Several seasons can be "running" at once (e.g. a regular season plus the
+        // anniversary event), so the summary must be the one belonging to THIS list:
+        // the list's holders are `..._11000100`, the matching summary holds `..._11000100_X`.
+        const ids = Array.from(list.querySelectorAll('[id^="achievementOverviewAchievementHolder_"]'))
+                         .map(n => n.id.replace('achievementOverviewAchievementHolder_', ''));
+        const summaries = Array.from(root.querySelectorAll('.seasonalSummary'));
+        const summary = summaries.find(s => ids.some(id => s.querySelector('#achievementOverviewAchievementHolder_' + id + '_X'))) ||
+                        (summaries.filter(s => s.querySelector('.seasonalSummarySeasonStatus .running')).length === 1 ?
+                         summaries.find(s => s.querySelector('.seasonalSummarySeasonStatus .running')) : null);
         let name = txt(cat), doneCnt = 0, total = 0;
-        const running = Array.from(root.querySelectorAll('.seasonalSummary'))
-                             .find(s => s.querySelector('.seasonalSummarySeasonStatus .running'));
-        if(running)
+        if(summary)
         {
-            name = txt(running.querySelector('.seasonalSummaryTitle')) || name;
-            const mm = txt(running.querySelector('.seasonalSummaryHeaderTitleAndProgress > div:last-child'))
+            name = txt(summary.querySelector('.seasonalSummaryTitle')) || name;
+            const mm = txt(summary.querySelector('.seasonalSummaryHeaderTitleAndProgress > div:last-child'))
                        .match(/(\d[\d.,]*)\s*\/\s*(\d[\d.,]*)/);
             if(mm) { doneCnt = num(mm[1]); total = num(mm[2]); }
         }
