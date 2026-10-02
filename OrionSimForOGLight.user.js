@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orion Sim for OGLight
 // @namespace    https://github.com/nicolagalassi
-// @version      0.1.0
+// @version      0.2.0
 // @description  Add-on for OGLight: a button next to each anomaly-mission wave that opens the battle simulator chosen in OGLight, pre-filled with that wave's NPC fleet and your fleet at the anomaly. Display only.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -38,7 +38,8 @@
                the DOM-only observer adds buttons when the game redraws the mission list.
   - §4.2       No cp=, no planet switching.
   - §1.5.1     Nothing to do with probing or targeting: it simulates an NPC wave against your own fleet.
-  - §1.7       Adds a button in the wave row's "Sim" cell; the game's own button stays as it is.
+  - §1.7       Adds a button beside the game's own in the wave row's "Sim" cell; the game's button stays
+               as it is.
   - §1.9       Data leaves the machine ONLY on the player's click, and only what a simulator needs
                (the wave, your ships at the anomaly, your combat techs/bonuses), in the URL fragment of
                the simulator the player chose in OGLight — exactly what OGLight's own simulator button
@@ -216,6 +217,13 @@
 
     // ---------- the button ----------
 
+    const iconFontReady = () =>
+    {
+        // OGLight declares the font with @font-face; it is in document.fonts once OGLight's sheet is in
+        try { return Array.from(document.fonts || []).some(f => /Material Icons/i.test(f.family)); }
+        catch(e) { return false; }
+    };
+
     const addButtons = () =>
     {
         document.querySelectorAll('.anomalyMission .waveSimButton:not([data-orion-sim])').forEach(gameButton =>
@@ -229,12 +237,13 @@
             const o = ogl();
             const choice = SIMULATORS[o?.db?.options?.sim] || SIMULATORS[Object.keys(SIMULATORS)[0]];
 
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'custom_btn tooltip orionSimButton';
+            // OGLight's own simulate button, as on its spy reports: an ogl_button with the Material Icons
+            // "play_arrow" glyph (the icon font is OGLight's). Without that font a plain ▶ stands in.
+            const button = document.createElement('div');
+            button.className = 'ogl_button material-icons tooltip orionSimButton';
             button.setAttribute('data-tooltip-title', `Open in ${choice.name} (OGLight simulator): this wave against your fleet at the anomaly`);
             button.title = button.getAttribute('data-tooltip-title');
-            button.textContent = 'OGL';
+            button.textContent = iconFontReady() ? 'play_arrow' : '▶';
 
             button.addEventListener('click', event =>
             {
@@ -248,16 +257,20 @@
                 else if(!link.hasShips) notify('None of your fleets is at the anomaly when this wave lands: only the wave is filled in');
             });
 
+            // side by side with the game's own Sim button, in the same cell
             const holder = gameButton.closest('gradient-button') || gameButton;
+            holder.parentElement.classList.add('orionSimCell');
             holder.insertAdjacentElement('afterend', button);
         });
     };
 
     const style = document.createElement('style');
     style.textContent = `
-        .anomalyMission .orionSimButton { margin-left:4px; height:28px; min-width:34px; padding:0 4px; font-size:10px; font-weight:bold;
-            color:#ffb800; background:#171c24; border:1px solid #2d3743; border-radius:3px; cursor:pointer; vertical-align:middle; }
-        .anomalyMission .orionSimButton:hover { border-color:#ffb800; }
+        .anomalyMission .orionSimCell { display:flex !important; flex-direction:row; align-items:center; justify-content:center; gap:4px; }
+        .anomalyMission .orionSimButton { display:inline-flex !important; align-items:center; justify-content:center; box-sizing:border-box;
+            width:28px; height:28px; margin:0 !important; padding:0 !important; font-size:18px !important; line-height:28px !important;
+            cursor:pointer; user-select:none; }
+        .anomalyMission .orionSimButton:not(.ogl_button) { color:#ffb800; background:#171c24; border:1px solid #2d3743; border-radius:3px; }
     `;
     document.head.appendChild(style);
 
