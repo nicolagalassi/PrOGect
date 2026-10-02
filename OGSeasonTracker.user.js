@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Season Mission Tracker
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.9.1
+// @version      0.9.2
 // @description  A collapsible panel beside the game menu listing the running season's achievements: tier ladder, progress and what each tier actually pays out (avatar, planet skin, title). Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -47,7 +47,8 @@
   The panel is meaningless where no season runs, so the first achievement view it reads
   decides: no season block → the verdict is stored (localStorage is per universe) and the
   panel removes itself from that universe, re-checking only if the player opens the
-  achievement view again.
+  achievement view again (it waits for that view, which the game loads after the page, and
+  comes back as soon as it shows a season).
 
   COMPLIANCE (OGame Origin tool rules — see PrOGect/AGENTS.md):
   - §1.1  1 click = 1 action. The panel triggers no game action at all: it only reads and
@@ -1084,6 +1085,29 @@
         });
     }
 
+    // Non-seasonal universe, profile page: wait for the achievement view to arrive and look for
+    // a season block in it. DOM only, throttled to one check per frame, gone once it fires.
+    function watchForSeason()
+    {
+        let queued = false;
+        const watcher = new MutationObserver(() =>
+        {
+            if(queued) return;
+            queued = true;
+            requestAnimationFrame(() =>
+            {
+                queued = false;
+                if(!document.querySelector('[id^="achievementContentList_season"]')) return;
+                watcher.disconnect();
+                seasonal = null;
+                try { localStorage.removeItem(LS.seas); } catch(e) {}
+                console.info('[OGSeasonTracker] a season is running on this universe now → panel enabled again.');
+                start();
+            });
+        });
+        watcher.observe(document.body, { childList: true, subtree: true });
+    }
+
     function start()
     {
         try
@@ -1093,7 +1117,15 @@
                 // Known non-seasonal universe: add nothing at all. The one exception is the
                 // achievement view itself — a season may have started since, and re-reading
                 // it costs nothing because the player already has it on screen.
-                if(!document.querySelector('[id^="achievementContentList_season"]')) return;
+                if(!document.querySelector('[id^="achievementContentList_season"]'))
+                {
+                    // The game loads that view by ajax AFTER the page, so at this point it is
+                    // often not there yet: a season started since would never be noticed. On the
+                    // profile page only, keep watching the DOM (no server call) until the view
+                    // shows a season block, then drop the verdict and start for real.
+                    if(/component=playerprofile/.test(location.search)) watchForSeason();
+                    return;
+                }
                 seasonal = null;
                 try { localStorage.removeItem(LS.seas); } catch(e) {}
             }
