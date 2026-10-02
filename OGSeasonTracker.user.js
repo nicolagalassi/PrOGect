@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Season Mission Tracker
 // @namespace    https://github.com/nicolagalassi/progect
-// @version      0.9.2
+// @version      0.9.3
 // @description  A collapsible panel beside the game menu listing the running season's achievements: tier ladder, progress and what each tier actually pays out (avatar, planet skin, title). Standalone companion to PrOGect.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
@@ -64,7 +64,8 @@
   - §1.5  No alternative UI and no shortcut: this mirrors the achievement view read-only.
   - §1.6  Nothing here recreates a Dark Matter / Officer feature.
   - §1.7  CLOSED by default, anchored to the LEFT edge of the menu column (measured at
-          runtime) and opening into the empty margin. It never hides, resizes, moves, covers
+          runtime) and opening into the empty margin — and drawn ONLY where that margin exists,
+          i.e. the normal game frame; standalone views such as the empire page never see it. It never hides, resizes, moves, covers
           or restyles the menu, the banners, the top ad bar, the footer, or Merchant /
           Officers / Shop. Reward thumbnails are the game's own CDN images, shown as-is.
   - §1.9  Nothing leaves the machine. All state (cache, pins, panel state) is localStorage.
@@ -935,8 +936,49 @@
         });
     }
 
+    // ONLY the normal game frame — the page that has the menu column. The @match rule also catches
+    // the views the game opens on their own: the empire view (page=standalone&component=empire),
+    // the popups, and the fragments rendered through `componentOnly` / `ajax`. Those carry no menu,
+    // so the panel would have no edge to anchor to and would sit on top of the game's own content,
+    // which §1.7 does not allow.
+    function isGameFrame()
+    {
+        const p = (new URLSearchParams(location.search).get('page') || '').toLowerCase();
+        if(p === 'standalone' || p === 'componentonly' || p === 'ajax') return false;
+        return !!(document.querySelector('#links') || document.querySelector('#menuTable'));
+    }
+
+    // Take the panel off THIS page without touching the stored data — unlike teardown(), which is
+    // the "no season in this universe" verdict and is meant to forget everything.
+    function removePanel()
+    {
+        try { if(observer) observer.disconnect(); } catch(e) {}
+        observer = null;
+        if(wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+        wrap = panel = tab = peek = null;
+    }
+
+    // Sibling panels of this family share one vertical stack on the left margin, in this fixed
+    // order, so two of them installed in the same universe never land on top of each other. Each
+    // one sits below the ones that come before it; this panel is first, so it keeps the top slot.
+    const STACK = ['.ogst_wrap', '.ogxs_wrap'];
+    function stackTop(base)
+    {
+        let top = base;
+        for(let i = 0; i < STACK.length; i++)
+        {
+            const n = document.querySelector(STACK[i]);
+            if(n === wrap) break;          // everything after us is our problem no more
+            if(!n) continue;
+            const r = n.getBoundingClientRect();
+            if(r.height) top = Math.max(top, r.bottom + 6);
+        }
+        return top;
+    }
+
     function build()
     {
+        if(!isGameFrame()) { removePanel(); return; }
         injectStyle();
         if(wrap && wrap.isConnected) return;
         wrap = el('div', 'ogst_wrap', document.body);
@@ -958,11 +1000,18 @@
         const links = document.querySelector('#links') || document.querySelector('#menuTable');
         const r = links ? links.getBoundingClientRect() : null;
         const edge = r ? r.left : 200;
+        // Never below the point where only the tab would still be reachable.
+        const top = Math.min(stackTop(Math.max(8, r ? r.top : 120)), Math.max(8, window.innerHeight - 90));
         wrap.style.right = Math.max(0, window.innerWidth - edge) + 'px';
         wrap.style.left = 'auto';
-        wrap.style.top = Math.max(8, r ? r.top : 120) + 'px';
+        wrap.style.top = top + 'px';
         // Grow only into the free margin; beyond it we would push a scrollbar onto the page.
-        if(panel) panel.style.maxWidth = Math.max(180, edge - 8) + 'px';
+        if(panel)
+        {
+            panel.style.maxWidth = Math.max(180, edge - 8) + 'px';
+            // ...and only into the height left below us, so a stacked neighbour still fits.
+            panel.style.maxHeight = Math.max(200, window.innerHeight - top - 12) + 'px';
+        }
     }
 
     function fmtLeft(ms)
@@ -1077,6 +1126,7 @@
             try
             {
                 build();
+                if(!wrap) return;   // not the game frame → nothing of ours on this page
                 place();
                 if(ingestFromPage()) { if(wrap) render(); }
                 else if(uiState !== 'closed' && !panel.firstChild) render();
@@ -1128,6 +1178,13 @@
                 }
                 seasonal = null;
                 try { localStorage.removeItem(LS.seas); } catch(e) {}
+            }
+            if(!isGameFrame())
+            {
+                // No panel here, but if the player happens to be looking at the achievement view
+                // in one of these views, reading it costs nothing and keeps the cache fresh.
+                ingestFromPage();
+                return;
             }
             build();
             ingestFromPage();
