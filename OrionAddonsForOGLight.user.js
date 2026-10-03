@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGLight Orion Addons
 // @namespace    https://github.com/nicolagalassi
-// @version      0.13.0
+// @version      0.14.0
 // @description  Add-ons for OGLight on the Project Orion test server: real costs for the Orion buildings in OGLight's own layout (level arrows, to-do list), a button on every anomaly-mission wave that opens OGLight's battle simulator pre-filled, and a profitability figure on every scanned anomaly. Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -1312,6 +1312,56 @@ onDomReady(function()
         return Math.floor(minutes / 60) + 'h ' + String(minutes % 60).padStart(2, '0') + 'm';
     };
 
+    // "3h 15m", "1g 3o 20m", "45m 10s": the game writes durations with the language's own letters
+    // (Italian uses g for days and o for hours), so both spellings are read.
+    const durationHours = text =>
+    {
+        const part = re => parseInt(String(text || '').match(re)?.[1] || '0', 10);
+        return part(/(\d+)\s*[dg]\b/) * 24 + part(/(\d+)\s*[ho]\b/) + part(/(\d+)\s*m\b/) / 60 + part(/(\d+)\s*s\b/) / 3600;
+    };
+
+    // Lithium in the bar right now. The text is the game's own running counter; data-value is the figure
+    // the page was built with, used only when the text cannot be read.
+    const lithiumNow = () =>
+    {
+        const el = document.querySelector('#lithiumAmount, .orionLithiumAmount');
+        if(!el) return null;
+        return parseNumber(el.textContent) || Math.floor(Number(el.getAttribute('data-value')) || 0);
+    };
+
+    // When the resources being converted into lithium run out, production stops. The page says when
+    // (lithiumDepletionSeconds / depletionSeconds); 0 means it does not stop.
+    const depletionHours = () =>
+    {
+        for(const script of document.querySelectorAll('#orionContent script, #orioncomponent script, #orionMission script'))
+        {
+            const match = script.textContent.match(/lithiumDepletionSeconds\s*=\s*(\d+)/) || script.textContent.match(/depletionSeconds\s*:\s*(\d+)/);
+            if(match) return Number(match[1]) > 0 ? Number(match[1]) / 3600 : Infinity;
+        }
+        return Infinity;
+    };
+
+    // Launching NOW and collecting at the end: the lithium then is what is in the bar plus what is
+    // produced during the mission. The redemption cost is split evenly over the waves, as their rewards
+    // are, so that lithium buys a whole number of waves.
+    // If it falls short, the wait is measured from now: production needs `needed` hours to bring the bar
+    // up to the cost, and the mission already runs for `hours` of them, so launching `needed - hours`
+    // later lets everything be collected at the end. When the conversion stops before `needed` hours, no
+    // wait is long enough: wait is then null.
+    // It cannot see lithium already promised to other missions.
+    const launchPlan = (data, hours, waves, perHour) =>
+    {
+        const now = lithiumNow();
+        if(now === null || !(perHour > 0) || !(hours > 0) || !(waves > 0) || !data.cost) return null;
+
+        const stopsIn = depletionHours();
+        const atEnd = now + perHour * Math.min(hours, stopsIn);
+        const covered = Math.min(waves, Math.floor(atEnd / (data.cost / waves)));
+        const needed = (data.cost - now) / perHour;
+
+        return { atEnd, covered, waves, msu:data.msu * covered / waves, wait:needed > stopsIn ? null : Math.max(0, needed - hours) };
+    };
+
     // The two lists the index is shown on. Each says where its cards are, where their redemption cost and
     // rewards sit, and where the line goes.
     const KINDS =
@@ -1328,6 +1378,12 @@ onDomReady(function()
             },
             rewards:'.scannerResultRewardsList .rewardLine',
             after:'.scannerResultTable',
+            // the result row's own columns: level, target, duration, waves, distance, type, cost
+            mission:card =>
+            {
+                const cells = card.querySelectorAll('.scannerResultRow:not(.header) > .cell');
+                return { hours:durationHours(cells[2]?.textContent), waves:parseNumber(cells[3]?.textContent) };
+            },
         },
         {
             // active missions: the cost is the collect button's own line ("Lithium costs: 2.567.018"), the
@@ -1400,6 +1456,23 @@ onDomReady(function()
                     `<span class="orionProfitIndex"><b>${compact(index)}</b> ${unit}</span>` +
                     (perHour > 0 ? `<span>redeeming = <b>${hoursText(data.cost / perHour)}</b> of production</span>` : '') +
                     `<span>rewards <b>${compact(data.msu)}</b> MSU</span>`;
+
+                const shape = kind.mission ? kind.mission(card) : null;
+                const plan = shape ? launchPlan(data, shape.hours, shape.waves, perHour) : null;
+
+                if(plan)
+                {
+                    const line = document.createElement('span');
+                    line.className = 'orionProfitPlan' + (plan.covered < plan.waves ? ' orionProfitShort' : '');
+                    line.title = `Lithium now plus ${hoursText(shape.hours)} of production, collected at the end. It does not count lithium your other missions will need.`;
+                    line.innerHTML = plan.covered >= plan.waves
+                        ? `launch now: <b>${compact(plan.atEnd)}</b> lithium at the end collects <b>all ${plan.waves} waves</b>, ≈<b>${compact(plan.msu)}</b> MSU`
+                        : `launch now: <b>${compact(plan.atEnd)}</b> lithium at the end collects <b>${plan.covered}/${plan.waves} waves</b>, ≈<b>${compact(plan.msu)}</b> MSU` +
+                          (plan.wait === null
+                              ? ` · not all ${plan.waves}: lithium production stops before it gets there`
+                              : ` · all ${plan.waves} if launched in <b>${hoursText(plan.wait)}</b>`);
+                    box.appendChild(line);
+                }
             }
 
             if(data.excluded.length)
@@ -1461,6 +1534,8 @@ onDomReady(function()
         .orionProfit .orionProfitMuted { color:#7c8a99; }
         .orionProfitBest { outline:2px solid #ffb800; outline-offset:-2px; }
         .orionProfitBest .orionProfitIndex b { color:#ffb800; }
+        .orionProfit .orionProfitPlan { flex-basis:100%; padding-top:3px; border-top:1px solid rgba(255,255,255,.06); color:#8fd19e; }
+        .orionProfit .orionProfitPlan.orionProfitShort { color:#e0b25a; }
     `;
     document.head.appendChild(style);
 
