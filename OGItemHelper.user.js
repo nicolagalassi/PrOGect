@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Item Helper for OGame
 // @namespace    https://github.com/nicolagalassi
-// @version      1.1.1
-// @description  A searchable inventory box on the shop page: what is already active on the planet, the game's own item panel one click away, the same item carried to the next planet, and the time left written on active items and officers on every page. IT/EN/DE/FR/ES/PL/TR/PT/RU. Standalone userscript, no dependencies.
+// @version      1.2.0
+// @description  A searchable, filterable inventory box on the shop page: what is already active on the planet, the game's own categories as filters, the game's own item panel one click away, the same item carried to the next planet, and the time left written on active items and officers on every page. Settings panel with colours and thresholds. IT/EN/DE/FR/ES/PL/TR/PT/RU. Standalone userscript, no dependencies.
 // @author       nicolagalassi
 // @match        https://*.ogame.gameforge.com/game/*
 // @icon         https://gf1.geo.gfsrv.net/cdn3d/favicon.ico
@@ -24,6 +24,18 @@
   - Adds its OWN box inside the shop (between the image/detail area and the inventory list),
     with a compact, searchable overview: thumbnail, name, amount, percentage badge — and it
     marks the item(s) already ACTIVE on the current planet with the remaining time.
+  - Search is narrowed by FILTER CHIPS: the game's own inventory categories (their hashes come off
+    the items, their wording off the game's own filter buttons — nothing is invented or hardcoded),
+    plus "expiring" and "active". The counter reads "12 / 47" whenever something is filtered out,
+    so a short list is never mistaken for a short inventory, and clicking it clears every filter.
+    Filters are deliberately NOT remembered between page loads: a filter left on from yesterday
+    would look like missing items.
+  - Everything that is a CHOICE lives in a SETTINGS panel (⚙) instead of crowding the shop page:
+    what the list shows (shop items, hide expiring, hide active, group durations, compact grid,
+    sort order), when a deadline reads as urgent (one threshold, used by the cards, the overview
+    reminder and the badges alike), the colours those deadlines are drawn in (four presets or your
+    own), and the state of the cache behind it all — how old it is, and a way to clear it.
+    Preferences live in localStorage, so they survive the tab; nothing here talks to the server.
   - By default it lists only what you OWN plus what is active. A "Shop" flag also lists buyable
     shop items you do not own. The game loads inventory and shop data only for the visible tab, so
     the helper accumulates, in memory for this page load, whatever the player opens: visit Shop
@@ -279,14 +291,158 @@
         .oih_remTime{font-size:10px;color:#FFC24D;white-space:nowrap}
         .oih_remItem.oih_soon .oih_remTime{color:#FF7A6B}
         .oih_remMore{font-size:10px;color:#8FA6B8;align-self:center}
+
+        /* ---- filter chips: the game's own categories, plus the two states worth isolating ---- */
+        .oih_filters{display:flex;align-items:center;gap:4px;margin-top:6px;flex-wrap:wrap}
+        .oih_chip{
+            cursor:pointer;user-select:none;white-space:nowrap;padding:2px 8px;border-radius:10px;
+            border:1px solid var(--line);background:var(--row);color:var(--mute);
+            font-family:var(--disp);font-size:10.5px;letter-spacing:.7px;text-transform:uppercase;
+        }
+        .oih_chip:hover{border-color:var(--line-hi);color:var(--text)}
+        .oih_chip.oih_cOn{border-color:var(--acc-dim);color:var(--acc);background:rgba(72,200,255,.12)}
+        .oih_chip.oih_cExp.oih_cOn{border-color:#8A6323;color:var(--warn);background:rgba(255,154,90,.12)}
+        .oih_chip.oih_cAct.oih_cOn{border-color:#2A8F73;color:var(--mint);background:rgba(59,232,176,.12)}
+        .oih_sep{width:1px;height:14px;background:var(--line);margin:0 2px}
+        .oih_count.oih_filtered{color:var(--acc);cursor:pointer}
+
+        /* ---- compact grid: same cards, less of everything ---- */
+        .oih_dense .oih_grid{grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:4px}
+        .oih_dense .oih_card{padding:4px;gap:5px}
+        .oih_dense .oih_thumb{width:30px;height:30px}
+        .oih_dense .oih_name{font-size:10.5px;-webkit-line-clamp:1}
+        .oih_dense .oih_meta{margin-top:2px;gap:4px}
+        .oih_dense .oih_btn{padding:3px 7px;font-size:10.5px}
+
+        /* ---- settings panel: everything that used to crowd the control bar ---- */
+        .oih_modal{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(3,7,11,.72)}
+        .oih_panel{
+            --ink:#0C131B; --row:#16212C; --row-hi:#1D2A37; --line:#2B3A4A; --line-hi:#3F5568;
+            --acc:#48C8FF; --acc-hi:#B7ECFF; --acc-dim:#2C6E90;
+            --text:#E8F3FB; --mute:#8FA6B8; --faint:#5D7285;
+            --disp:"Bahnschrift","DIN Alternate","Roboto Condensed","Arial Narrow",Impact,sans-serif;
+            --body:"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+            width:min(460px,92vw);max-height:86vh;overflow-y:auto;padding:12px 14px 14px;
+            border:1px solid var(--line-hi);border-radius:6px;background:linear-gradient(180deg,#141F29,var(--ink));
+            box-shadow:0 12px 40px rgba(0,0,0,.6);font-family:var(--body);color:var(--text);box-sizing:border-box;
+        }
+        .oih_panel *{box-sizing:border-box}
+        .oih_pHead{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+        .oih_pTitle{flex:1 1 auto;font-family:var(--disp);font-size:13px;letter-spacing:1.4px;text-transform:uppercase;color:var(--acc)}
+        .oih_pClose{cursor:pointer;color:var(--mute);font-size:16px;line-height:1;padding:2px 6px;border:1px solid transparent;border-radius:3px}
+        .oih_pClose:hover{color:var(--acc-hi);border-color:var(--line-hi)}
+        .oih_sec{margin-top:11px;padding-top:9px;border-top:1px solid var(--line)}
+        .oih_secT{font-family:var(--disp);font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint);margin-bottom:7px}
+        .oih_row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:11.5px;color:var(--mute)}
+        .oih_row label{flex:1 1 auto;cursor:pointer;color:var(--text)}
+        .oih_row select{
+            padding:3px 6px;border-radius:3px;border:1px solid var(--line);background:#070E14 !important;
+            color:var(--text) !important;font-family:var(--body);font-size:11.5px;
+        }
+        .oih_sw{position:relative;flex:0 0 auto;width:32px;height:17px;border-radius:9px;border:1px solid var(--line-hi);background:var(--row);cursor:pointer}
+        .oih_sw::after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:var(--faint);transition:left .12s,background .12s}
+        .oih_sw.oih_swOn{border-color:var(--acc-dim);background:rgba(72,200,255,.18)}
+        .oih_sw.oih_swOn::after{left:17px;background:var(--acc)}
+        .oih_colors{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+        .oih_col{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;color:var(--mute)}
+        .oih_col input[type=color]{width:38px;height:24px;padding:0;border:1px solid var(--line-hi);border-radius:3px;background:transparent;cursor:pointer}
+        .oih_presets{display:flex;gap:5px;flex-wrap:wrap}
+        .oih_note{font-size:10.5px;color:var(--faint);line-height:1.5;margin-top:6px}
+        .oih_note b{color:var(--mute);font-weight:600}
     `;
     function injectStyle()
     {
-        if(document.getElementById('oih_style')) return;
-        const s = document.createElement('style');
-        s.id = 'oih_style';
-        s.textContent = CSS;
-        (document.head || document.documentElement).appendChild(s);
+        if(!document.getElementById('oih_style'))
+        {
+            const s = document.createElement('style');
+            s.id = 'oih_style';
+            s.textContent = CSS;
+            (document.head || document.documentElement).appendChild(s);
+        }
+        applyTheme();
+    }
+
+    // --------------------------------------------------------------------- preferences
+    // One store for everything the player can set. localStorage, not sessionStorage: a preference
+    // that forgets itself when the tab closes is not a preference. It is also read on pages where
+    // the box is never built — the overview reminder and the timer badges need the colours and the
+    // "expiring soon" threshold — so it lives here, above every consumer.
+    const PREFS_KEY = 'oih_prefs';
+    // Colour sets for the deadline wording, the officer badges and the box accent. They are the
+    // only colours worth exposing: the ones that say "this runs out soon", which is exactly the
+    // thing a player wants louder or quieter than we guessed.
+    const PRESETS = {
+        default:  { exp: '#FF9A5A', soon: '#FF7A6B', officer: '#FFC24D', acc: '#48C8FF' },
+        neon:     { exp: '#FFD166', soon: '#FF3B6B', officer: '#7CF3D0', acc: '#B388FF' },
+        sober:    { exp: '#C9B58C', soon: '#D2887A', officer: '#C3CCD4', acc: '#8FA6B8' },
+        contrast: { exp: '#FFB000', soon: '#FF3B30', officer: '#FFFFFF', acc: '#00E5FF' },
+    };
+    const DEFAULT_PREFS = {
+        showShop: false,     // also list buyable shop items
+        hideExp: false,      // hide items that carry a deadline
+        hideActive: false,   // hide what is already running here
+        groupDur: true,      // 7d/30d/90d of one item under a single card
+        dense: false,        // tighter cards, more of them on screen
+        sort: 'smart',       // smart | expiry | name | rarity | amount
+        soonHours: 24,       // below this, a deadline is drawn as urgent
+        preset: 'default',
+        colors: Object.assign({}, PRESETS.default),
+    };
+    const PREFS = (() =>
+    {
+        const p = Object.assign({}, DEFAULT_PREFS, { colors: Object.assign({}, DEFAULT_PREFS.colors) });
+        try
+        {
+            const o = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+            if(o && typeof o === 'object')
+            {
+                Object.keys(DEFAULT_PREFS).forEach(k => { if(k !== 'colors' && o[k] !== undefined) p[k] = o[k]; });
+                if(o.colors) Object.keys(p.colors).forEach(k => { if(o.colors[k]) p.colors[k] = o.colors[k]; });
+            }
+        }
+        catch(e) {}
+        return p;
+    })();
+    function savePrefs()
+    {
+        try { localStorage.setItem(PREFS_KEY, JSON.stringify(PREFS)); } catch(e) {}
+        applyTheme();
+    }
+    function resetPrefs()
+    {
+        Object.keys(DEFAULT_PREFS).forEach(k => { PREFS[k] = k === 'colors' ? Object.assign({}, DEFAULT_PREFS.colors) : DEFAULT_PREFS[k]; });
+        savePrefs();
+    }
+    // The threshold that turns a deadline red — on the cards, on the overview reminder and on the
+    // badges. It used to be a hardcoded 24h written in three separate places.
+    const soonSec = () => Math.max(1, +PREFS.soonHours || 24) * 3600;
+    const soonMs = () => soonSec() * 1000;
+
+    // The chosen colours are applied as a SECOND stylesheet that only redefines variables and the
+    // few badge rules that cannot use them (they are drawn outside the box, where our variables do
+    // not reach). The base stylesheet stays untouched, so a reset is just dropping this one.
+    const SAFE_COLOR = c => (/^#[0-9a-fA-F]{3,8}$/.test(String(c || '')) ? c : '#FFC24D');
+    function applyTheme()
+    {
+        const c = PREFS.colors || DEFAULT_PREFS.colors;
+        const exp = SAFE_COLOR(c.exp), soon = SAFE_COLOR(c.soon), off = SAFE_COLOR(c.officer), acc = SAFE_COLOR(c.acc);
+        const css = `
+            .oih_box{--warn:${exp};--alert:${soon};--acc:${acc}}
+            .oih_tmr{border-color:${acc}55;color:${acc}}
+            .oih_tmrOfficer{border-color:${off}66;color:${off}}
+            .oih_tmr.oih_tmrSoon{border-color:${soon}88;color:${soon}}
+            .oih_remTitle{color:${exp}}
+            .oih_remTime{color:${off}}
+            .oih_remItem.oih_soon .oih_remTime{color:${soon}}
+        `;
+        let n = document.getElementById('oih_theme');
+        if(!n)
+        {
+            n = document.createElement('style');
+            n.id = 'oih_theme';
+            (document.head || document.documentElement).appendChild(n);
+        }
+        n.textContent = css;
     }
 
     // --------------------------------------------------------------------- helpers
@@ -392,7 +548,7 @@
             tipTimers: 'Timer: quanto manca alla fine, scritto sugli oggetti attivi e sotto gli ufficiali, in ogni pagina.',
             tipOpen: 'Apre il pannello del gioco per questo oggetto: il tasto Attiva lo premi tu.',
             tipNext: 'Va sul pianeta successivo e apre lo stesso oggetto, pronto da attivare.',
-            tipMissing: 'Apri una volta queste schede per aggiornare la lista (resta in memoria ~24h).',
+            tipMissing: 'Apri una volta queste schede per aggiornare la lista (gli item salvati restano finché non lo fai).',
             expiresOn: 'Scade il', unitDay: 'g',
         },
         en: {
@@ -406,7 +562,7 @@
             tipTimers: 'Timers: time left, written on the active items and under the officers, on every page.',
             tipOpen: "Opens the game's own panel for this item: you press Activate yourself.",
             tipNext: 'Goes to the next planet and opens the same item, ready to activate.',
-            tipMissing: 'Open these tabs once to refresh the list (kept for ~24h).',
+            tipMissing: 'Open these tabs once to refresh the list (saved items stay until you do).',
             expiresOn: 'Expires on', unitDay: 'd',
         },
         de: {
@@ -420,7 +576,7 @@
             tipTimers: 'Timer: die Restzeit auf aktiven Gegenständen und unter den Offizieren, auf jeder Seite.',
             tipOpen: 'Öffnet das Fenster des Spiels für diesen Gegenstand: Aktivieren drückst du selbst.',
             tipNext: 'Geht zum nächsten Planeten und öffnet denselben Gegenstand, bereit zum Aktivieren.',
-            tipMissing: 'Öffne diese Reiter einmal, um die Liste zu aktualisieren (bleibt ~24h gespeichert).',
+            tipMissing: 'Öffne diese Reiter einmal, um die Liste zu aktualisieren (gespeicherte Items bleiben bis dahin erhalten).',
             expiresOn: 'Läuft ab am', unitDay: 'T',
         },
         fr: {
@@ -434,7 +590,7 @@
             tipTimers: 'Minuteurs : le temps restant sur les objets actifs et sous les officiers, sur chaque page.',
             tipOpen: "Ouvre le panneau du jeu pour cet objet : c'est toi qui appuies sur Activer.",
             tipNext: 'Va sur la planète suivante et ouvre le même objet, prêt à activer.',
-            tipMissing: 'Ouvre ces onglets une fois pour actualiser la liste (gardée ~24h).',
+            tipMissing: 'Ouvre ces onglets une fois pour actualiser la liste (les objets enregistrés restent jusque-là).',
             expiresOn: 'Expire le', unitDay: 'j',
         },
         es: {
@@ -448,7 +604,7 @@
             tipTimers: 'Temporizadores: el tiempo restante en los objetos activos y bajo los oficiales, en cada página.',
             tipOpen: 'Abre el panel del juego para este objeto: Activar lo pulsas tú.',
             tipNext: 'Va al siguiente planeta y abre el mismo objeto, listo para activar.',
-            tipMissing: 'Abre estas pestañas una vez para actualizar la lista (se guarda ~24h).',
+            tipMissing: 'Abre estas pestañas una vez para actualizar la lista (los objetos guardados se mantienen hasta entonces).',
             expiresOn: 'Caduca el', unitDay: 'd',
         },
         pl: {
@@ -462,7 +618,7 @@
             tipTimers: 'Liczniki: pozostały czas na aktywnych przedmiotach i pod oficerami, na każdej stronie.',
             tipOpen: 'Otwiera okno gry dla tego przedmiotu: Aktywuj klikasz sam.',
             tipNext: 'Przechodzi na następną planetę i otwiera ten sam przedmiot, gotowy do aktywacji.',
-            tipMissing: 'Otwórz te zakładki raz, aby odświeżyć listę (zapisana ~24h).',
+            tipMissing: 'Otwórz te zakładki raz, aby odświeżyć listę (zapisane przedmioty pozostają do tego czasu).',
             expiresOn: 'Wygasa', unitDay: 'd',
         },
         tr: {
@@ -476,7 +632,7 @@
             tipTimers: 'Sayaçlar: etkin eşyaların üzerinde ve subayların altında kalan süre, her sayfada.',
             tipOpen: 'Bu eşya için oyunun kendi panelini açar: Etkinleştir düğmesine sen basarsın.',
             tipNext: 'Sonraki gezegene gider ve aynı eşyayı etkinleştirmeye hazır açar.',
-            tipMissing: 'Listeyi yenilemek için bu sekmeleri bir kez aç (~24 saat saklanır).',
+            tipMissing: 'Listeyi yenilemek için bu sekmeleri bir kez aç (kayıtlı eşyalar o ana kadar kalır).',
             expiresOn: 'Bitiş', unitDay: 'g',
         },
         pt: {
@@ -490,7 +646,7 @@
             tipTimers: 'Cronômetros: o tempo restante nos itens ativos e sob os oficiais, em todas as páginas.',
             tipOpen: 'Abre o painel do próprio jogo para este item: o Ativar você aperta.',
             tipNext: 'Vai para o próximo planeta e abre o mesmo item, pronto para ativar.',
-            tipMissing: 'Abra estas abas uma vez para atualizar a lista (guardada ~24h).',
+            tipMissing: 'Abra estas abas uma vez para atualizar a lista (os itens guardados ficam até lá).',
             expiresOn: 'Expira em', unitDay: 'd',
         },
         ru: {
@@ -504,10 +660,232 @@
             tipTimers: 'Таймеры: оставшееся время на активных предметах и под офицерами, на каждой странице.',
             tipOpen: 'Открывает окно игры для этого предмета: «Активировать» нажимаете вы.',
             tipNext: 'Переходит на следующую планету и открывает тот же предмет, готовый к активации.',
-            tipMissing: 'Откройте эти вкладки один раз, чтобы обновить список (хранится ~24 ч).',
+            tipMissing: 'Откройте эти вкладки один раз, чтобы обновить список (сохранённые предметы остаются до обновления).',
             expiresOn: 'Истекает', unitDay: 'д',
         },
     };
+
+    // The settings panel doubled the number of labels, so its wording lives in its own block per
+    // language and is merged in — the dictionaries above stay short enough to read at a glance.
+    const DICT_UI = {
+        it: {
+            settings: 'Impostazioni', secDisplay: 'Visualizzazione', secTime: 'Scadenze e timer',
+            secColors: 'Colori', secData: 'Dati',
+            hideExp: 'Nascondi a scadenza', hideActive: 'Nascondi attivi',
+            groupDur: 'Raggruppa durate', dense: 'Griglia compatta',
+            sortBy: 'Ordinamento', sortSmart: 'Consigliato', sortExp: 'Scadenza',
+            sortName: 'Nome', sortRarity: 'Rarità', sortAmount: 'Quantità',
+            soonAfter: 'Segnala urgente sotto', presetLbl: 'Preset',
+            pDefault: 'Ambra', pNeon: 'Neon', pSober: 'Sobrio', pContrast: 'Contrasto',
+            cExp: 'Scadenza', cSoon: 'Urgente', cOfficer: 'Ufficiali', cAcc: 'Accento',
+            cacheAge: 'Ultimo aggiornamento', clearCache: 'Svuota cache', resetAll: 'Ripristina tutto',
+            never: 'mai', catAll: 'Tutti', fExp: 'A scadenza', fActive: 'Attivi',
+            clearFilters: 'Azzera filtri',
+            tipSettings: 'Impostazioni: filtri, colori, timer e cache in un unico pannello.',
+            tipHideExp: 'Nascondi a scadenza: toglie dalla lista gli oggetti che hanno una data di scadenza.',
+            tipHideActive: 'Nascondi attivi: toglie dalla lista quello che è già in funzione su questo pianeta.',
+            tipGroupDur: 'Raggruppa durate: 7g / 30g / 90g dello stesso oggetto in un unico riquadro.',
+            tipDense: 'Griglia compatta: riquadri più piccoli, più oggetti a schermo.',
+            tipSort: 'Ordinamento: in che ordine vengono elencati gli oggetti.',
+            tipSoon: 'Segnala urgente sotto: sotto questo tempo la scadenza diventa rossa, qui, sulla panoramica e sui badge.',
+            tipColors: 'Colori: come vengono disegnate scadenze, ufficiali e accento del riquadro.',
+            tipCache: 'Cache: da quanto tempo non apri quelle schede. Svuotala solo se la lista sembra sbagliata.',
+            tipCats: 'Filtri: le stesse categorie del gioco, più a scadenza e attivi.',
+        },
+        en: {
+            settings: 'Settings', secDisplay: 'Display', secTime: 'Deadlines & timers',
+            secColors: 'Colours', secData: 'Data',
+            hideExp: 'Hide expiring', hideActive: 'Hide active',
+            groupDur: 'Group durations', dense: 'Compact grid',
+            sortBy: 'Sort by', sortSmart: 'Recommended', sortExp: 'Deadline',
+            sortName: 'Name', sortRarity: 'Rarity', sortAmount: 'Amount',
+            soonAfter: 'Mark urgent under', presetLbl: 'Preset',
+            pDefault: 'Amber', pNeon: 'Neon', pSober: 'Sober', pContrast: 'Contrast',
+            cExp: 'Deadline', cSoon: 'Urgent', cOfficer: 'Officers', cAcc: 'Accent',
+            cacheAge: 'Last refresh', clearCache: 'Clear cache', resetAll: 'Reset all',
+            never: 'never', catAll: 'All', fExp: 'Expiring', fActive: 'Active',
+            clearFilters: 'Clear filters',
+            tipSettings: 'Settings: filters, colours, timers and cache in one panel.',
+            tipHideExp: 'Hide expiring: drops the items that carry a deadline from the list.',
+            tipHideActive: 'Hide active: drops what is already running on this planet.',
+            tipGroupDur: 'Group durations: 7d / 30d / 90d of one item under a single card.',
+            tipDense: 'Compact grid: smaller cards, more items on screen.',
+            tipSort: 'Sort by: the order the items are listed in.',
+            tipSoon: 'Mark urgent under: below this, a deadline turns red — here, on the overview and on the badges.',
+            tipColors: 'Colours: how deadlines, officers and the box accent are drawn.',
+            tipCache: 'Cache: how long since you opened those tabs. Clear it only if the list looks wrong.',
+            tipCats: "Filters: the game's own categories, plus expiring and active.",
+        },
+        de: {
+            settings: 'Einstellungen', secDisplay: 'Anzeige', secTime: 'Fristen & Timer',
+            secColors: 'Farben', secData: 'Daten',
+            hideExp: 'Ablaufende ausblenden', hideActive: 'Aktive ausblenden',
+            groupDur: 'Laufzeiten bündeln', dense: 'Kompaktes Raster',
+            sortBy: 'Sortierung', sortSmart: 'Empfohlen', sortExp: 'Frist',
+            sortName: 'Name', sortRarity: 'Seltenheit', sortAmount: 'Menge',
+            soonAfter: 'Dringend unter', presetLbl: 'Voreinstellung',
+            pDefault: 'Amber', pNeon: 'Neon', pSober: 'Schlicht', pContrast: 'Kontrast',
+            cExp: 'Frist', cSoon: 'Dringend', cOfficer: 'Offiziere', cAcc: 'Akzent',
+            cacheAge: 'Letzte Aktualisierung', clearCache: 'Cache leeren', resetAll: 'Alles zurücksetzen',
+            never: 'nie', catAll: 'Alle', fExp: 'Ablaufend', fActive: 'Aktiv',
+            clearFilters: 'Filter zurücksetzen',
+            tipSettings: 'Einstellungen: Filter, Farben, Timer und Cache in einem Fenster.',
+            tipHideExp: 'Ablaufende ausblenden: entfernt Gegenstände mit Ablaufdatum aus der Liste.',
+            tipHideActive: 'Aktive ausblenden: entfernt, was auf diesem Planeten bereits läuft.',
+            tipGroupDur: 'Laufzeiten bündeln: 7T / 30T / 90T eines Gegenstands in einer Karte.',
+            tipDense: 'Kompaktes Raster: kleinere Karten, mehr Gegenstände auf dem Schirm.',
+            tipSort: 'Sortierung: in welcher Reihenfolge die Gegenstände stehen.',
+            tipSoon: 'Dringend unter: darunter wird eine Frist rot — hier, auf der Übersicht und auf den Badges.',
+            tipColors: 'Farben: wie Fristen, Offiziere und der Akzent gezeichnet werden.',
+            tipCache: 'Cache: wie lange die Reiter nicht geöffnet wurden. Nur leeren, wenn die Liste falsch wirkt.',
+            tipCats: 'Filter: die Kategorien des Spiels, dazu ablaufend und aktiv.',
+        },
+        fr: {
+            settings: 'Réglages', secDisplay: 'Affichage', secTime: 'Échéances et minuteurs',
+            secColors: 'Couleurs', secData: 'Données',
+            hideExp: 'Masquer périssables', hideActive: 'Masquer actifs',
+            groupDur: 'Grouper les durées', dense: 'Grille compacte',
+            sortBy: 'Tri', sortSmart: 'Recommandé', sortExp: 'Échéance',
+            sortName: 'Nom', sortRarity: 'Rareté', sortAmount: 'Quantité',
+            soonAfter: 'Urgent en dessous de', presetLbl: 'Préréglage',
+            pDefault: 'Ambre', pNeon: 'Néon', pSober: 'Sobre', pContrast: 'Contraste',
+            cExp: 'Échéance', cSoon: 'Urgent', cOfficer: 'Officiers', cAcc: 'Accent',
+            cacheAge: 'Dernière mise à jour', clearCache: 'Vider le cache', resetAll: 'Tout réinitialiser',
+            never: 'jamais', catAll: 'Tous', fExp: 'Périssables', fActive: 'Actifs',
+            clearFilters: 'Effacer les filtres',
+            tipSettings: 'Réglages : filtres, couleurs, minuteurs et cache dans un seul panneau.',
+            tipHideExp: "Masquer périssables : retire de la liste les objets qui ont une date limite.",
+            tipHideActive: 'Masquer actifs : retire ce qui tourne déjà sur cette planète.',
+            tipGroupDur: "Grouper les durées : 7j / 30j / 90j d'un objet sur une seule carte.",
+            tipDense: "Grille compacte : cartes plus petites, plus d'objets à l'écran.",
+            tipSort: 'Tri : dans quel ordre les objets sont listés.',
+            tipSoon: "Urgent en dessous de : sous ce délai l'échéance passe en rouge — ici, sur la vue générale et sur les badges.",
+            tipColors: 'Couleurs : comment sont dessinés les échéances, les officiers et l\'accent.',
+            tipCache: 'Cache : depuis combien de temps ces onglets ne sont pas ouverts. À vider seulement si la liste semble fausse.',
+            tipCats: 'Filtres : les catégories du jeu, plus périssables et actifs.',
+        },
+        es: {
+            settings: 'Ajustes', secDisplay: 'Visualización', secTime: 'Caducidades y temporizadores',
+            secColors: 'Colores', secData: 'Datos',
+            hideExp: 'Ocultar caducables', hideActive: 'Ocultar activos',
+            groupDur: 'Agrupar duraciones', dense: 'Rejilla compacta',
+            sortBy: 'Orden', sortSmart: 'Recomendado', sortExp: 'Caducidad',
+            sortName: 'Nombre', sortRarity: 'Rareza', sortAmount: 'Cantidad',
+            soonAfter: 'Urgente por debajo de', presetLbl: 'Preajuste',
+            pDefault: 'Ámbar', pNeon: 'Neón', pSober: 'Sobrio', pContrast: 'Contraste',
+            cExp: 'Caducidad', cSoon: 'Urgente', cOfficer: 'Oficiales', cAcc: 'Acento',
+            cacheAge: 'Última actualización', clearCache: 'Vaciar caché', resetAll: 'Restablecer todo',
+            never: 'nunca', catAll: 'Todos', fExp: 'Caducables', fActive: 'Activos',
+            clearFilters: 'Borrar filtros',
+            tipSettings: 'Ajustes: filtros, colores, temporizadores y caché en un solo panel.',
+            tipHideExp: 'Ocultar caducables: quita de la lista los objetos con fecha de caducidad.',
+            tipHideActive: 'Ocultar activos: quita lo que ya está funcionando en este planeta.',
+            tipGroupDur: 'Agrupar duraciones: 7d / 30d / 90d de un objeto en una sola tarjeta.',
+            tipDense: 'Rejilla compacta: tarjetas más pequeñas, más objetos en pantalla.',
+            tipSort: 'Orden: en qué orden se listan los objetos.',
+            tipSoon: 'Urgente por debajo de: por debajo de este tiempo la caducidad se vuelve roja — aquí, en la vista general y en las etiquetas.',
+            tipColors: 'Colores: cómo se dibujan caducidades, oficiales y el acento del cuadro.',
+            tipCache: 'Caché: cuánto hace que no abres esas pestañas. Vacíala solo si la lista parece incorrecta.',
+            tipCats: 'Filtros: las categorías del propio juego, más caducables y activos.',
+        },
+        pl: {
+            settings: 'Ustawienia', secDisplay: 'Wyświetlanie', secTime: 'Terminy i liczniki',
+            secColors: 'Kolory', secData: 'Dane',
+            hideExp: 'Ukryj wygasające', hideActive: 'Ukryj aktywne',
+            groupDur: 'Grupuj czasy trwania', dense: 'Kompaktowa siatka',
+            sortBy: 'Sortowanie', sortSmart: 'Zalecane', sortExp: 'Termin',
+            sortName: 'Nazwa', sortRarity: 'Rzadkość', sortAmount: 'Ilość',
+            soonAfter: 'Pilne poniżej', presetLbl: 'Zestaw',
+            pDefault: 'Bursztyn', pNeon: 'Neon', pSober: 'Stonowany', pContrast: 'Kontrast',
+            cExp: 'Termin', cSoon: 'Pilne', cOfficer: 'Oficerowie', cAcc: 'Akcent',
+            cacheAge: 'Ostatnia aktualizacja', clearCache: 'Wyczyść pamięć', resetAll: 'Przywróć domyślne',
+            never: 'nigdy', catAll: 'Wszystkie', fExp: 'Wygasające', fActive: 'Aktywne',
+            clearFilters: 'Wyczyść filtry',
+            tipSettings: 'Ustawienia: filtry, kolory, liczniki i pamięć w jednym panelu.',
+            tipHideExp: 'Ukryj wygasające: usuwa z listy przedmioty z datą ważności.',
+            tipHideActive: 'Ukryj aktywne: usuwa to, co już działa na tej planecie.',
+            tipGroupDur: 'Grupuj czasy trwania: 7d / 30d / 90d jednego przedmiotu na jednej karcie.',
+            tipDense: 'Kompaktowa siatka: mniejsze karty, więcej przedmiotów na ekranie.',
+            tipSort: 'Sortowanie: w jakiej kolejności wypisane są przedmioty.',
+            tipSoon: 'Pilne poniżej: poniżej tego czasu termin robi się czerwony — tutaj, w przeglądzie i na plakietkach.',
+            tipColors: 'Kolory: jak rysowane są terminy, oficerowie i akcent panelu.',
+            tipCache: 'Pamięć: jak dawno nie otwierałeś tych zakładek. Czyść tylko, gdy lista wygląda błędnie.',
+            tipCats: 'Filtry: kategorie z gry, plus wygasające i aktywne.',
+        },
+        tr: {
+            settings: 'Ayarlar', secDisplay: 'Görünüm', secTime: 'Süreler ve sayaçlar',
+            secColors: 'Renkler', secData: 'Veri',
+            hideExp: 'Süresi dolanları gizle', hideActive: 'Aktifleri gizle',
+            groupDur: 'Süreleri grupla', dense: 'Sık ızgara',
+            sortBy: 'Sıralama', sortSmart: 'Önerilen', sortExp: 'Bitiş',
+            sortName: 'İsim', sortRarity: 'Nadirlik', sortAmount: 'Adet',
+            soonAfter: 'Şunun altında acil', presetLbl: 'Hazır ayar',
+            pDefault: 'Kehribar', pNeon: 'Neon', pSober: 'Sade', pContrast: 'Kontrast',
+            cExp: 'Bitiş', cSoon: 'Acil', cOfficer: 'Subaylar', cAcc: 'Vurgu',
+            cacheAge: 'Son güncelleme', clearCache: 'Önbelleği temizle', resetAll: 'Hepsini sıfırla',
+            never: 'hiç', catAll: 'Tümü', fExp: 'Süreli', fActive: 'Aktif',
+            clearFilters: 'Filtreleri temizle',
+            tipSettings: 'Ayarlar: filtreler, renkler, sayaçlar ve önbellek tek panelde.',
+            tipHideExp: 'Süresi dolanları gizle: son kullanma tarihi olan eşyaları listeden çıkarır.',
+            tipHideActive: 'Aktifleri gizle: bu gezegende zaten çalışanları listeden çıkarır.',
+            tipGroupDur: 'Süreleri grupla: bir eşyanın 7g / 30g / 90g sürümleri tek kartta.',
+            tipDense: 'Sık ızgara: daha küçük kartlar, ekranda daha çok eşya.',
+            tipSort: 'Sıralama: eşyaların hangi sırayla listeleneceği.',
+            tipSoon: 'Şunun altında acil: bu sürenin altında bitiş kırmızıya döner — burada, genel bakışta ve rozetlerde.',
+            tipColors: 'Renkler: bitiş süreleri, subaylar ve kutu vurgusu nasıl çizilir.',
+            tipCache: 'Önbellek: o sekmeleri açmayalı ne kadar oldu. Liste yanlış görünüyorsa temizleyin.',
+            tipCats: 'Filtreler: oyunun kendi kategorileri, artı süreli ve aktif.',
+        },
+        pt: {
+            settings: 'Definições', secDisplay: 'Exibição', secTime: 'Prazos e cronômetros',
+            secColors: 'Cores', secData: 'Dados',
+            hideExp: 'Ocultar com prazo', hideActive: 'Ocultar ativos',
+            groupDur: 'Agrupar durações', dense: 'Grade compacta',
+            sortBy: 'Ordenação', sortSmart: 'Recomendado', sortExp: 'Prazo',
+            sortName: 'Nome', sortRarity: 'Raridade', sortAmount: 'Quantidade',
+            soonAfter: 'Urgente abaixo de', presetLbl: 'Predefinição',
+            pDefault: 'Âmbar', pNeon: 'Neon', pSober: 'Sóbrio', pContrast: 'Contraste',
+            cExp: 'Prazo', cSoon: 'Urgente', cOfficer: 'Oficiais', cAcc: 'Destaque',
+            cacheAge: 'Última atualização', clearCache: 'Limpar cache', resetAll: 'Repor tudo',
+            never: 'nunca', catAll: 'Todos', fExp: 'Com prazo', fActive: 'Ativos',
+            clearFilters: 'Limpar filtros',
+            tipSettings: 'Definições: filtros, cores, cronômetros e cache num só painel.',
+            tipHideExp: 'Ocultar com prazo: tira da lista os itens que têm data limite.',
+            tipHideActive: 'Ocultar ativos: tira o que já está a correr neste planeta.',
+            tipGroupDur: 'Agrupar durações: 7d / 30d / 90d do mesmo item num único cartão.',
+            tipDense: 'Grade compacta: cartões menores, mais itens no ecrã.',
+            tipSort: 'Ordenação: em que ordem os itens são listados.',
+            tipSoon: 'Urgente abaixo de: abaixo deste tempo o prazo fica vermelho — aqui, na visão geral e nos selos.',
+            tipColors: 'Cores: como são desenhados prazos, oficiais e o destaque da caixa.',
+            tipCache: 'Cache: há quanto tempo não abre essas abas. Limpe só se a lista parecer errada.',
+            tipCats: 'Filtros: as categorias do próprio jogo, mais com prazo e ativos.',
+        },
+        ru: {
+            settings: 'Настройки', secDisplay: 'Отображение', secTime: 'Сроки и таймеры',
+            secColors: 'Цвета', secData: 'Данные',
+            hideExp: 'Скрыть истекающие', hideActive: 'Скрыть активные',
+            groupDur: 'Группировать сроки', dense: 'Компактная сетка',
+            sortBy: 'Сортировка', sortSmart: 'Рекомендуется', sortExp: 'Срок',
+            sortName: 'Название', sortRarity: 'Редкость', sortAmount: 'Количество',
+            soonAfter: 'Срочно менее чем за', presetLbl: 'Набор',
+            pDefault: 'Янтарь', pNeon: 'Неон', pSober: 'Спокойный', pContrast: 'Контраст',
+            cExp: 'Срок', cSoon: 'Срочно', cOfficer: 'Офицеры', cAcc: 'Акцент',
+            cacheAge: 'Последнее обновление', clearCache: 'Очистить кэш', resetAll: 'Сбросить всё',
+            never: 'никогда', catAll: 'Все', fExp: 'Истекающие', fActive: 'Активные',
+            clearFilters: 'Сбросить фильтры',
+            tipSettings: 'Настройки: фильтры, цвета, таймеры и кэш в одной панели.',
+            tipHideExp: 'Скрыть истекающие: убирает из списка предметы с датой окончания.',
+            tipHideActive: 'Скрыть активные: убирает то, что уже работает на этой планете.',
+            tipGroupDur: 'Группировать сроки: 7д / 30д / 90д одного предмета в одной карточке.',
+            tipDense: 'Компактная сетка: карточки меньше, предметов на экране больше.',
+            tipSort: 'Сортировка: в каком порядке перечислены предметы.',
+            tipSoon: 'Срочно менее чем за: ниже этого времени срок становится красным — здесь, в обзоре и на значках.',
+            tipColors: 'Цвета: как отрисованы сроки, офицеры и акцент панели.',
+            tipCache: 'Кэш: как давно вы не открывали эти вкладки. Очищайте, только если список выглядит неверно.',
+            tipCats: 'Фильтры: собственные категории игры, плюс истекающие и активные.',
+        },
+    };
+    Object.keys(DICT_UI).forEach(k => { if(DICT[k]) Object.assign(DICT[k], DICT_UI[k]); });
 
     // Which language to speak. `meta[name="ogame-language"]` is the SERVER's community, not the
     // interface: on an .it server played in English it answers "it" and every label came out
@@ -591,8 +969,14 @@
     // page. Items belong to the ACCOUNT, so both the inventory stock and the shop are cached
     // GLOBALLY (not per planet). The one thing that IS planet-specific — which item is currently
     // ACTIVE — is never cached: it is stripped when saving and only ever taken from the live data
-    // of the planet you are on. Kept for 24h; live data always wins; visiting a tab refreshes it.
-    const CACHE_TTL = 86400000; // 24h
+    // of the planet you are on. Live data always wins; visiting a tab refreshes it.
+    //
+    // The cache NEVER expires on its own: it is the only picture of the account we have when the
+    // player has not opened the tabs on this page load, so dropping it would leave the box empty
+    // for no gain. What the 24h mark does is mark the section STALE — the box goes back to asking
+    // for that tab to be opened (new items only show up during certain events), while everything
+    // already stored keeps being shown until that refresh actually happens.
+    const CACHE_TTL = 86400000; // 24h — staleness threshold, not a deletion deadline
     const cacheKey = kind => kind === 'shop' ? 'oih_cache_shop' : 'oih_cache_inv';
     // keepAt: this write only corrects what we already had (no fresh read of that section), so the
     // original timestamp stands — otherwise the 24h life would keep renewing itself and the box
@@ -608,17 +992,27 @@
     }
     function loadCache(kind)
     {
-        try { const o = JSON.parse(localStorage.getItem(cacheKey(kind)) || 'null'); if(o && (Date.now() - o.at) < CACHE_TTL) return o; } catch(e) {}
+        try
+        {
+            const o = JSON.parse(localStorage.getItem(cacheKey(kind)) || 'null');
+            if(o && Array.isArray(o.items)) return o;
+        }
+        catch(e) {}
         return null;
     }
-    // Seed memory from a fresh (<24h) cache. The cache carries no active state (that is per planet
-    // and comes only from live data), so seeded items start inactive until the live tab confirms.
+    // Which sections are older than the staleness threshold — i.e. still shown, but due a refresh.
+    // Cleared as soon as the matching tab is read live again (see ingestLive).
+    const cacheStale = { inv: false, shop: false };
+    // Seed memory from the cache, however old it is. The cache carries no active state (that is per
+    // planet and comes only from live data), so seeded items start inactive until the live tab
+    // confirms; a cache past CACHE_TTL is seeded all the same and just flagged stale.
     function seedFromCache()
     {
         [['inv', mem.inv], ['shop', mem.shop]].forEach(([kind, target]) =>
         {
             const o = loadCache(kind);
             if(!o) return;
+            cacheStale[kind] = (Date.now() - (+o.at || 0)) >= CACHE_TTL;
             o.items.forEach(r =>
             {
                 if(!r || !r.uuid) return;
@@ -861,6 +1255,11 @@
         const shopRead = Object.keys(liveShop).length > 0;
         if(fullInvRead || Object.keys(liveInv).length) saveCache('inv', mem.inv); // the inventory as it really is now
         if(fullInvRead || shopRead) saveCache('shop', mem.shop, !shopRead);       // shop, incl. the realigned amounts
+
+        // A section just read live is up to date again — stop asking for it. Same conditions as the
+        // writes above, so the flag can never disagree with the timestamp we just stored.
+        if(fullInvRead || Object.keys(liveInv).length) cacheStale.inv = false;
+        if(shopRead) cacheStale.shop = false;
     }
 
     function getNextPlanet()
@@ -889,6 +1288,203 @@
         Object.values(mem.shop).forEach(r => upsertInto(map, r));
         applyScannedActive(map);
         return Object.values(map).filter(e => e.name);
+    }
+
+    // ---- Categories: the game's own filter buttons, borrowed ---------------------------------
+    // Each item carries the category hashes the game files it under, and the inventory draws one
+    // filter button per category with the label ALREADY translated. So the box invents no taxonomy
+    // of its own: it takes the hashes off the items and the wording off the game's own buttons.
+    // What it learns is stored, because those buttons exist only on the tab currently rendered and
+    // the filters have to work on the other one too.
+    const CAT_KEY = 'oih_cats';
+    function loadCatLabels()
+    {
+        try { const o = JSON.parse(localStorage.getItem(CAT_KEY) || 'null'); return (o && typeof o === 'object') ? o : {}; }
+        catch(e) { return {}; }
+    }
+    // The label of the game's filter button for one category hash. Item tiles link to
+    // "#category=<hash>&item=<uuid>" too, and their text is an ITEM name, not a category — so any
+    // candidate sitting inside a slider or on an item link is refused.
+    function scrapeCatLabel(h)
+    {
+        let nodes = [];
+        try { nodes = [...document.querySelectorAll(`[data-category="${h}"],[data-filter="${h}"],[href*="${h}"],[id*="${h}"],[class*="${h}"]`)]; }
+        catch(e) { return ''; }
+        for(const n of nodes)
+        {
+            if(n.closest('#js_inventorySlider, #js_shopSliderBox, .item_img, a.detail_button')) continue;
+            const cand = [n.getAttribute('title'), n.getAttribute('aria-label'), n.getAttribute('data-tooltip-title'),
+                          n.getAttribute('data-title'), n.textContent];
+            for(const c of cand)
+            {
+                const v = stripTags(c || '');
+                if(v && v.length <= 28) return v;
+            }
+        }
+        return '';
+    }
+    function learnCategories(items)
+    {
+        const store = loadCatLabels();
+        const present = new Set();
+        (items || []).forEach(it => (it.cats || []).forEach(c => { if(c && c !== ALL_CATEGORY) present.add(c); }));
+        let learned = false;
+        present.forEach(h => { if(!store[h]) { const l = scrapeCatLabel(h); if(l) { store[h] = l; learned = true; } } });
+        if(learned) { try { localStorage.setItem(CAT_KEY, JSON.stringify(store)); } catch(e) {} }
+        // Only the categories we can both NAME and actually filter on are offered: a chip that
+        // matches nothing, or that reads as a hash, is worse than no chip.
+        const out = {};
+        present.forEach(h => { if(store[h]) out[h] = store[h]; });
+        return out;
+    }
+
+    // ---- Settings panel -----------------------------------------------------------------------
+    // The shop page is busy enough without a row of switches on top of it, so everything that is a
+    // CHOICE rather than an action lives here: what the list shows, when a deadline reads as
+    // urgent, the colours it is drawn in, and the state of the cache behind it all.
+    function openSettings(onChange)
+    {
+        if(document.getElementById('oih_settings')) return;
+        const wrap = el('div', 'oih_modal');
+        wrap.id = 'oih_settings';
+        document.body.appendChild(wrap);
+        const panel = el('div', 'oih_panel', wrap);
+
+        const esc = e => { if(e.key === 'Escape') close(); };
+        const close = () => { wrap.remove(); document.removeEventListener('keydown', esc); };
+        wrap.addEventListener('click', e => { if(e.target === wrap) close(); });
+        document.addEventListener('keydown', esc);
+
+        const head = el('div', 'oih_pHead', panel);
+        el('div', 'oih_pTitle', head, '⚙ ' + T('settings'));
+        const x = el('div', 'oih_pClose', head, '×');
+        x.title = T('close');
+        x.addEventListener('click', close);
+
+        const touch = () => { savePrefs(); if(onChange) onChange(); };
+        const section = title => { const sec = el('div', 'oih_sec', panel); el('div', 'oih_secT', sec, title); return sec; };
+        const row = (sec, label, tip) =>
+        {
+            const r = el('div', 'oih_row', sec);
+            if(tip) r.title = tip;
+            el('label', null, r, label);
+            return r;
+        };
+        // A switch reads as a state; a checkbox on this background barely reads at all.
+        const sw = (sec, label, on, tip, onSet) =>
+        {
+            const r = row(sec, label, tip);
+            const s = el('div', 'oih_sw' + (on ? ' oih_swOn' : ''), r);
+            r.addEventListener('click', () =>
+            {
+                const now = !s.classList.contains('oih_swOn');
+                s.classList.toggle('oih_swOn', now);
+                onSet(now);
+            });
+            return s;
+        };
+        const select = (sec, label, options, value, tip, onSet) =>
+        {
+            const r = row(sec, label, tip);
+            const sel = el('select', null, r);
+            options.forEach(([v, t]) =>
+            {
+                const o = el('option', null, sel, t);
+                o.value = v;
+                if(String(v) === String(value)) o.selected = true;
+            });
+            sel.addEventListener('change', () => onSet(sel.value));
+            return sel;
+        };
+
+        // ---- what the list shows
+        const d = section(T('secDisplay'));
+        sw(d, T('shop'), PREFS.showShop, T('tipShop'), v => { PREFS.showShop = v; touch(); });
+        sw(d, T('hideExp'), PREFS.hideExp, T('tipHideExp'), v => { PREFS.hideExp = v; touch(); });
+        sw(d, T('hideActive'), PREFS.hideActive, T('tipHideActive'), v => { PREFS.hideActive = v; touch(); });
+        sw(d, T('groupDur'), PREFS.groupDur, T('tipGroupDur'), v => { PREFS.groupDur = v; touch(); });
+        sw(d, T('dense'), PREFS.dense, T('tipDense'), v => { PREFS.dense = v; touch(); });
+        select(d, T('sortBy'),
+               [['smart', T('sortSmart')], ['expiry', T('sortExp')], ['name', T('sortName')],
+                ['rarity', T('sortRarity')], ['amount', T('sortAmount')]],
+               PREFS.sort, T('tipSort'), v => { PREFS.sort = v; touch(); });
+
+        // ---- deadlines and the badges drawn from them
+        const t = section(T('secTime'));
+        sw(t, '⏳ ' + T('reminder'), reminderOn(), T('tipReminder'),
+           v => { try { localStorage.setItem(REM_OFF_KEY, v ? '0' : '1'); } catch(e) {} });
+        sw(t, '⌛ ' + T('timers'), timersOn(), T('tipTimers'),
+           v => { try { localStorage.setItem(TMR_OFF_KEY, v ? '0' : '1'); } catch(e) {} paintTimers(); });
+        select(t, T('soonAfter'), [6, 12, 24, 48, 72, 168].map(h => [h, fmtDur(h * 3600)]),
+               PREFS.soonHours, T('tipSoon'), v => { PREFS.soonHours = +v || 24; touch(); paintTimers(); });
+
+        // ---- colours: the four that carry meaning, and four ready-made sets
+        const c = section(T('secColors'));
+        const cRow = row(c, T('presetLbl'), T('tipColors'));
+        const presetRow = el('div', 'oih_presets', cRow);
+        const swatches = el('div', 'oih_colors', c);
+        const pickers = {};
+        const paintPickers = () => Object.keys(pickers).forEach(k => { pickers[k].value = SAFE_COLOR(PREFS.colors[k]); });
+        Object.keys(PRESETS).forEach(name =>
+        {
+            const label = T('p' + name.charAt(0).toUpperCase() + name.slice(1));
+            const chip = el('div', 'oih_chip' + (PREFS.preset === name ? ' oih_cOn' : ''), presetRow, label);
+            chip.addEventListener('click', () =>
+            {
+                PREFS.preset = name;
+                PREFS.colors = Object.assign({}, PRESETS[name]);
+                [...presetRow.children].forEach(n => n.classList.remove('oih_cOn'));
+                chip.classList.add('oih_cOn');
+                paintPickers();
+                touch();
+            });
+        });
+        [['exp', T('cExp')], ['soon', T('cSoon')], ['officer', T('cOfficer')], ['acc', T('cAcc')]].forEach(([k, label]) =>
+        {
+            const col = el('div', 'oih_col', swatches);
+            const inp = el('input', null, col);
+            inp.type = 'color';
+            inp.value = SAFE_COLOR(PREFS.colors[k]);
+            el('span', null, col, label);
+            pickers[k] = inp;
+            inp.addEventListener('input', () =>
+            {
+                PREFS.colors[k] = inp.value;
+                PREFS.preset = 'custom';
+                [...presetRow.children].forEach(n => n.classList.remove('oih_cOn'));
+                touch();
+            });
+        });
+
+        // ---- the cache the whole box is built on
+        const dt = section(T('secData'));
+        const age = kind =>
+        {
+            const o = loadCache(kind);
+            if(!o || !o.at) return T('never');
+            return fmtDur((Date.now() - o.at) / 1000);
+        };
+        const note = el('div', 'oih_note', dt,
+            '<b>' + T('inventory') + '</b> — ' + T('cacheAge') + ': ' + age('inv') + '<br>' +
+            '<b>' + T('shop') + '</b> — ' + T('cacheAge') + ': ' + age('shop'));
+        note.title = T('tipCache');
+        const acts = el('div', 'oih_row', dt);
+        const clear = el('div', 'oih_act', acts, '<span>🗑</span><span>' + T('clearCache') + '</span>');
+        clear.title = T('tipCache');
+        clear.addEventListener('click', () =>
+        {
+            ['oih_cache_inv', 'oih_cache_shop', 'oih_expiring', 'oih_active_all', CAT_KEY]
+                .forEach(k => { try { localStorage.removeItem(k); } catch(e) {} });
+            Object.keys(mem.inv).forEach(k => delete mem.inv[k]);
+            Object.keys(mem.shop).forEach(k => delete mem.shop[k]);
+            cacheStale.inv = cacheStale.shop = false;
+            ingestLive(); // whatever the tab in front of us shows is still true — keep that much
+            note.innerHTML = '<b>' + T('inventory') + '</b> — ' + T('cacheAge') + ': ' + age('inv') + '<br>' +
+                             '<b>' + T('shop') + '</b> — ' + T('cacheAge') + ': ' + age('shop');
+            if(onChange) onChange();
+        });
+        const reset = el('div', 'oih_act', acts, '<span>↺</span><span>' + T('resetAll') + '</span>');
+        reset.addEventListener('click', () => { resetPrefs(); close(); if(onChange) onChange(); });
     }
 
     // A compact "+7g / +30g / +90g" label for one duration variant. The item names are long, so we
@@ -1039,45 +1635,18 @@
         const collapsed0 = sessionStorage.getItem('oih_collapsed') === '1';
         const caret = el('div', 'oih_collapse', head, collapsed0 ? '&#9656;' : '&#9662;');
 
-        // Control bar. Every switch used to be a bare checkbox or a lone glyph, which said
-        // nothing about what it did; each one now carries its own word plus a full sentence on
-        // hover, and the ? opens the same explanations as text for anyone who never hovers.
+        // Control bar. It used to carry every switch at once, on a page the game already fills
+        // with controls; the switches now live in the settings panel and the bar keeps only the
+        // two things that are ACTIONS — the account scan and opening that panel — plus the help.
         const bar = el('div', 'oih_bar', box);
 
-        const mkToggle = (label, on, tip, onChange) =>
-        {
-            const wrap = el('label', 'oih_toggle' + (on ? ' oih_tOn' : ''), bar, '');
-            const input = el('input', null, wrap);
-            input.type = 'checkbox';
-            input.checked = on;
-            wrap.appendChild(document.createTextNode(label));
-            wrap.title = tip;
-            input.addEventListener('change', () =>
-            {
-                wrap.classList.toggle('oih_tOn', input.checked);
-                onChange(input.checked);
-            });
-            return input;
-        };
-
-        // Flag: also show buyable shop items (default off → inventory + active only).
-        const chk = mkToggle(T('shop'), sessionStorage.getItem('oih_showShop') === '1', T('tipShop'),
-                             on => { sessionStorage.setItem('oih_showShop', on ? '1' : '0'); render(); });
-
-        // Flag: the expiry reminder on the overview page. It is switched from here because this is
-        // where the items are — the reminder itself only knows how to hide.
-        mkToggle('⏳ ' + T('reminder'), reminderOn(), T('tipReminder'),
-                 on => { try { localStorage.setItem(REM_OFF_KEY, on ? '0' : '1'); } catch(e) {} });
-
-        // Flag: the remaining-time badges on active items and officers, on every page. Stored in
-        // localStorage because the pages that draw them are not this one.
-        mkToggle('⌛ ' + T('timers'), timersOn(), T('tipTimers'),
-                 on => { try { localStorage.setItem(TMR_OFF_KEY, on ? '0' : '1'); } catch(e) {} paintTimers(); });
-
-        // Scan button: one accountInfo read (on click) to learn the active items of ALL planets.
         const scan = el('div', 'oih_act', bar, '<span>⟳</span><span>' + T('scan') + '</span>');
         scan.title = T('tipScan');
         scan.addEventListener('click', () => scanAccount(scan));
+
+        const gear = el('div', 'oih_act', bar, '<span>⚙</span><span>' + T('settings') + '</span>');
+        gear.title = T('tipSettings');
+        gear.addEventListener('click', () => openSettings(() => { syncFilters(); render(); }));
 
         const helpBtn = el('div', 'oih_helpBtn', bar, '?');
         helpBtn.title = T('help');
@@ -1086,14 +1655,54 @@
         // cut at the first colon there is and fall back to the whole line when there is none.
         const tipBody = k => { const t = T(k), c = t.indexOf(':'); return c >= 0 ? t.slice(c + 1).trim() : t; };
         const help = el('div', 'oih_help oih_hidden', box,
+            '<b>⟳ ' + T('scan') + '</b> — ' + tipBody('tipScan') + '<br>' +
+            '<b>⚙ ' + T('settings') + '</b> — ' + tipBody('tipSettings') + '<br>' +
+            '<b>' + T('catAll') + ' / ⏳ / ●</b> — ' + tipBody('tipCats') + '<br>' +
             '<b>' + T('shop') + '</b> — ' + tipBody('tipShop') + '<br>' +
             '<b>⏳ ' + T('reminder') + '</b> — ' + tipBody('tipReminder') + '<br>' +
-            '<b>⟳ ' + T('scan') + '</b> — ' + tipBody('tipScan') + '<br>' +
             '<b>⌛ ' + T('timers') + '</b> — ' + tipBody('tipTimers'));
         helpBtn.addEventListener('click', () => help.classList.toggle('oih_hidden'));
 
-        // Hint: which sections are not yet loaded. Opening that tab once fills the box (manual,
-        // player-driven — the script never switches tabs by itself).
+        // Filter chips. Category is a single choice — the same one the game's own filter bar
+        // offers, borrowed labels and all — while ⏳ and ● are states that narrow it further.
+        // Deliberately NOT persisted: a filter left on from yesterday looks like missing items,
+        // whereas the settings in the panel are choices and do survive.
+        const filters = { cat: '', exp: false, active: false };
+        const fRow = el('div', 'oih_filters', box);
+        box.insertBefore(fRow, help); // straight under the control bar, above the help text
+        fRow.title = T('tipCats');
+        let catLabels = {};
+
+        const syncFilters = () =>
+        {
+            // Rebuilt on every render: the categories we can offer depend on the items we have,
+            // and those grow as the player opens the other tab.
+            catLabels = learnCategories(collectItems());
+            const cats = Object.keys(catLabels).sort((a, b) => catLabels[a].localeCompare(catLabels[b]));
+            if(filters.cat && !catLabels[filters.cat]) filters.cat = ''; // its items are gone — do not hide everything
+            fRow.innerHTML = '';
+
+            const chip = (cls, label, on, onClick, tip) =>
+            {
+                const c = el('div', 'oih_chip ' + cls + (on ? ' oih_cOn' : ''), fRow, label);
+                if(tip) c.title = tip;
+                c.addEventListener('click', onClick);
+                return c;
+            };
+
+            if(cats.length)
+            {
+                chip('', T('catAll'), !filters.cat, () => { filters.cat = ''; syncFilters(); render(); });
+                cats.forEach(h => chip('', catLabels[h], filters.cat === h,
+                                       () => { filters.cat = (filters.cat === h ? '' : h); syncFilters(); render(); }));
+                el('div', 'oih_sep', fRow);
+            }
+            chip('oih_cExp', '⏳ ' + T('fExp'), filters.exp,
+                 () => { filters.exp = !filters.exp; syncFilters(); render(); });
+            chip('oih_cAct', '● ' + T('fActive'), filters.active,
+                 () => { filters.active = !filters.active; syncFilters(); render(); });
+        };
+
         const hint = el('div', 'oih_hint oih_hidden', box);
 
         const grid = el('div', 'oih_grid' + (collapsed0 ? ' oih_hidden' : ''), box);
@@ -1138,15 +1747,17 @@
         const render = () =>
         {
             const needle = (search.value || '').trim().toLowerCase();
-            const showShop = chk.checked;
+            const showShop = PREFS.showShop;
             grid.innerHTML = '';
+            box.classList.toggle('oih_dense', !!PREFS.dense);
 
-            // Prompt the player to open whichever section is missing. Because a visited section is
-            // cached for 24h and seeded back on load, this naturally stays quiet for a day and only
-            // re-asks once the cache has aged out — no separate timer needed.
+            // Prompt the player to open whichever section we have nothing for, or whose cache has
+            // aged past CACHE_TTL. Because a visited section is seeded back on load, this stays
+            // quiet for a day and only re-asks once the cache is stale — no separate timer needed.
+            // Stale entries stay on screen meanwhile: the ask is for an update, not a wipe.
             const missing = [];
-            if(!Object.keys(mem.inv).length) missing.push(T('inventory'));
-            if(!Object.keys(mem.shop).length) missing.push(T('shop'));
+            if(!Object.keys(mem.inv).length || cacheStale.inv) missing.push(T('inventory'));
+            if(!Object.keys(mem.shop).length || cacheStale.shop) missing.push(T('shop'));
             hint.innerHTML = '';
             if(missing.length)
             {
@@ -1162,9 +1773,27 @@
 
             // Default: only what you own or have active. Flag on: also buyable shop items.
             let visible = items.filter(it => showShop || it.owned || it.active);
+            const total = visible.length;
             visible = visible.filter(it => !needle || it.name.toLowerCase().indexOf(needle) >= 0);
 
-            if(!visible.length) { el('div', 'oih_empty', grid, T('none')); return; }
+            // Settings that REMOVE a whole class of item. Hiding what is already running, or what
+            // carries a deadline, is a way of saying "not what I am shopping for right now".
+            if(PREFS.hideExp) visible = visible.filter(it => !(it.expiresAt > 0));
+            if(PREFS.hideActive) visible = visible.filter(it => !it.active);
+
+            // Chip filters: the game's category, then the two states.
+            if(filters.cat) visible = visible.filter(it => (it.cats || []).indexOf(filters.cat) >= 0);
+            if(filters.exp) visible = visible.filter(it => it.expiresAt > 0);
+            if(filters.active) visible = visible.filter(it => it.active);
+
+            const narrowed = visible.length !== total;
+            if(!visible.length)
+            {
+                count.textContent = '0 / ' + total;
+                count.classList.toggle('oih_filtered', narrowed);
+                el('div', 'oih_empty', grid, T('none'));
+                return;
+            }
 
             // Group the different DURATIONS of the same item (same effect text) under one card, so
             // e.g. the 7d / 30d / 90d versions of one booster are one entry with a duration menu.
@@ -1175,17 +1804,39 @@
                 // effect alone merged genuinely different items that happen to do the same thing —
                 // e.g. a Kraken and its lifeform counterpart — into one card whose variants had no
                 // duration to name, so they came out as a meaningless "#1 / #2" picker.
-                const key = baseName(it) + '|' + (it.effect || '').toLowerCase().slice(0, 60);
+                // Grouping off → the key is the item itself, so each duration keeps its own card.
+                const key = PREFS.groupDur
+                    ? baseName(it) + '|' + (it.effect || '').toLowerCase().slice(0, 60)
+                    : it.uuid;
                 (groups[key] || (groups[key] = [])).push(it);
             });
             let list = Object.values(groups);
 
             // Perishable stock first — it is the one that is lost if you leave it — then active,
-            // then the rest of what you own, then buyable-only (by the group's best member).
+            // then the rest of what you own, then buyable-only (by the group's best member). That
+            // is the "recommended" order; the others answer a question the player asked instead.
             const rank = g => Math.min(...g.map(it => (it.owned && it.expiresAt > 0) ? -1 : it.active ? 0 : it.owned ? 1 : 2));
             const soonest = g => Math.min(...g.map(it => (it.owned && it.expiresAt > 0) ? it.expiresAt : Infinity));
-            list.sort((a, b) => (rank(a) - rank(b)) || (rank(a) < 0 ? soonest(a) - soonest(b) : 0));
-            count.textContent = list.length + (showShop ? ' +' + T('shop').toLowerCase() : '');
+            const RARITY_RANK = { epic: 0, rare: 1, uncommon: 2, common: 3 };
+            const best = (g, pick) => Math.min(...g.map(pick));
+            const nameOf = g => (g[0].name || '').toLowerCase();
+            const sorters = {
+                smart: (a, b) => (rank(a) - rank(b)) || (rank(a) < 0 ? soonest(a) - soonest(b) : 0),
+                // Anything without a deadline has nothing to sort by, so it follows the dated ones.
+                expiry: (a, b) => soonest(a) - soonest(b) || nameOf(a).localeCompare(nameOf(b)),
+                name: (a, b) => nameOf(a).localeCompare(nameOf(b)),
+                rarity: (a, b) => best(a, it => RARITY_RANK[it.rarity] !== undefined ? RARITY_RANK[it.rarity] : 9)
+                                - best(b, it => RARITY_RANK[it.rarity] !== undefined ? RARITY_RANK[it.rarity] : 9)
+                                || nameOf(a).localeCompare(nameOf(b)),
+                amount: (a, b) => b.reduce((s, it) => s + (+it.amount || 0), 0) - a.reduce((s, it) => s + (+it.amount || 0), 0),
+            };
+            list.sort(sorters[PREFS.sort] || sorters.smart);
+            // "12 / 47" whenever something is filtered out, so a short list is never mistaken for
+            // a short inventory; clicking it clears every filter at once.
+            count.textContent = narrowed ? (visible.length + ' / ' + total)
+                                         : (list.length + (showShop ? ' +' + T('shop').toLowerCase() : ''));
+            count.classList.toggle('oih_filtered', narrowed);
+            count.title = narrowed ? T('clearFilters') : '';
 
             list.forEach(group =>
             {
@@ -1219,7 +1870,7 @@
                 if(use.expiresAt > 0)
                 {
                     const left = expiresIn(use);
-                    const tag = el('span', 'oih_exp' + (left < 86400 ? ' oih_soon' : ''), meta, '⏳ ' + fmtDur(left));
+                    const tag = el('span', 'oih_exp' + (left < soonSec() ? ' oih_soon' : ''), meta, '⏳ ' + fmtDur(left));
                     tag.title = T('expiresOn') + ' ' + new Date(use.expiresAt).toLocaleString();
                 }
 
@@ -1280,12 +1931,24 @@
             if(sessionStorage.getItem('oih_collapsed') === '1') { grid.classList.remove('oih_hidden'); caret.innerHTML = '&#9662;'; }
         }
 
+        count.addEventListener('click', () =>
+        {
+            if(!count.classList.contains('oih_filtered')) return;
+            filters.cat = ''; filters.exp = false; filters.active = false;
+            search.value = '';
+            syncFilters();
+            render();
+        });
+
         search.value = initialFilter;
         search.addEventListener('input', render);
+        syncFilters();
         render();
         if(initialFilter) requestAnimationFrame(() => search.focus());
 
-        rerender = render; // let the observer refresh the grid when a newly-opened tab adds data
+        // Let the observer refresh the box when a newly-opened tab adds data — the chips too, since
+        // the categories on offer come from the items we have and grow with them.
+        rerender = () => { syncFilters(); render(); };
         return true;
     }
 
@@ -1380,7 +2043,7 @@
         const chips = store.items.slice(0, 6).map(r =>
         {
             const left = expiresIn(r);
-            const a = el('a', 'oih_remItem' + (left < 86400 ? ' oih_soon' : ''), row);
+            const a = el('a', 'oih_remItem' + (left < soonSec() ? ' oih_soon' : ''), row);
             // The game's own inventory deep-link, on the planet we are already on: one click, one
             // navigation, and OGame opens the item itself (§1.1). No cp, so nothing switches planet.
             a.href = `https://${window.location.host}/game/index.php?page=ingame&component=shop#category=${cat}&item=${r.uuid}&page=inventory&panel1-1=`;
@@ -1594,7 +2257,7 @@
             if(!(end > 0)) return;
             const left = compactLeft(end - Date.now());
             if(!left) { const old = host.querySelector(':scope > .oih_tmr'); if(old) old.remove(); return; }
-            badge(host, 'oih_tmrItem' + ((end - Date.now()) < 86400000 ? ' oih_tmrSoon' : ''), left);
+            badge(host, 'oih_tmrItem' + ((end - Date.now()) < soonMs() ? ' oih_tmrSoon' : ''), left);
         });
 
         // Officers: the number lives in the tooltip and never changes while the page is open, so
@@ -1633,7 +2296,7 @@
     {
         try
         {
-            seedFromCache(); // start from what we already saw (<24h), so the box is complete at once
+            seedFromCache(); // start from what we already saw, so the box is complete at once
             ensure();
             const target = document.querySelector('#inhalt') || document.querySelector('#planet') || document.body;
             if(!target) return;
