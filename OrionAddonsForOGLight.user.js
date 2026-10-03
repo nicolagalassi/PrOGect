@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGLight Orion Addons
 // @namespace    https://github.com/nicolagalassi
-// @version      0.12.1
+// @version      0.13.0
 // @description  Add-ons for OGLight on the Project Orion test server: real costs for the Orion buildings in OGLight's own layout (level arrows, to-do list), a button on every anomaly-mission wave that opens OGLight's battle simulator pre-filled, and a profitability figure on every scanned anomaly. Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -26,8 +26,8 @@
     in OGLight's cost grid, OGLight's level arrows, OGLight's to-do list.
   - PART 2 — MISSION WAVE SIMULATOR: a button beside the game's Sim button of every anomaly-mission wave
     that opens the simulator chosen in OGLight, pre-filled with the wave and your fleet.
-  - PART 3 — ANOMALY PROFITABILITY: on the scanner's results, what each anomaly pays per hour of your
-    lithium production, with the best one marked.
+  - PART 3 — ANOMALY PROFITABILITY: on the scanner's results and on the active missions, what each anomaly
+    pays per hour of your lithium production, best first and marked.
   They share nothing but this file and onDomReady below.
 
   The script runs at document-start because PART 0 has to act while the page is still being parsed,
@@ -1236,7 +1236,10 @@ onDomReady(function()
   lithium, and the two are never put side by side.
 
   WHAT IT DOES
-  Under each anomaly's table it adds one line:
+  Under each scanned anomaly's table, and under each active mission's action bar, it adds one line.
+  For an active mission the rewards are what has piled up so far and the cost is the collect button's
+  own "lithium costs" figure, so its index reads "what collecting now is worth"; it is redone at every
+  wave, since the card stays while those two figures change. The line holds:
   - the index: the rewards' value in MSU per HOUR OF YOUR LITHIUM PRODUCTION the redemption costs.
     Rewards in MSU use OGLight's own formula and ratio (Util.getMSU, options.msu; 3:2:1 when OGLight is
     not running). The hours are the redemption cost divided by the page's own lithiumProduction, which
@@ -1277,16 +1280,17 @@ onDomReady(function()
         return Math.ceil(metal + crystal * r[0] / r[1] + deut * r[0]);
     };
 
-    // The scanner tab is fetched into the page and its inline script declares `var lithiumProduction`
-    // globally. If that variable is ever missing, the same script text is still in the tab's markup.
+    // Lithium per hour, from whichever tab is open. The scanner tab declares `var lithiumProduction`; the
+    // missions tab passes it as `orion.initMissions({ lithiumPerHour: … })`. Both are inline scripts the
+    // game fetched into the page, so the script text is read when the global is not there.
     const lithiumPerHour = () =>
     {
         const value = Number(window.lithiumProduction);
         if(value > 0) return value;
 
-        for(const script of document.querySelectorAll('#orionContent script, #orioncomponent script'))
+        for(const script of document.querySelectorAll('#orionContent script, #orioncomponent script, #orionMission script'))
         {
-            const match = script.textContent.match(/lithiumProduction\s*=\s*([\d.]+)/);
+            const match = script.textContent.match(/lithiumProduction\s*=\s*([\d.]+)/) || script.textContent.match(/lithiumPerHour\s*:\s*([\d.]+)/);
             if(match && Number(match[1]) > 0) return Number(match[1]);
         }
 
@@ -1308,56 +1312,82 @@ onDomReady(function()
         return Math.floor(minutes / 60) + 'h ' + String(minutes % 60).padStart(2, '0') + 'm';
     };
 
-    const readCard = card =>
-    {
-        // the redemption cost is the cell holding the lithium icon; its exact figure is in the tooltip,
-        // the cell text is rounded ("17,627M"), so only the tooltip is trusted
-        const row = card.querySelector('.scannerResultRow:not(.header)');
-        const costCell = row ? Array.from(row.querySelectorAll('.cell')).find(c => c.querySelector('lithium-icon')) : null;
-        const cost = parseNumber(costCell?.getAttribute('data-tooltip-title') || costCell?.getAttribute('title'));
+    // The two lists the index is shown on. Each says where its cards are, where their redemption cost and
+    // rewards sit, and where the line goes.
+    const KINDS =
+    [
+        {
+            // scanner results: the cost is the cell holding the lithium icon. Its exact figure is in the
+            // tooltip; the cell text is rounded ("17,627M"), so only the tooltip is trusted.
+            card:'.scannerResultCard',
+            costText:card =>
+            {
+                const row = card.querySelector('.scannerResultRow:not(.header)');
+                const cell = row ? Array.from(row.querySelectorAll('.cell')).find(c => c.querySelector('lithium-icon')) : null;
+                return cell?.getAttribute('data-tooltip-title') || cell?.getAttribute('title') || '';
+            },
+            rewards:'.scannerResultRewardsList .rewardLine',
+            after:'.scannerResultTable',
+        },
+        {
+            // active missions: the cost is the collect button's own line ("Lithium costs: 2.567.018"), the
+            // rewards are what has piled up so far, so the index is "what collecting NOW is worth". The line
+            // goes under the action bar, which stays visible when the mission is collapsed.
+            card:'.anomalyMission',
+            costText:card => (card.querySelector('.collectRewards .btnSub')?.textContent || '').split(':').pop(),
+            rewards:'.rewardsCell .rewardLine',
+            after:'.missionActionBar',
+        },
+    ];
 
+    const readCard = (card, kind) =>
+    {
         const resources = { metal:0, crystal:0, deuterium:0 };
         const excluded = [];
 
-        card.querySelectorAll('.scannerResultRewardsList .rewardLine').forEach(line =>
+        card.querySelectorAll(kind.rewards).forEach(line =>
         {
             const icon = line.querySelector('resource-icon');
-            const kind = icon ? Object.keys(resources).find(k => icon.classList.contains(k)) : null;
+            const type = icon ? Object.keys(resources).find(k => icon.classList.contains(k)) : null;
             const amount = (line.querySelector('.rewardAmount')?.textContent || '').replace(/\s+/g, ' ').trim();
 
-            if(kind) resources[kind] += parseNumber(amount);
+            if(type) resources[type] += parseNumber(amount);
             else excluded.push(((line.querySelector('.rewardName')?.textContent || '').trim() + ' ' + amount).trim());
         });
 
-        return { cost, msu:toMSU(resources.metal, resources.crystal, resources.deuterium), excluded };
+        return { cost:parseNumber(kind.costText(card)), msu:toMSU(resources.metal, resources.crystal, resources.deuterium), excluded };
     };
+
+    // What the index depends on. A mission keeps its card while each wave adds rewards and raises the
+    // collect cost, so a changed fingerprint has to redo it just like a new card would.
+    const fingerprint = (card, kind) =>
+        kind.costText(card) + '|' + Array.from(card.querySelectorAll(kind.rewards)).map(l => l.textContent).join('|').replace(/\s+/g, ' ');
 
     // A card counts while it is in the page AND shown: after "Discover" the game may remove it or just
     // hide it, and either way it must stop being the best.
     const isShown = card => card.isConnected && card.getClientRects().length > 0;
 
-    let rendered = [];   // the shown cards as of the last render, in order
+    let rendered = [];   // the shown cards as of the last render, all lists together
 
-    const render = () =>
+    const renderKind = (kind, perHour) =>
     {
-        const cards = Array.from(document.querySelectorAll('.scannerResultCard'));
-        const perHour = lithiumPerHour();
+        const cards = Array.from(document.querySelectorAll(kind.card));
         const scored = [];
 
         cards.forEach(card =>
         {
-            card.setAttribute('data-orion-profit', '1');
+            card.setAttribute('data-orion-profit', fingerprint(card, kind));
             card.classList.remove('orionProfitBest');
             card.querySelector('.orionProfit')?.remove();
 
-            const data = readCard(card);
+            const data = readCard(card, kind);
             const box = document.createElement('div');
             box.className = 'orionProfit';
-            let index = -1;   // unreadable cost: ranked last, never best
+            let index = -1;   // no readable cost: ranked last, never best
 
             if(!data.cost)
             {
-                box.innerHTML = `<span>Rewards <b>${compact(data.msu)}</b> MSU</span><span class="orionProfitMuted">redemption cost not readable</span>`;
+                box.innerHTML = `<span>rewards <b>${compact(data.msu)}</b> MSU</span><span class="orionProfitMuted">no lithium cost shown</span>`;
             }
             else
             {
@@ -1380,48 +1410,64 @@ onDomReady(function()
                 box.appendChild(extra);
             }
 
-            const table = card.querySelector('.scannerResultTable');
-            if(table) table.insertAdjacentElement('afterend', box);
+            const anchor = card.querySelector(kind.after);
+            if(anchor) anchor.insertAdjacentElement('afterend', box);
             else card.appendChild(box);
 
             scored.push({ card, index });
         });
 
         // best first, within the list each card already sits in. Only the cards move: each keeps its own
-        // Discover button and the anomaly id inside it, so what a click does is unchanged.
+        // buttons and the anomaly id inside them, so what a click does is unchanged.
         scored.sort((a, b) => b.index - a.index);
         scored.forEach(({ card }) => card.parentElement.appendChild(card));
 
         const shown = scored.filter(s => isShown(s.card));
         if(shown.length > 1 && shown[0].index >= 0) shown[0].card.classList.add('orionProfitBest');
 
-        rendered = shown.map(s => s.card);
+        return shown.map(s => s.card);
     };
 
-    // Something changed for the cards since the last render: a new one, one gone, or one hidden/shown.
+    const render = () =>
+    {
+        const perHour = lithiumPerHour();
+        rendered = KINDS.flatMap(kind => renderKind(kind, perHour));
+    };
+
+    // Something changed for the cards since the last render: a new one, one gone, one hidden/shown, or
+    // its cost or rewards moved.
     const outOfDate = () =>
     {
-        if(document.querySelector('.scannerResultCard:not([data-orion-profit])')) return true;
+        const shown = [];
 
-        const shown = Array.from(document.querySelectorAll('.scannerResultCard')).filter(isShown);
+        for(const kind of KINDS)
+        {
+            for(const card of document.querySelectorAll(kind.card))
+            {
+                if(card.getAttribute('data-orion-profit') !== fingerprint(card, kind)) return true;
+                if(isShown(card)) shown.push(card);
+            }
+        }
+
         return shown.length !== rendered.length || shown.some(card => !rendered.includes(card));
     };
 
     const style = document.createElement('style');
     style.textContent = `
-        .scannerResultCard .orionProfit { display:flex; flex-wrap:wrap; align-items:baseline; gap:3px 14px; margin:6px 0 2px; padding:5px 8px;
+        .orionProfit { display:flex; flex-wrap:wrap; align-items:baseline; gap:3px 14px; margin:6px 0 2px; padding:5px 8px;
             font-size:11px; color:#a9b7c6; background:rgba(0,0,0,.28); border-radius:3px; }
-        .scannerResultCard .orionProfit b { color:#fff; }
-        .scannerResultCard .orionProfitIndex { font-size:13px; }
-        .scannerResultCard .orionProfitMuted { color:#7c8a99; }
-        .scannerResultCard.orionProfitBest { outline:2px solid #ffb800; outline-offset:-2px; }
-        .scannerResultCard.orionProfitBest .orionProfitIndex b { color:#ffb800; }
+        .orionProfit b { color:#fff; }
+        .orionProfit .orionProfitIndex { font-size:13px; }
+        .orionProfit .orionProfitMuted { color:#7c8a99; }
+        .orionProfitBest { outline:2px solid #ffb800; outline-offset:-2px; }
+        .orionProfitBest .orionProfitIndex b { color:#ffb800; }
     `;
     document.head.appendChild(style);
 
-    // DOM-only observer (no network): the scanner tab is fetched and redrawn by the game, and Discover
-    // removes or hides a card. Any change to which cards are on screen redoes all of them, so the order
-    // and the best one always follow what is left. Our own changes happen with the observer disconnected.
+    // DOM-only observer (no network): the game fetches and redraws both tabs, Discover removes or hides a
+    // scanner card, and every wave changes an active mission's rewards. Any of those redoes the list, so
+    // the order and the best one always follow what is on screen. Our own changes happen with the
+    // observer disconnected.
     let scheduled = false;
     const watch = () => observer.observe(document.body, { childList:true, subtree:true, attributes:true, attributeFilter:['style', 'class', 'hidden'] });
 
@@ -1441,6 +1487,6 @@ onDomReady(function()
         });
     });
 
-    if(document.querySelector('.scannerResultCard')) render();
+    if(KINDS.some(kind => document.querySelector(kind.card))) render();
     watch();
 });
