@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         OGLight Orion Addons
 // @namespace    https://github.com/nicolagalassi
-// @version      0.11.0
-// @description  Add-ons for OGLight on the Project Orion test server: real costs for the Orion buildings in OGLight's own layout (level arrows, to-do list), and a button on every anomaly-mission wave that opens OGLight's battle simulator pre-filled. Display only.
+// @version      0.12.0
+// @description  Add-ons for OGLight on the Project Orion test server: real costs for the Orion buildings in OGLight's own layout (level arrows, to-do list), a button on every anomaly-mission wave that opens OGLight's battle simulator pre-filled, and a profitability figure on every scanned anomaly. Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
 // @icon         https://gf1.geo.gfsrv.net/cdn3d/favicon.ico
@@ -19,17 +19,19 @@
   so there is nothing for it to do on other universes. When Orion reaches other servers, add their
   @match lines.
 
-  Three independent parts, each in its own block below and each with its own notes:
+  Four independent parts, each in its own block below and each with its own notes:
   - PART 0 — KEEP OGLIGHT STARTING: an Orion building in the build queue made OGLight's start-up throw
     on every page showing the queue; this keeps that entry out of OGLight's way while it starts.
   - PART 1 — COSTS: prices of the Orion buildings (Interstellar Anomaly Scanner and the control center)
     in OGLight's cost grid, OGLight's level arrows, OGLight's to-do list.
   - PART 2 — MISSION WAVE SIMULATOR: a button beside the game's Sim button of every anomaly-mission wave
     that opens the simulator chosen in OGLight, pre-filled with the wave and your fleet.
+  - PART 3 — ANOMALY PROFITABILITY: on the scanner's results, what each anomaly pays per hour of your
+    lithium production, with the best one marked.
   They share nothing but this file and onDomReady below.
 
   The script runs at document-start because PART 0 has to act while the page is still being parsed,
-  before OGLight starts. PARTS 1 and 2 wait for the DOM exactly as they did at document-idle.
+  before OGLight starts. PARTS 1-3 wait for the DOM exactly as they did at document-idle.
 */
 
 const onDomReady = fn => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', fn, { once:true }) : fn();
@@ -1222,5 +1224,194 @@ onDomReady(function()
     });
 
     addButtons();
+    observer.observe(document.body, { childList:true, subtree:true });
+});
+
+/*
+  PART 3 — ANOMALY PROFITABILITY
+
+  THE PROBLEM
+  The scanner lists the anomalies it found, each with its possible rewards and the lithium it costs to
+  redeem them, but nothing says which one is worth it: the rewards are in three resources, the cost is in
+  lithium, and the two are never put side by side.
+
+  WHAT IT DOES
+  Under each anomaly's table it adds one line:
+  - the index: the rewards' value in MSU per HOUR OF YOUR LITHIUM PRODUCTION the redemption costs.
+    Rewards in MSU use OGLight's own formula and ratio (Util.getMSU, options.msu; 3:2:1 when OGLight is
+    not running). The hours are the redemption cost divided by the page's own lithiumProduction, which
+    is per hour (what the Lithium production tab shows as "Lithium / h"). So "300M" reads: each hour of
+    lithium spent on this anomaly brings back 300M MSU. The scan cost is left out: it is already paid by
+    the time the results are on screen.
+  - the redemption cost in hours of production, and the rewards' total MSU.
+  - rewards that are not resources (random ships, and anything else the game adds) are listed apart
+    and NOT counted: the page gives only a count range, not which ships, so any value would be invented.
+  The anomaly with the highest index gets a gold outline. The game's card order is left as it is.
+  The amounts are the "≈" figures the game prints; PvP doubling and the like are whatever the game
+  already put into them.
+
+  COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
+  - §1.1/§1.2  Display only: it neither scans, nor discovers, nor redeems anything.
+  - §1.3/§4    NO request to the game server. It reads the scanner tab the player opened; the DOM-only
+               observer handles the game redrawing that tab.
+  - §4.2       No cp=, no planet switching.
+  - §1.9       Nothing leaves the machine and nothing is stored.
+  - §5         Runs inside the OGame page → needs toleration before public distribution.
+*/
+
+onDomReady(function()
+{
+    'use strict';
+
+    const parseNumber = text => parseInt(String(text || '').replace(/[^\d]/g, ''), 10) || 0;
+
+    // OGLight's Util.getMSU, formula and rounding included, so the figure matches every MSU OGLight shows
+    const toMSU = (metal, crystal, deut) =>
+    {
+        let ratio = '3:2:1';
+        try { ratio = window.ogl?.db?.options?.msu || ratio; } catch(e) { /* OGLight not running */ }
+
+        const r = String(ratio).split(':').map(Number);
+        if(!(r[0] > 0 && r[1] > 0)) return Math.ceil(metal + crystal * 1.5 + deut * 3);
+        return Math.ceil(metal + crystal * r[0] / r[1] + deut * r[0]);
+    };
+
+    // The scanner tab is fetched into the page and its inline script declares `var lithiumProduction`
+    // globally. If that variable is ever missing, the same script text is still in the tab's markup.
+    const lithiumPerHour = () =>
+    {
+        const value = Number(window.lithiumProduction);
+        if(value > 0) return value;
+
+        for(const script of document.querySelectorAll('#orionContent script, #orioncomponent script'))
+        {
+            const match = script.textContent.match(/lithiumProduction\s*=\s*([\d.]+)/);
+            if(match && Number(match[1]) > 0) return Number(match[1]);
+        }
+
+        return 0;
+    };
+
+    const compact = value =>
+    {
+        const abs = Math.abs(value);
+        if(abs >= 1e9) return (value / 1e9).toFixed(2) + 'B';
+        if(abs >= 1e6) return (value / 1e6).toFixed(1) + 'M';
+        if(abs >= 1e3) return (value / 1e3).toFixed(1) + 'k';
+        return String(Math.round(value));
+    };
+
+    const hoursText = hours =>
+    {
+        const minutes = Math.round(hours * 60);
+        return Math.floor(minutes / 60) + 'h ' + String(minutes % 60).padStart(2, '0') + 'm';
+    };
+
+    const readCard = card =>
+    {
+        // the redemption cost is the cell holding the lithium icon; its exact figure is in the tooltip,
+        // the cell text is rounded ("17,627M"), so only the tooltip is trusted
+        const row = card.querySelector('.scannerResultRow:not(.header)');
+        const costCell = row ? Array.from(row.querySelectorAll('.cell')).find(c => c.querySelector('lithium-icon')) : null;
+        const cost = parseNumber(costCell?.getAttribute('data-tooltip-title') || costCell?.getAttribute('title'));
+
+        const resources = { metal:0, crystal:0, deuterium:0 };
+        const excluded = [];
+
+        card.querySelectorAll('.scannerResultRewardsList .rewardLine').forEach(line =>
+        {
+            const icon = line.querySelector('resource-icon');
+            const kind = icon ? Object.keys(resources).find(k => icon.classList.contains(k)) : null;
+            const amount = (line.querySelector('.rewardAmount')?.textContent || '').replace(/\s+/g, ' ').trim();
+
+            if(kind) resources[kind] += parseNumber(amount);
+            else excluded.push(((line.querySelector('.rewardName')?.textContent || '').trim() + ' ' + amount).trim());
+        });
+
+        return { cost, msu:toMSU(resources.metal, resources.crystal, resources.deuterium), excluded };
+    };
+
+    const render = () =>
+    {
+        const cards = Array.from(document.querySelectorAll('.scannerResultCard'));
+        const perHour = lithiumPerHour();
+        let best = null;
+
+        cards.forEach(card =>
+        {
+            card.setAttribute('data-orion-profit', '1');
+            card.classList.remove('orionProfitBest');
+            card.querySelector('.orionProfit')?.remove();
+
+            const data = readCard(card);
+            const box = document.createElement('div');
+            box.className = 'orionProfit';
+
+            if(!data.cost)
+            {
+                box.innerHTML = `<span>Rewards <b>${compact(data.msu)}</b> MSU</span><span class="orionProfitMuted">redemption cost not readable</span>`;
+            }
+            else
+            {
+                // MSU per hour of lithium production; without the production figure the same ratio per
+                // million lithium, which ranks the anomalies identically
+                const index = perHour > 0 ? data.msu * perHour / data.cost : data.msu * 1e6 / data.cost;
+                const unit = perHour > 0 ? 'MSU per hour of lithium' : 'MSU per 1M lithium';
+
+                box.innerHTML =
+                    `<span class="orionProfitIndex"><b>${compact(index)}</b> ${unit}</span>` +
+                    (perHour > 0 ? `<span>redeeming = <b>${hoursText(data.cost / perHour)}</b> of production</span>` : '') +
+                    `<span>rewards <b>${compact(data.msu)}</b> MSU</span>`;
+
+                if(!best || index > best.index) best = { card, index };
+            }
+
+            if(data.excluded.length)
+            {
+                const extra = document.createElement('span');
+                extra.className = 'orionProfitMuted';
+                extra.textContent = 'not counted: ' + data.excluded.join(', ');
+                box.appendChild(extra);
+            }
+
+            const table = card.querySelector('.scannerResultTable');
+            if(table) table.insertAdjacentElement('afterend', box);
+            else card.appendChild(box);
+        });
+
+        if(best && cards.length > 1) best.card.classList.add('orionProfitBest');
+    };
+
+    const style = document.createElement('style');
+    style.textContent = `
+        .scannerResultCard .orionProfit { display:flex; flex-wrap:wrap; align-items:baseline; gap:3px 14px; margin:6px 0 2px; padding:5px 8px;
+            font-size:11px; color:#a9b7c6; background:rgba(0,0,0,.28); border-radius:3px; }
+        .scannerResultCard .orionProfit b { color:#fff; }
+        .scannerResultCard .orionProfitIndex { font-size:13px; }
+        .scannerResultCard .orionProfitMuted { color:#7c8a99; }
+        .scannerResultCard.orionProfitBest { outline:2px solid #ffb800; outline-offset:-2px; }
+        .scannerResultCard.orionProfitBest .orionProfitIndex b { color:#ffb800; }
+    `;
+    document.head.appendChild(style);
+
+    // DOM-only observer (no network): the scanner tab is fetched and redrawn by the game. When a card shows
+    // up that has not been handled, every card is redone, since a new one can change which is the best.
+    let scheduled = false;
+
+    const observer = new MutationObserver(() =>
+    {
+        if(scheduled || !document.querySelector('.scannerResultCard:not([data-orion-profit])')) return;
+        scheduled = true;
+
+        requestAnimationFrame(() =>
+        {
+            scheduled = false;
+            observer.disconnect();
+            try { render(); }
+            finally { observer.observe(document.body, { childList:true, subtree:true }); }
+        });
+    });
+
+    if(document.querySelector('.scannerResultCard')) render();
     observer.observe(document.body, { childList:true, subtree:true });
 });
