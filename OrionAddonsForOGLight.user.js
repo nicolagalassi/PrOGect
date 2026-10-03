@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         OGLight Orion Addons
 // @namespace    https://github.com/nicolagalassi
-// @version      0.10.0
+// @version      0.11.0
 // @description  Add-ons for OGLight on the Project Orion test server: real costs for the Orion buildings in OGLight's own layout (level arrows, to-do list), and a button on every anomaly-mission wave that opens OGLight's battle simulator pre-filled. Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
 // @icon         https://gf1.geo.gfsrv.net/cdn3d/favicon.ico
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        none
 // @license      MIT
 // ==/UserScript==
@@ -19,13 +19,117 @@
   so there is nothing for it to do on other universes. When Orion reaches other servers, add their
   @match lines.
 
-  Two independent parts, each in its own block below and each with its own notes:
+  Three independent parts, each in its own block below and each with its own notes:
+  - PART 0 — KEEP OGLIGHT STARTING: an Orion building in the build queue made OGLight's start-up throw
+    on every page showing the queue; this keeps that entry out of OGLight's way while it starts.
   - PART 1 — COSTS: prices of the Orion buildings (Interstellar Anomaly Scanner and the control center)
     in OGLight's cost grid, OGLight's level arrows, OGLight's to-do list.
   - PART 2 — MISSION WAVE SIMULATOR: a button beside the game's Sim button of every anomaly-mission wave
     that opens the simulator chosen in OGLight, pre-filled with the wave and your fleet.
-  They share nothing but this file.
+  They share nothing but this file and onDomReady below.
+
+  The script runs at document-start because PART 0 has to act while the page is still being parsed,
+  before OGLight starts. PARTS 1 and 2 wait for the DOM exactly as they did at document-idle.
 */
+
+const onDomReady = fn => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', fn, { once:true }) : fn();
+
+/*
+  PART 0 — KEEP OGLIGHT STARTING WITH AN ORION BUILDING IN THE QUEUE
+
+  THE PROBLEM
+  While it starts, OGLight (checkProductionBoxes, identical in 5.3.3 and 5.4.2) walks every picture in
+  the build / research / shipyard queue boxes, takes the first number in the onclick of the link around
+  it as the technology id, and prices it with getTechData(). For an id missing from its cost table,
+  Datafinder.getTech() returns undefined and getTechData() reads undefined.metal: a TypeError. That one
+  throw ends OGLight's whole start-up - window.ogl is never set - so on every page that shows the queue,
+  for as long as an Orion building is in it, there is no OGLight at all: no to-do list (the ☰ button
+  then says "OGLight did not start"), no planet-list figures, no simulator choice.
+
+  WHAT THIS DOES
+  The same loop skips a link with no onclick (`if(!id) return`). So while the page is being parsed -
+  OGLight only starts once the document has stopped loading - every queue link whose onclick names an
+  Orion id has that onclick moved aside into data-orion-onclick, and as soon as OGLight has started it is
+  put back, unchanged.
+  - Which ids: OGLight's cost table has nothing at all in 45-99 or 4000-4999 (it ends at 44 for
+    buildings; lifeforms are 11101+), and the verified Orion buildings are 45 (scanner) and 4001-4007
+    (control center). The guard acts on exactly those two ranges, judged with OGLight's own extraction
+    (first number in the onclick), so it never touches an entry OGLight knows.
+  - When to put it back: OGLight's init() adds the class "oglight" to <body> as its first step and then
+    runs to the end synchronously, managers included. A MutationObserver callback runs only after that
+    script has returned, so seeing the class means init() is over. Without OGLight the class never
+    comes, so the links are also put back a few seconds after the page has loaded.
+
+  COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
+  - §1.1-§1.3/§4  No game action and no request: it moves one attribute and puts it back.
+  - Nothing visible changes. For the moment between the page arriving and OGLight's start a click on
+    that queue entry does nothing; after that it behaves exactly as the game made it.
+  - It changes how another tool reads the page: mention it in the toleration submission.
+*/
+
+(function()
+{
+    'use strict';
+
+    const SAVED = 'data-orion-onclick';
+    const isOrionId = id => (id >= 45 && id <= 99) || (id >= 4000 && id <= 4999);
+
+    // OGLight's own extraction: the number it would hand to getTechData
+    const queueId = link => parseInt(link.getAttribute('onclick')?.match(/([0-9]+)/)?.[0] || '', 10);
+
+    let restored = false;
+    let observer = null;
+
+    const shelve = pic =>
+    {
+        if(!pic.closest('[id^="productionbox"]')) return; // OGLight only prices the queue boxes
+
+        const link = pic.closest('a');
+        if(!link || !link.hasAttribute('onclick') || !isOrionId(queueId(link))) return;
+
+        link.setAttribute(SAVED, link.getAttribute('onclick'));
+        link.removeAttribute('onclick');
+    };
+
+    const restore = () =>
+    {
+        if(restored) return;
+        restored = true;
+        if(observer) observer.disconnect();
+
+        document.querySelectorAll('[' + SAVED + ']').forEach(link =>
+        {
+            link.setAttribute('onclick', link.getAttribute(SAVED));
+            link.removeAttribute(SAVED);
+        });
+    };
+
+    observer = new MutationObserver(records =>
+    {
+        if(restored) return;
+
+        for(const record of records)
+        {
+            if(record.type === 'attributes')
+            {
+                if(record.target === document.body && document.body.classList.contains('oglight')) { restore(); return; }
+                continue;
+            }
+
+            record.addedNodes.forEach(node =>
+            {
+                if(node.nodeType !== 1) return;
+                if(node.matches('.queuePic')) shelve(node);
+                else node.querySelectorAll('.queuePic').forEach(shelve);
+            });
+        }
+    });
+
+    observer.observe(document.documentElement, { childList:true, subtree:true, attributes:true, attributeFilter:['class'] });
+
+    // without OGLight nothing ever adds its class: give the links back once the page has settled
+    window.addEventListener('load', () => setTimeout(restore, 3000), { once:true });
+})();
 
 /*
   PART 1 — COSTS
@@ -85,7 +189,7 @@
                userscript. (It also modifies another tool's display; mention that in the submission.)
 */
 
-(function()
+onDomReady(function()
 {
     'use strict';
 
@@ -517,11 +621,11 @@
         const tech = oglightTech();
         if(!tech)
         {
-            // OGLight reads the build queue while it starts and prices every entry with its own table. With an
-            // Orion building in the queue that lookup throws, OGLight's start-up aborts and window.ogl is never
-            // created — so there is no to-do list to write into until the queue is clear of Orion buildings.
+            // Without window.ogl there is no to-do list to write into. An Orion building in the build queue
+            // used to be the usual cause; PART 0 now keeps OGLight starting through that, so if this still
+            // shows, OGLight failed for some other reason - its error is in the browser console.
             notify(window.ogl ? 'OGLight to-do list not reachable from this page'
-                : 'OGLight did not start on this page (an Orion building in the build queue makes it fail): try again once it is out of the queue', true);
+                : 'OGLight did not start on this page: its error is in the browser console (F12)', true);
             return;
         }
 
@@ -811,7 +915,7 @@
     });
 
     observer.observe(document.body, { childList:true, subtree:true });
-})();
+});
 
 /*
   PART 2 — MISSION WAVE SIMULATOR
@@ -849,16 +953,40 @@
   - §5         Runs inside the OGame page → needs toleration before public distribution.
 */
 
-(function()
+onDomReady(function()
 {
     'use strict';
 
-    // The simulators OGLight offers (OGLight 5.3.3, Util.simList) and how each takes the pre-fill.
-    // OGLight's choice is window.ogl.db.options.sim; an unknown or missing choice uses the first one.
+    // The simulators OGLight offers, copied from its Util.simList (identical in 5.3.3 and 5.4.2): the KEYS
+    // must match byte for byte, because OGLight stores the chosen key in window.ogl.db.options.sim and
+    // this looks it up. An earlier copy had 'osims' where OGLight writes 'Osims' and lacked 'battlesim',
+    // so picking either of those in OGLight fell through to the first entry and always opened OGame Tools.
+    // OGLight builds every link the same way, base + language + '#prefill=', so this does too.
     const SIMULATORS =
     {
-        'simulator.ogame-tools': { name:'simulator.ogame-tools.com', url:lang => `https://simulator.ogame-tools.com/${lang}` },
-        osims: { name:'Osims', url:() => 'https://www.ogameutilities.it/Osims/' },
+        battlesim: { name:'battlesim.logserver.net', base:'https://battlesim.logserver.net/' },
+        'simulator.ogame-tools': { name:'simulator.ogame-tools.com', base:'https://simulator.ogame-tools.com/' },
+        Osims: { name:'Osims', base:'https://www.ogameutilities.it/Osims/' },
+    };
+
+    // OGLight's choice. It lives in OGLight's private storage, readable only through window.ogl - which
+    // does not exist on a page where OGLight failed to start (an Orion building in the queue used to do
+    // that). So the choice is copied to localStorage whenever it can be read, and the copy is used when it
+    // cannot. With nothing saved at all OGLight itself picks one at random per click; here the first one
+    // is used, so the button's tooltip can say which site it opens.
+    const SIM_KEY = 'orionAddons.sim';
+    const chosenSimulator = o =>
+    {
+        let key = o?.db?.options?.sim;
+
+        try
+        {
+            if(SIMULATORS[key]) localStorage.setItem(SIM_KEY, key);
+            else key = localStorage.getItem(SIM_KEY);
+        }
+        catch(e) { /* storage blocked: use what OGLight gave, or the default */ }
+
+        return SIMULATORS[key] || SIMULATORS[Object.keys(SIMULATORS)[0]];
     };
 
     // <technology-icon> attribute → OGame unit id
@@ -1006,11 +1134,10 @@
         data[0] = [attacker];
         data[1] = [defender];
 
-        const choice = o?.db?.options?.sim;
-        const sim = SIMULATORS[choice] || SIMULATORS[Object.keys(SIMULATORS)[0]];
+        const sim = chosenSimulator(o);
 
         return {
-            url:sim.url(lang) + '#prefill=' + btoa(JSON.stringify(data)),
+            url:sim.base + lang + '#prefill=' + btoa(JSON.stringify(data)),
             sim:sim.name,
             withTechs:withTechs,
             hasShips:Object.keys(mine.ships).length > 0,
@@ -1037,7 +1164,7 @@
             if(!waveRow || !mission) return;
 
             const o = ogl();
-            const choice = SIMULATORS[o?.db?.options?.sim] || SIMULATORS[Object.keys(SIMULATORS)[0]];
+            const choice = chosenSimulator(o);
 
             // OGLight's own simulate button, as on its spy reports: an ogl_button with the Material Icons
             // "play_arrow" glyph (the icon font is OGLight's). Without that font a plain ▶ stands in.
@@ -1096,4 +1223,4 @@
 
     addButtons();
     observer.observe(document.body, { childList:true, subtree:true });
-})();
+});
