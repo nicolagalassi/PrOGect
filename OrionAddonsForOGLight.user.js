@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGLight Orion Addons
 // @namespace    https://github.com/nicolagalassi
-// @version      0.12.0
+// @version      0.12.1
 // @description  Add-ons for OGLight on the Project Orion test server: real costs for the Orion buildings in OGLight's own layout (level arrows, to-do list), a button on every anomaly-mission wave that opens OGLight's battle simulator pre-filled, and a profitability figure on every scanned anomaly. Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -1246,7 +1246,8 @@ onDomReady(function()
   - the redemption cost in hours of production, and the rewards' total MSU.
   - rewards that are not resources (random ships, and anything else the game adds) are listed apart
     and NOT counted: the page gives only a count range, not which ships, so any value would be invented.
-  The anomaly with the highest index gets a gold outline. The game's card order is left as it is.
+  The cards are reordered best first and the best one gets a gold outline. When Discover removes or hides
+  a card, the order and the outline move to what is left at once.
   The amounts are the "≈" figures the game prints; PvP doubling and the like are whatever the game
   already put into them.
 
@@ -1331,11 +1332,17 @@ onDomReady(function()
         return { cost, msu:toMSU(resources.metal, resources.crystal, resources.deuterium), excluded };
     };
 
+    // A card counts while it is in the page AND shown: after "Discover" the game may remove it or just
+    // hide it, and either way it must stop being the best.
+    const isShown = card => card.isConnected && card.getClientRects().length > 0;
+
+    let rendered = [];   // the shown cards as of the last render, in order
+
     const render = () =>
     {
         const cards = Array.from(document.querySelectorAll('.scannerResultCard'));
         const perHour = lithiumPerHour();
-        let best = null;
+        const scored = [];
 
         cards.forEach(card =>
         {
@@ -1346,6 +1353,7 @@ onDomReady(function()
             const data = readCard(card);
             const box = document.createElement('div');
             box.className = 'orionProfit';
+            let index = -1;   // unreadable cost: ranked last, never best
 
             if(!data.cost)
             {
@@ -1355,15 +1363,13 @@ onDomReady(function()
             {
                 // MSU per hour of lithium production; without the production figure the same ratio per
                 // million lithium, which ranks the anomalies identically
-                const index = perHour > 0 ? data.msu * perHour / data.cost : data.msu * 1e6 / data.cost;
+                index = perHour > 0 ? data.msu * perHour / data.cost : data.msu * 1e6 / data.cost;
                 const unit = perHour > 0 ? 'MSU per hour of lithium' : 'MSU per 1M lithium';
 
                 box.innerHTML =
                     `<span class="orionProfitIndex"><b>${compact(index)}</b> ${unit}</span>` +
                     (perHour > 0 ? `<span>redeeming = <b>${hoursText(data.cost / perHour)}</b> of production</span>` : '') +
                     `<span>rewards <b>${compact(data.msu)}</b> MSU</span>`;
-
-                if(!best || index > best.index) best = { card, index };
             }
 
             if(data.excluded.length)
@@ -1377,9 +1383,28 @@ onDomReady(function()
             const table = card.querySelector('.scannerResultTable');
             if(table) table.insertAdjacentElement('afterend', box);
             else card.appendChild(box);
+
+            scored.push({ card, index });
         });
 
-        if(best && cards.length > 1) best.card.classList.add('orionProfitBest');
+        // best first, within the list each card already sits in. Only the cards move: each keeps its own
+        // Discover button and the anomaly id inside it, so what a click does is unchanged.
+        scored.sort((a, b) => b.index - a.index);
+        scored.forEach(({ card }) => card.parentElement.appendChild(card));
+
+        const shown = scored.filter(s => isShown(s.card));
+        if(shown.length > 1 && shown[0].index >= 0) shown[0].card.classList.add('orionProfitBest');
+
+        rendered = shown.map(s => s.card);
+    };
+
+    // Something changed for the cards since the last render: a new one, one gone, or one hidden/shown.
+    const outOfDate = () =>
+    {
+        if(document.querySelector('.scannerResultCard:not([data-orion-profit])')) return true;
+
+        const shown = Array.from(document.querySelectorAll('.scannerResultCard')).filter(isShown);
+        return shown.length !== rendered.length || shown.some(card => !rendered.includes(card));
     };
 
     const style = document.createElement('style');
@@ -1394,24 +1419,28 @@ onDomReady(function()
     `;
     document.head.appendChild(style);
 
-    // DOM-only observer (no network): the scanner tab is fetched and redrawn by the game. When a card shows
-    // up that has not been handled, every card is redone, since a new one can change which is the best.
+    // DOM-only observer (no network): the scanner tab is fetched and redrawn by the game, and Discover
+    // removes or hides a card. Any change to which cards are on screen redoes all of them, so the order
+    // and the best one always follow what is left. Our own changes happen with the observer disconnected.
     let scheduled = false;
+    const watch = () => observer.observe(document.body, { childList:true, subtree:true, attributes:true, attributeFilter:['style', 'class', 'hidden'] });
 
     const observer = new MutationObserver(() =>
     {
-        if(scheduled || !document.querySelector('.scannerResultCard:not([data-orion-profit])')) return;
+        if(scheduled) return;
         scheduled = true;
 
         requestAnimationFrame(() =>
         {
             scheduled = false;
+            if(!outOfDate()) return;
+
             observer.disconnect();
             try { render(); }
-            finally { observer.observe(document.body, { childList:true, subtree:true }); }
+            finally { watch(); }
         });
     });
 
     if(document.querySelector('.scannerResultCard')) render();
-    observer.observe(document.body, { childList:true, subtree:true });
+    watch();
 });
