@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGLight Orion Addons
 // @namespace    https://github.com/nicolagalassi
-// @version      0.16.0
+// @version      0.17.0
 // @description  Add-ons for OGLight on the Project Orion test server: real costs for the Orion buildings in OGLight's own layout (level arrows, to-do list), a button on every anomaly-mission wave that opens OGLight's battle simulator pre-filled, and a profitability figure on every scanned anomaly. Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -1622,34 +1622,74 @@ onDomReady(function()
     const recordList = records => records.map(r => `${r.name} [${r.coords}] ${compact(r.cost)}` + (r.partial ? ' (so far)' : '') +
         (r.lithium ? ` −${compact(r.lithium)} back` : '') + `, ${endsIn(r)}`).join('\n  ');
 
-    // Above the scanner results: what the plans below are holding back, so the memory can be checked.
+    // How many scans the bar can pay for right now. A scan is paid on the spot, so the lithium free for
+    // scans is the lowest the bar would go from NOW onwards, given every anomaly under way paid at its
+    // own end - the same timeline as the launch plan, seen from the present. Spending more than that
+    // would leave one of them unredeemable when it ends. The anomalies a scan might find are not known
+    // yet, so they are not reserved for.
+    const scanCost = () =>
+    {
+        const el = document.querySelector('#scanCostValue');
+        return el ? parseNumber(el.getAttribute('data-tooltip-title')) || parseNumber(el.textContent) : 0;
+    };
+
+    const scansPossible = perHour =>
+    {
+        const now = lithiumNow(), cost = scanCost();
+        if(now === null || !cost) return null;
+
+        const stopsIn = depletionHours();
+        const t0 = Date.now();
+        const due = liveLedger().map(r => ({ ...r, h:Math.max(0, (r.endAt - t0) / 3600000) }));
+        const poolAt = h => now + (perHour > 0 ? perHour : 0) * Math.min(h, stopsIn) - due.reduce((sum, r) => r.h <= h ? sum + (r.cost || 0) - (r.lithium || 0) : sum, 0);
+
+        const free = Math.min(poolAt(0), ...due.map(r => poolAt(r.h)));
+        return { cost, free, count:Math.max(0, Math.floor(free / cost)) };
+    };
+
+    // Above the scanner results: how many scans are safe, and what is being held back for, so the
+    // memory can be checked. Shown even when the scanner has no result yet.
     const renderReserve = () =>
     {
         document.querySelectorAll('.orionReserve').forEach(n => n.remove());
 
-        const first = document.querySelector(KINDS[0].card);
-        if(!first) return;
+        const holder = document.querySelector('#scannerResultHolder') || document.querySelector(KINDS[0].card)?.parentElement;
+        if(!holder) return;
 
         const records = liveLedger().sort((a, b) => a.endAt - b.endAt);
+        const scans = scansPossible(lithiumPerHour());
         const box = document.createElement('div');
         box.className = 'orionReserve';
 
+        if(scans)
+        {
+            box.innerHTML += scans.count > 0
+                ? `<div class="orionReserveScans">Scans you can make now: <b>${scans.count}</b> at <b>${compact(scans.cost)}</b> each, ` +
+                  `keeping ${records.length ? 'every anomaly under way redeemable' : 'nothing back - none under way'} (<b>${compact(scans.free)}</b> free)</div>`
+                : `<div class="orionReserveScans orionProfitShortText">Scans you can make now: <b>0</b> - ` +
+                  (scans.free < 0 ? `the anomalies under way are already short by <b>${compact(-scans.free)}</b>` : `<b>${compact(scans.free)}</b> free, one scan costs <b>${compact(scans.cost)}</b>`) + `</div>`;
+        }
+
         if(!records.length)
         {
-            box.innerHTML = 'No anomaly under way is remembered. If you have some, open the missions tab once so their lithium is counted.';
+            box.innerHTML += 'No anomaly under way is remembered. If you have some, open the missions tab once so their lithium is counted.';
         }
         else
         {
             const total = records.reduce((sum, r) => sum + (r.cost || 0) - (r.lithium || 0), 0);
-            box.innerHTML = `Lithium still to pay for <b>${records.length}</b> anomal${records.length > 1 ? 'ies' : 'y'} under way: <b>${compact(total)}</b>` +
+            box.innerHTML += `Lithium still to pay for <b>${records.length}</b> anomal${records.length > 1 ? 'ies' : 'y'} under way: <b>${compact(total)}</b>` +
                 records.map(r => `<div class="orionReserveRow">${r.name} [${r.coords}] · <b>${compact(r.cost)}</b>` +
                     (r.partial ? ' <span class="orionProfitShortText">cost so far - total not known yet</span>' : '') +
                     (r.lithium ? ` · ${compact(r.lithium)} back` : '') + ` · ${endsIn(r)}</div>`).join('');
         }
 
         // before the list, not inside it: the game owns that container
-        first.parentElement.insertAdjacentElement('beforebegin', box);
+        holder.insertAdjacentElement('beforebegin', box);
+        lastScanCost = scanCost();
     };
+
+    // the scan cost follows the level and range the player picks, without any card changing
+    let lastScanCost = null;
 
     // What the index depends on. A mission keeps its card while each wave adds rewards and raises the
     // collect cost, so a changed fingerprint has to redo it just like a new card would.
@@ -1772,6 +1812,8 @@ onDomReady(function()
     {
         // a freshly fetched missions tab, even one listing no mission at all, still has to clear the ledger
         if(document.querySelector('#orionMission:not([data-orion-synced])')) return true;
+        // the scanner tab: a new scan cost (level or range changed), or the box missing (no results yet)
+        if(document.querySelector('#scannerResultHolder') && (!document.querySelector('.orionReserve') || scanCost() !== lastScanCost)) return true;
 
         const shown = [];
 
@@ -1802,6 +1844,7 @@ onDomReady(function()
         .orionReserve b { color:#fff; }
         .orionReserve .orionReserveRow { margin-top:2px; color:#8d9bab; }
         .orionReserve .orionProfitShortText { color:#e0b25a; }
+        .orionReserve .orionReserveScans { margin-bottom:4px; font-size:12px; color:#8fd19e; }
     `;
     document.head.appendChild(style);
 
@@ -1828,6 +1871,6 @@ onDomReady(function()
         });
     });
 
-    if(document.querySelector('#orionMission') || KINDS.some(kind => document.querySelector(kind.card))) render();
+    if(document.querySelector('#orionMission, #scannerResultHolder') || KINDS.some(kind => document.querySelector(kind.card))) render();
     watch();
 });
