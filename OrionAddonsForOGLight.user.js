@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGLight Orion Addons
 // @namespace    https://github.com/nicolagalassi
-// @version      0.14.0
+// @version      0.15.0
 // @description  Add-ons for OGLight on the Project Orion test server: real costs for the Orion buildings in OGLight's own layout (level arrows, to-do list), a button on every anomaly-mission wave that opens OGLight's battle simulator pre-filled, and a profitability figure on every scanned anomaly. Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -1253,13 +1253,20 @@ onDomReady(function()
   a card, the order and the outline move to what is left at once.
   The amounts are the "≈" figures the game prints; PvP doubling and the like are whatever the game
   already put into them.
+  A lithium reward is not MSU: it is taken off the redemption cost, and an anomaly that gives back at
+  least what it costs is shown as free and ranked first.
+  Each scanner card also gets a launch plan: the lithium at the end of the mission (bar + production -
+  what the anomalies already taken on and ending first will cost, + the lithium they give back), how many
+  waves that collects, and how long to wait to collect them all. Those anomalies are remembered locally:
+  the ones discovered from the scanner (on the Discover click) and the ones on the missions tab.
 
   COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
-  - §1.1/§1.2  Display only: it neither scans, nor discovers, nor redeems anything.
+  - §1.1/§1.2  Display only: it neither scans, nor discovers, nor redeems anything. The Discover click is
+               only read, never stopped or changed.
   - §1.3/§4    NO request to the game server. It reads the scanner tab the player opened; the DOM-only
                observer handles the game redrawing that tab.
   - §4.2       No cp=, no planet switching.
-  - §1.9       Nothing leaves the machine and nothing is stored.
+  - §1.9       Nothing leaves the machine; the anomalies taken on stay in this browser's localStorage.
   - §5         Runs inside the OGame page → needs toleration before public distribution.
 */
 
@@ -1341,25 +1348,81 @@ onDomReady(function()
         return Infinity;
     };
 
-    // Launching NOW and collecting at the end: the lithium then is what is in the bar plus what is
-    // produced during the mission. The redemption cost is split evenly over the waves, as their rewards
-    // are, so that lithium buys a whole number of waves.
-    // If it falls short, the wait is measured from now: production needs `needed` hours to bring the bar
-    // up to the cost, and the mission already runs for `hours` of them, so launching `needed - hours`
-    // later lets everything be collected at the end. When the conversion stops before `needed` hours, no
-    // wait is long enough: wait is then null.
-    // It cannot see lithium already promised to other missions.
+    // ---------- the anomalies already taken on ----------
+    //
+    // Lithium in the bar is not all free: every anomaly already discovered or running will want its
+    // redemption cost, and some give lithium back as a reward. Those are kept here, in this browser only,
+    // keyed by the anomaly's coordinates (the one thing the scanner card and the mission share):
+    //   { coords, name, cost, lithium, endAt, source:'scanner'|'mission', at }
+    // - cost / lithium: the WHOLE redemption cost and lithium reward, at the last wave.
+    // - source 'scanner': written when Discover is clicked, from the card's own figures; endAt assumes
+    //   the fleet leaves right away. Replaced as soon as the missions tab shows that anomaly, dropped
+    //   24h after discovery if it never does.
+    // - source 'mission': written every time the missions tab is drawn, with the real end timer and
+    //   costs projected from the waves already done. A mission that is no longer listed has been
+    //   collected or has expired, so it is dropped.
+    const LEDGER_KEY = 'orionAddons.anomalies';
+    const SCANNER_RECORD_TTL = 24 * 3600 * 1000;
+
+    const loadLedger = () =>
+    {
+        try { return JSON.parse(localStorage.getItem(LEDGER_KEY) || '{}') || {}; }
+        catch(e) { return {}; }
+    };
+
+    const saveLedger = ledger =>
+    {
+        try { localStorage.setItem(LEDGER_KEY, JSON.stringify(ledger)); }
+        catch(e) { /* storage blocked: the plan simply does not see other anomalies */ }
+    };
+
+    const liveLedger = () =>
+    {
+        const ledger = loadLedger();
+        const now = Date.now();
+        let changed = false;
+
+        Object.keys(ledger).forEach(key =>
+        {
+            if(ledger[key].source === 'scanner' && now - ledger[key].at > SCANNER_RECORD_TTL) { delete ledger[key]; changed = true; }
+        });
+
+        if(changed) saveLedger(ledger);
+        return Object.values(ledger);
+    };
+
+    const coordsText = text => (String(text || '').match(/\d+:\d+:\d+/) || [''])[0];
+
+    // Launching NOW and collecting at the end. The lithium then is the bar, plus production over the
+    // mission (up to the moment the conversion runs dry), minus every other anomaly that ends first -
+    // its cost paid, its lithium reward received. Anomalies that end after this one are not taken off:
+    // by then production has kept running, and they are listed so the player sees them.
+    // The redemption cost is split evenly over the waves, as their rewards are, so that lithium buys a
+    // whole number of waves. This anomaly's own lithium reward arrives with the collection, so it cannot
+    // pay for it.
+    // If it falls short, `wait` is how long from now production needs to cover everything: launching
+    // that late OR LATER collects all waves (there is no "too late" the scanner card can see). When the
+    // conversion stops before that, no wait is enough and wait is null.
     const launchPlan = (data, hours, waves, perHour) =>
     {
         const now = lithiumNow();
         if(now === null || !(perHour > 0) || !(hours > 0) || !(waves > 0) || !data.cost) return null;
 
         const stopsIn = depletionHours();
-        const atEnd = now + perHour * Math.min(hours, stopsIn);
-        const covered = Math.min(waves, Math.floor(atEnd / (data.cost / waves)));
-        const needed = (data.cost - now) / perHour;
+        const end = Date.now() + hours * 3600 * 1000;
+        const before = [], after = [];
+        liveLedger().forEach(record => (record.endAt <= end ? before : after).push(record));
 
-        return { atEnd, covered, waves, msu:data.msu * covered / waves, wait:needed > stopsIn ? null : Math.max(0, needed - hours) };
+        const owed = before.reduce((sum, r) => sum + (r.cost || 0) - (r.lithium || 0), 0);
+        const atEnd = now + perHour * Math.min(hours, stopsIn) - owed;
+        const covered = Math.max(0, Math.min(waves, Math.floor(atEnd / (data.cost / waves))));
+        const needed = (data.cost + owed - now) / perHour;
+
+        return {
+            atEnd, covered, waves, owed, before, after,
+            msu:data.msu * covered / waves,
+            wait:needed > stopsIn ? null : Math.max(0, needed - hours),
+        };
     };
 
     // The two lists the index is shown on. Each says where its cards are, where their redemption cost and
@@ -1378,6 +1441,7 @@ onDomReady(function()
             },
             rewards:'.scannerResultRewardsList .rewardLine',
             after:'.scannerResultTable',
+            coords:card => coordsText(card.querySelector('.scannerResultRow:not(.header) a')?.textContent),
             // the result row's own columns: level, target, duration, waves, distance, type, cost
             mission:card =>
             {
@@ -1386,6 +1450,24 @@ onDomReady(function()
             },
         },
         {
+            // the projection of an active mission onto its last wave, for the ledger. The collect cost grows
+            // by the same amount every wave (Chaos: 2.567.018 after 1 of 7 = 17.969.126 / 7, the scanner's
+            // figure), so total = now / waves done * all waves. "Wave: 2 / 7" is the one on its way, so one
+            // fewer is done; with no wave label left, every wave is done.
+            coords:card => coordsText(card.querySelectorAll('.missionRouteLabels .routeLabelCell')[1]?.querySelector('.nodeCoords')?.textContent),
+            project:(card, data, known) =>
+            {
+                const [incoming, total] = ((card.querySelector('.nodeWave')?.textContent || '').match(/(\d+)\s*\/\s*(\d+)/) || []).slice(1).map(Number);
+                const done = total ? Math.max(0, incoming - 1) : 0;
+                const scale = total && done ? total / done : 0;
+                const seconds = Number(card.querySelector('[id^="despawn_"]')?.getAttribute('data-seconds')) || 0;
+
+                return {
+                    cost:scale ? Math.round(data.cost * scale) : (known?.cost || data.cost),
+                    lithium:scale ? Math.round(data.lithium * scale) : (known?.lithium || data.lithium),
+                    endAt:seconds ? Date.now() + seconds * 1000 : (known?.endAt || Date.now()),
+                };
+            },
             // active missions: the cost is the collect button's own line ("Lithium costs: 2.567.018"), the
             // rewards are what has piled up so far, so the index is "what collecting NOW is worth". The line
             // goes under the action bar, which stays visible when the mission is collapsed.
@@ -1396,10 +1478,15 @@ onDomReady(function()
         },
     ];
 
+    // A lithium reward is told apart by the game's lithium icon, or by its name if the icon ever changes
+    // ("Litio", "Lithium"). It is not MSU: it pays back part of the redemption cost instead.
+    const isLithium = line => !!line.querySelector('lithium-icon') || /^\s*lit(h)?i/i.test(line.querySelector('.rewardName')?.textContent || '');
+
     const readCard = (card, kind) =>
     {
         const resources = { metal:0, crystal:0, deuterium:0 };
         const excluded = [];
+        let lithium = 0;
 
         card.querySelectorAll(kind.rewards).forEach(line =>
         {
@@ -1408,11 +1495,78 @@ onDomReady(function()
             const amount = (line.querySelector('.rewardAmount')?.textContent || '').replace(/\s+/g, ' ').trim();
 
             if(type) resources[type] += parseNumber(amount);
+            else if(isLithium(line)) lithium += parseNumber(amount);
             else excluded.push(((line.querySelector('.rewardName')?.textContent || '').trim() + ' ' + amount).trim());
         });
 
-        return { cost:parseNumber(kind.costText(card)), msu:toMSU(resources.metal, resources.crystal, resources.deuterium), excluded };
+        return { cost:parseNumber(kind.costText(card)), lithium, msu:toMSU(resources.metal, resources.crystal, resources.deuterium), excluded };
     };
+
+    // The missions tab is the full list of anomalies under way: write each one into the ledger with its
+    // projected totals, and drop the missions it no longer lists (collected or expired). Records from the
+    // scanner are only replaced, never dropped here - an anomaly discovered but not yet flown may not be
+    // on this list.
+    const syncMissions = () =>
+    {
+        const tab = document.querySelector('#orionMission');
+        if(!tab) return;
+        tab.setAttribute('data-orion-synced', '1'); // see outOfDate: an empty list must be synced too
+
+        const kind = KINDS[1];
+        const ledger = loadLedger();
+        const listed = new Set();
+
+        document.querySelectorAll(kind.card).forEach(card =>
+        {
+            const coords = kind.coords(card);
+            if(!coords) return;
+
+            listed.add(coords);
+            const data = readCard(card, kind);
+            const projected = kind.project(card, data, ledger[coords]);
+            const name = card.querySelector('.missionNameText')?.textContent.trim() || coords;
+
+            ledger[coords] = { coords, name, ...projected, source:'mission', at:Date.now() };
+        });
+
+        Object.keys(ledger).forEach(key =>
+        {
+            if(ledger[key].source === 'mission' && !listed.has(key)) delete ledger[key];
+        });
+
+        saveLedger(ledger);
+    };
+
+    // Discover on a scanner card: remember the anomaly before the game takes the card away. A capture
+    // listener only reads; the click carries on to the game's own handler untouched.
+    document.addEventListener('click', event =>
+    {
+        const card = event.target.closest?.('.scannerResultCard');
+        if(!card || !event.target.closest('.discoverButton')) return;
+
+        const kind = KINDS[0];
+        const coords = kind.coords(card);
+        const data = readCard(card, kind);
+        if(!coords || !data.cost) return;
+
+        const shape = kind.mission(card);
+        const ledger = loadLedger();
+        if(ledger[coords]?.source === 'mission') return; // the real figures are already there
+
+        ledger[coords] =
+        {
+            coords,
+            name:card.querySelector('.scannerResultName')?.textContent.trim() || coords,
+            cost:data.cost,
+            lithium:data.lithium,
+            endAt:Date.now() + (shape.hours || 0) * 3600 * 1000,
+            source:'scanner',
+            at:Date.now(),
+        };
+        saveLedger(ledger);
+    }, true);
+
+    const recordList = records => records.map(r => `${r.name} [${r.coords}] ${compact(r.cost)}` + (r.lithium ? ` −${compact(r.lithium)} back` : '')).join(', ');
 
     // What the index depends on. A mission keeps its card while each wave adds rewards and raises the
     // collect cost, so a changed fingerprint has to redo it just like a new card would.
@@ -1447,15 +1601,29 @@ onDomReady(function()
             }
             else
             {
-                // MSU per hour of lithium production; without the production figure the same ratio per
-                // million lithium, which ranks the anomalies identically
-                index = perHour > 0 ? data.msu * perHour / data.cost : data.msu * 1e6 / data.cost;
+                // What the anomaly really costs in lithium is the redemption minus the lithium it gives back.
+                // One that gives back at least as much costs nothing: it ranks above every other, and among
+                // those the larger reward wins.
+                const net = data.cost - data.lithium;
                 const unit = perHour > 0 ? 'MSU per hour of lithium' : 'MSU per 1M lithium';
 
-                box.innerHTML =
-                    `<span class="orionProfitIndex"><b>${compact(index)}</b> ${unit}</span>` +
-                    (perHour > 0 ? `<span>redeeming = <b>${hoursText(data.cost / perHour)}</b> of production</span>` : '') +
-                    `<span>rewards <b>${compact(data.msu)}</b> MSU</span>`;
+                if(net > 0)
+                {
+                    // MSU per hour of lithium production; without the production figure the same ratio per
+                    // million lithium, which ranks the anomalies identically
+                    index = perHour > 0 ? data.msu * perHour / net : data.msu * 1e6 / net;
+                    box.innerHTML =
+                        `<span class="orionProfitIndex"><b>${compact(index)}</b> ${unit}</span>` +
+                        (perHour > 0 ? `<span>redeeming = <b>${hoursText(net / perHour)}</b> of production</span>` : '');
+                }
+                else
+                {
+                    index = 1e18 + data.msu;
+                    box.innerHTML = `<span class="orionProfitIndex"><b>free</b> - the lithium it gives back covers its cost</span>`;
+                }
+
+                box.innerHTML += `<span>rewards <b>${compact(data.msu)}</b> MSU</span>` +
+                    (data.lithium ? `<span>lithium <b>${compact(data.cost)}</b> paid, <b>${compact(data.lithium)}</b> back</span>` : '');
 
                 const shape = kind.mission ? kind.mission(card) : null;
                 const plan = shape ? launchPlan(data, shape.hours, shape.waves, perHour) : null;
@@ -1464,13 +1632,19 @@ onDomReady(function()
                 {
                     const line = document.createElement('span');
                     line.className = 'orionProfitPlan' + (plan.covered < plan.waves ? ' orionProfitShort' : '');
-                    line.title = `Lithium now plus ${hoursText(shape.hours)} of production, collected at the end. It does not count lithium your other missions will need.`;
+                    line.title =
+                        `Lithium now plus ${hoursText(shape.hours)} of production, collected at the end.` +
+                        (plan.before.length ? `\nTaken off, they end first: ${recordList(plan.before)}.` : '\nNo other anomaly ends first.') +
+                        (plan.after.length ? `\nNot taken off, they end later: ${recordList(plan.after)}.` : '') +
+                        (data.lithium ? `\nThis anomaly's own ${compact(data.lithium)} lithium back arrives with the collection, so it cannot pay for it.` : '');
+
+                    const owedText = plan.owed > 0 ? ` (after <b>${compact(plan.owed)}</b> for ${plan.before.length} other)` : '';
                     line.innerHTML = plan.covered >= plan.waves
-                        ? `launch now: <b>${compact(plan.atEnd)}</b> lithium at the end collects <b>all ${plan.waves} waves</b>, ≈<b>${compact(plan.msu)}</b> MSU`
-                        : `launch now: <b>${compact(plan.atEnd)}</b> lithium at the end collects <b>${plan.covered}/${plan.waves} waves</b>, ≈<b>${compact(plan.msu)}</b> MSU` +
+                        ? `launch now: <b>${compact(plan.atEnd)}</b> lithium at the end${owedText} collects <b>all ${plan.waves} waves</b>, ≈<b>${compact(plan.msu)}</b> MSU`
+                        : `launch now: <b>${compact(Math.max(0, plan.atEnd))}</b> lithium at the end${owedText} collects <b>${plan.covered}/${plan.waves} waves</b>, ≈<b>${compact(plan.msu)}</b> MSU` +
                           (plan.wait === null
                               ? ` · not all ${plan.waves}: lithium production stops before it gets there`
-                              : ` · all ${plan.waves} if launched in <b>${hoursText(plan.wait)}</b>`);
+                              : ` · all ${plan.waves} if launched <b>${hoursText(plan.wait)}</b> from now or later`);
                     box.appendChild(line);
                 }
             }
@@ -1504,6 +1678,7 @@ onDomReady(function()
     const render = () =>
     {
         const perHour = lithiumPerHour();
+        syncMissions();
         rendered = KINDS.flatMap(kind => renderKind(kind, perHour));
     };
 
@@ -1511,6 +1686,9 @@ onDomReady(function()
     // its cost or rewards moved.
     const outOfDate = () =>
     {
+        // a freshly fetched missions tab, even one listing no mission at all, still has to clear the ledger
+        if(document.querySelector('#orionMission:not([data-orion-synced])')) return true;
+
         const shown = [];
 
         for(const kind of KINDS)
@@ -1562,6 +1740,6 @@ onDomReady(function()
         });
     });
 
-    if(KINDS.some(kind => document.querySelector(kind.card))) render();
+    if(document.querySelector('#orionMission') || KINDS.some(kind => document.querySelector(kind.card))) render();
     watch();
 });
