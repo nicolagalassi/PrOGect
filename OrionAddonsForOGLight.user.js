@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGLight Orion Addons
 // @namespace    https://github.com/nicolagalassi
-// @version      0.15.0
+// @version      0.16.0
 // @description  Add-ons for OGLight on the Project Orion test server: real costs for the Orion buildings in OGLight's own layout (level arrows, to-do list), a button on every anomaly-mission wave that opens OGLight's battle simulator pre-filled, and a profitability figure on every scanned anomaly. Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -1393,35 +1393,60 @@ onDomReady(function()
 
     const coordsText = text => (String(text || '').match(/\d+:\d+:\d+/) || [''])[0];
 
-    // Launching NOW and collecting at the end. The lithium then is the bar, plus production over the
-    // mission (up to the moment the conversion runs dry), minus every other anomaly that ends first -
-    // its cost paid, its lithium reward received. Anomalies that end after this one are not taken off:
-    // by then production has kept running, and they are listed so the player sees them.
-    // The redemption cost is split evenly over the waves, as their rewards are, so that lithium buys a
-    // whole number of waves. This anomaly's own lithium reward arrives with the collection, so it cannot
-    // pay for it.
-    // If it falls short, `wait` is how long from now production needs to cover everything: launching
-    // that late OR LATER collects all waves (there is no "too late" the scanner card can see). When the
-    // conversion stops before that, no wait is enough and wait is null.
-    const launchPlan = (data, hours, waves, perHour) =>
+    // Launching NOW and collecting at the end.
+    // Every anomaly already taken on has to be paid when IT ends, wherever that falls: one ending in 4h
+    // still needs its lithium in 4h, so whatever this one spends before then must leave enough behind.
+    // So the bar is followed over time - lithium now, plus production (until the conversion runs dry),
+    // minus each taken-on anomaly's cost and plus its lithium back at its end - and the lithium free for
+    // this one is the LOWEST the bar would go from this one's collection onwards. This one's own lithium
+    // back arrives with its collection, so it helps the later checkpoints but cannot pay for itself.
+    // The redemption cost is split evenly over the waves, as their rewards are, so the free lithium buys
+    // a whole number of waves.
+    // `wait` is how long from now to launch so that all waves are covered: launching that late OR LATER
+    // works, since waiting only adds lithium. If no wait is ever enough (the conversion stops first),
+    // wait is null. The card's own coordinates are left out, should a record for it exist.
+    const launchPlan = (data, hours, waves, perHour, ownCoords) =>
     {
         const now = lithiumNow();
         if(now === null || !(perHour > 0) || !(hours > 0) || !(waves > 0) || !data.cost) return null;
 
         const stopsIn = depletionHours();
-        const end = Date.now() + hours * 3600 * 1000;
-        const before = [], after = [];
-        liveLedger().forEach(record => (record.endAt <= end ? before : after).push(record));
+        const t0 = Date.now();
+        const due = liveLedger()
+            .filter(r => r.coords !== ownCoords)
+            .map(r => ({ ...r, h:Math.max(0, (r.endAt - t0) / 3600000) }))   // already over: due now
+            .sort((a, b) => a.h - b.h);
 
-        const owed = before.reduce((sum, r) => sum + (r.cost || 0) - (r.lithium || 0), 0);
-        const atEnd = now + perHour * Math.min(hours, stopsIn) - owed;
-        const covered = Math.max(0, Math.min(waves, Math.floor(atEnd / (data.cost / waves))));
-        const needed = (data.cost + owed - now) / perHour;
+        const poolAt = h => now + perHour * Math.min(h, stopsIn) - due.reduce((sum, r) => r.h <= h ? sum + (r.cost || 0) - (r.lithium || 0) : sum, 0);
+        const freeAt = h => Math.min(poolAt(h), ...due.filter(r => r.h > h).map(r => poolAt(r.h) + data.lithium));
+
+        const free = freeAt(hours);
+        const covered = Math.max(0, Math.min(waves, Math.floor(free / (data.cost / waves))));
+
+        // freeAt only grows with a later collection, so the earliest launch that covers everything is
+        // found by halving. Past the last due anomaly and the end of the conversion nothing changes any
+        // more: if it is not enough there, it never is.
+        let wait = 0;
+        if(free < data.cost)
+        {
+            const totalNet = due.reduce((sum, r) => sum + (r.cost || 0) - (r.lithium || 0), 0);
+            const last = due.length ? due[due.length - 1].h : 0;
+            const top = Math.max(hours, last, Number.isFinite(stopsIn) ? stopsIn : (data.cost + totalNet - now) / perHour) + 1;
+
+            if(freeAt(top) < data.cost) wait = null;
+            else
+            {
+                let lo = hours, hi = top;
+                for(let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if(freeAt(mid) >= data.cost) hi = mid; else lo = mid; }
+                wait = hi - hours;
+            }
+        }
 
         return {
-            atEnd, covered, waves, owed, before, after,
+            free, covered, waves, due,
+            reserved:Math.max(0, now + perHour * Math.min(hours, stopsIn) - free),
             msu:data.msu * covered / waves,
-            wait:needed > stopsIn ? null : Math.max(0, needed - hours),
+            wait,
         };
     };
 
@@ -1462,9 +1487,15 @@ onDomReady(function()
                 const scale = total && done ? total / done : 0;
                 const seconds = Number(card.querySelector('[id^="despawn_"]')?.getAttribute('data-seconds')) || 0;
 
+                // The total never shrinks, so the largest figure ever seen for this anomaly wins - the
+                // scanner's own cost recorded at Discover included. With no wave done and nothing recorded,
+                // the cost so far is all there is: it is kept, and flagged as partial.
+                const cost = Math.max(scale ? Math.round(data.cost * scale) : data.cost, known?.cost || 0);
+                const lithium = Math.max(scale ? Math.round(data.lithium * scale) : data.lithium, known?.lithium || 0);
+
                 return {
-                    cost:scale ? Math.round(data.cost * scale) : (known?.cost || data.cost),
-                    lithium:scale ? Math.round(data.lithium * scale) : (known?.lithium || data.lithium),
+                    cost, lithium,
+                    partial:!scale && !(known?.cost > data.cost) && !!total && done < total,
                     endAt:seconds ? Date.now() + seconds * 1000 : (known?.endAt || Date.now()),
                 };
             },
@@ -1537,8 +1568,14 @@ onDomReady(function()
         saveLedger(ledger);
     };
 
-    // Discover on a scanner card: remember the anomaly before the game takes the card away. A capture
+    // Discover on a scanner card: note the anomaly before the game takes the card away. A capture
     // listener only reads; the click carries on to the game's own handler untouched.
+    // It is only PENDING here: the game can refuse (discovery limit reached, position taken) and leave
+    // the card where it is. commitPending() writes it once the card is really gone from the scanner, and
+    // forgets it if the card is still there a few seconds later.
+    const pending = new Map();
+    const PENDING_TTL = 15000;
+
     document.addEventListener('click', event =>
     {
         const card = event.target.closest?.('.scannerResultCard');
@@ -1549,24 +1586,70 @@ onDomReady(function()
         const data = readCard(card, kind);
         if(!coords || !data.cost) return;
 
-        const shape = kind.mission(card);
-        const ledger = loadLedger();
-        if(ledger[coords]?.source === 'mission') return; // the real figures are already there
-
-        ledger[coords] =
+        pending.set(coords,
         {
             coords,
             name:card.querySelector('.scannerResultName')?.textContent.trim() || coords,
             cost:data.cost,
             lithium:data.lithium,
-            endAt:Date.now() + (shape.hours || 0) * 3600 * 1000,
+            endAt:Date.now() + (kind.mission(card).hours || 0) * 3600 * 1000,
             source:'scanner',
             at:Date.now(),
-        };
-        saveLedger(ledger);
+        });
     }, true);
 
-    const recordList = records => records.map(r => `${r.name} [${r.coords}] ${compact(r.cost)}` + (r.lithium ? ` −${compact(r.lithium)} back` : '')).join(', ');
+    const commitPending = () =>
+    {
+        if(!pending.size) return;
+
+        const onScreen = new Set(Array.from(document.querySelectorAll(KINDS[0].card)).filter(isShown).map(KINDS[0].coords));
+        const ledger = loadLedger();
+
+        pending.forEach((record, coords) =>
+        {
+            if(!onScreen.has(coords))
+            {
+                if(ledger[coords]?.source !== 'mission') ledger[coords] = record; // real figures win
+                pending.delete(coords);
+            }
+            else if(Date.now() - record.at > PENDING_TTL) pending.delete(coords); // refused by the game
+        });
+
+        saveLedger(ledger);
+    };
+
+    const endsIn = r => r.endAt <= Date.now() ? 'over, due now' : 'ends in ' + hoursText((r.endAt - Date.now()) / 3600000);
+    const recordList = records => records.map(r => `${r.name} [${r.coords}] ${compact(r.cost)}` + (r.partial ? ' (so far)' : '') +
+        (r.lithium ? ` −${compact(r.lithium)} back` : '') + `, ${endsIn(r)}`).join('\n  ');
+
+    // Above the scanner results: what the plans below are holding back, so the memory can be checked.
+    const renderReserve = () =>
+    {
+        document.querySelectorAll('.orionReserve').forEach(n => n.remove());
+
+        const first = document.querySelector(KINDS[0].card);
+        if(!first) return;
+
+        const records = liveLedger().sort((a, b) => a.endAt - b.endAt);
+        const box = document.createElement('div');
+        box.className = 'orionReserve';
+
+        if(!records.length)
+        {
+            box.innerHTML = 'No anomaly under way is remembered. If you have some, open the missions tab once so their lithium is counted.';
+        }
+        else
+        {
+            const total = records.reduce((sum, r) => sum + (r.cost || 0) - (r.lithium || 0), 0);
+            box.innerHTML = `Lithium still to pay for <b>${records.length}</b> anomal${records.length > 1 ? 'ies' : 'y'} under way: <b>${compact(total)}</b>` +
+                records.map(r => `<div class="orionReserveRow">${r.name} [${r.coords}] · <b>${compact(r.cost)}</b>` +
+                    (r.partial ? ' <span class="orionProfitShortText">cost so far - total not known yet</span>' : '') +
+                    (r.lithium ? ` · ${compact(r.lithium)} back` : '') + ` · ${endsIn(r)}</div>`).join('');
+        }
+
+        // before the list, not inside it: the game owns that container
+        first.parentElement.insertAdjacentElement('beforebegin', box);
+    };
 
     // What the index depends on. A mission keeps its card while each wave adds rewards and raises the
     // collect cost, so a changed fingerprint has to redo it just like a new card would.
@@ -1626,22 +1709,21 @@ onDomReady(function()
                     (data.lithium ? `<span>lithium <b>${compact(data.cost)}</b> paid, <b>${compact(data.lithium)}</b> back</span>` : '');
 
                 const shape = kind.mission ? kind.mission(card) : null;
-                const plan = shape ? launchPlan(data, shape.hours, shape.waves, perHour) : null;
+                const plan = shape ? launchPlan(data, shape.hours, shape.waves, perHour, kind.coords(card)) : null;
 
                 if(plan)
                 {
                     const line = document.createElement('span');
                     line.className = 'orionProfitPlan' + (plan.covered < plan.waves ? ' orionProfitShort' : '');
                     line.title =
-                        `Lithium now plus ${hoursText(shape.hours)} of production, collected at the end.` +
-                        (plan.before.length ? `\nTaken off, they end first: ${recordList(plan.before)}.` : '\nNo other anomaly ends first.') +
-                        (plan.after.length ? `\nNot taken off, they end later: ${recordList(plan.after)}.` : '') +
+                        `Lithium now plus ${hoursText(shape.hours)} of production, collected at the end, keeping back what the anomalies under way will need when they end:` +
+                        (plan.due.length ? `\n  ${recordList(plan.due)}` : ' none remembered.') +
                         (data.lithium ? `\nThis anomaly's own ${compact(data.lithium)} lithium back arrives with the collection, so it cannot pay for it.` : '');
 
-                    const owedText = plan.owed > 0 ? ` (after <b>${compact(plan.owed)}</b> for ${plan.before.length} other)` : '';
+                    const heldText = plan.reserved > 0 ? ` (<b>${compact(plan.reserved)}</b> held back for ${plan.due.length} under way)` : '';
                     line.innerHTML = plan.covered >= plan.waves
-                        ? `launch now: <b>${compact(plan.atEnd)}</b> lithium at the end${owedText} collects <b>all ${plan.waves} waves</b>, ≈<b>${compact(plan.msu)}</b> MSU`
-                        : `launch now: <b>${compact(Math.max(0, plan.atEnd))}</b> lithium at the end${owedText} collects <b>${plan.covered}/${plan.waves} waves</b>, ≈<b>${compact(plan.msu)}</b> MSU` +
+                        ? `launch now: <b>${compact(plan.free)}</b> lithium free at the end${heldText} collects <b>all ${plan.waves} waves</b>, ≈<b>${compact(plan.msu)}</b> MSU`
+                        : `launch now: <b>${compact(Math.max(0, plan.free))}</b> lithium free at the end${heldText} collects <b>${plan.covered}/${plan.waves} waves</b>, ≈<b>${compact(plan.msu)}</b> MSU` +
                           (plan.wait === null
                               ? ` · not all ${plan.waves}: lithium production stops before it gets there`
                               : ` · all ${plan.waves} if launched <b>${hoursText(plan.wait)}</b> from now or later`);
@@ -1679,7 +1761,9 @@ onDomReady(function()
     {
         const perHour = lithiumPerHour();
         syncMissions();
+        commitPending();
         rendered = KINDS.flatMap(kind => renderKind(kind, perHour));
+        renderReserve();
     };
 
     // Something changed for the cards since the last render: a new one, one gone, one hidden/shown, or
@@ -1714,6 +1798,10 @@ onDomReady(function()
         .orionProfitBest .orionProfitIndex b { color:#ffb800; }
         .orionProfit .orionProfitPlan { flex-basis:100%; padding-top:3px; border-top:1px solid rgba(255,255,255,.06); color:#8fd19e; }
         .orionProfit .orionProfitPlan.orionProfitShort { color:#e0b25a; }
+        .orionReserve { margin:4px 0 8px; padding:6px 9px; font-size:11px; color:#a9b7c6; background:rgba(0,0,0,.35); border:1px solid rgba(224,178,90,.35); border-radius:3px; }
+        .orionReserve b { color:#fff; }
+        .orionReserve .orionReserveRow { margin-top:2px; color:#8d9bab; }
+        .orionReserve .orionProfitShortText { color:#e0b25a; }
     `;
     document.head.appendChild(style);
 
