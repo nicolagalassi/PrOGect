@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Orion Calculator
 // @namespace    https://github.com/nicolagalassi
-// @version      1.0.0
+// @version      1.1.0
 // @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; and how many scans the lithium can pay for without starving them. Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -453,7 +453,7 @@ onDomReady(function()
     // memory can be checked. Shown even when the scanner has no result yet.
     const renderReserve = () =>
     {
-        document.querySelectorAll('.orionReserve').forEach(n => n.remove());
+        document.querySelectorAll('.orionReserve, .orionScanWarning').forEach(n => n.remove());
 
         const holder = document.querySelector('#scannerResultHolder') || document.querySelector(KINDS[0].card)?.parentElement;
         if(!holder) return;
@@ -470,6 +470,23 @@ onDomReady(function()
                   `keeping ${records.length ? 'every anomaly under way redeemable' : 'nothing back - none under way'} (<b>${compact(scans.free)}</b> free)</div>`
                 : `<div class="orionReserveScans orionProfitShortText">Scans you can make now: <b>0</b> - ` +
                   (scans.free < 0 ? `the anomalies under way are already short by <b>${compact(-scans.free)}</b>` : `<b>${compact(scans.free)}</b> free, one scan costs <b>${compact(scans.cost)}</b>`) + `</div>`;
+        }
+
+        // The case that costs something: anomalies are under way and one more scan would leave one of them
+        // unredeemable. Said right under the scan panel, where it is read before the Scan button is
+        // pressed. Without anomalies under way a zero only means the bar cannot pay one scan, which the
+        // game refuses by itself, so no warning is needed then.
+        const panel = document.querySelector('#scannerPanelGroup');
+        if(scans && scans.count === 0 && records.length && panel)
+        {
+            const warning = document.createElement('div');
+            warning.className = 'orionScanWarning';
+            warning.innerHTML =
+                `<b>⚠ Warning:</b> scanning now leaves too little lithium to redeem every anomaly under way. ` +
+                (scans.free < 0
+                    ? `They are already short by <b>${compact(-scans.free)}</b>, before any scan.`
+                    : `Only <b>${compact(scans.free)}</b> is free and one scan costs <b>${compact(scans.cost)}</b>.`);
+            panel.insertAdjacentElement('afterend', warning);
         }
 
         if(!records.length)
@@ -647,6 +664,9 @@ onDomReady(function()
         .orionReserve .orionReserveRow { margin-top:2px; color:#8d9bab; }
         .orionReserve .orionProfitShortText { color:#e0b25a; }
         .orionReserve .orionReserveScans { margin-bottom:4px; font-size:12px; color:#8fd19e; }
+        .orionScanWarning { margin:6px 0; padding:7px 10px; font-size:12px; color:#ffd7d2; background:rgba(160,30,20,.45);
+            border:1px solid #e0533f; border-radius:3px; }
+        .orionScanWarning b { color:#fff; }
     `;
     document.head.appendChild(style);
 
