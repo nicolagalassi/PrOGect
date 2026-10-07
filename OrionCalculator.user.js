@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Orion Calculator
 // @namespace    https://github.com/nicolagalassi
-// @version      1.2.0
+// @version      1.2.1
 // @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; how many scans the lithium can pay for without starving them; and a searchable archive of every anomaly taken on (level, stars, PvP/PvE, type, lithium, rewards collected). Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -65,10 +65,12 @@
   (localStorage "orionArchive.v1"), keyed by the game's own id for it (data-space-object-id).
   - Every time the missions tab is drawn, each anomaly listed is written down or updated: name,
     coordinates, level, difficulty stars, PvP/PvE, type (e.g. "Battle"), when it appeared, waves reached.
-  - A press of the game's collect button is READ by a capture listener: the rewards on screen and the
-    lithium the button says it costs are noted, and saved as a collection once the game has really paid
-    them out (the card's rewards changed or the card is gone). A click the game refuses is forgotten
-    after 20 s. Lithium back is taken from the lithium rewards; resources are also given in MSU; rewards
+  - A collection is READ by a capture listener. The card's collect button only opens the game's
+    "collect rewards" dialog (waves, total lithium cost, Accept / Cancel): what is noted is Accept in
+    that dialog, with the dialog's own figures. Cancel notes nothing. With "don't show again today"
+    ticked there is no dialog, and the card button itself is noted with the card's figures. Either way
+    it is saved once the game has really paid out (the card's rewards changed or the card is gone), and
+    forgotten if nothing changes within 60 s. Lithium back is taken from the lithium rewards; resources are also given in MSU; rewards
     that are not resources (ships…) are kept as the game's text.
   - An anomaly no longer listed is closed: "collected" with at least one collection saved, "expired"
     otherwise.
@@ -734,7 +736,7 @@ onDomReady(function()
         // ---------- storage (this browser only) ----------
         const DB_KEY = 'orionArchive.v1';
         const PENDING_KEY = 'orionArchive.pending';
-        const PENDING_TTL = 20000;
+        const PENDING_TTL = 60000;
 
         const load = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; } catch(e) { return fallback; } };
         const save = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch(e) { /* storage blocked */ } };
@@ -743,12 +745,15 @@ onDomReady(function()
         // ---------- reading a mission card ----------
         const missionId = card => card.getAttribute('data-space-object-id') || '';
 
-        // rewards on the card right now: resources by their icon, lithium by its icon or name, the rest as text
-        const readRewards = card =>
+        // rewards inside `box`: resources by their icon, lithium by its icon or name, the rest as text.
+        // The mission card lists them in .rewardsCell, the collect dialog in .collectSummaryRewards.
+        const readRewards = (box, selector = '.rewardsCell .rewardLine') =>
         {
             const res = { metal:0, crystal:0, deuterium:0, lithium:0, other:[] };
-            card.querySelectorAll('.rewardsCell .rewardLine:not(.rewardLineEmpty)').forEach(line =>
+            box.querySelectorAll(selector).forEach(line =>
             {
+                if(line.classList.contains('rewardLineEmpty')) return;
+
                 const icon = line.querySelector('resource-icon');
                 const type = icon ? ['metal', 'crystal', 'deuterium'].find(k => icon.classList.contains(k)) : null;
                 const amount = clean(line.querySelector('.rewardAmount')?.textContent);
@@ -784,11 +789,55 @@ onDomReady(function()
             };
         };
 
-        // ---------- the collect click: read only ----------
-        // The click goes on to the game untouched; we only note what is on screen. It becomes a collection
-        // once the game has paid out (rewards changed or card gone), see settlePending().
+        // ---------- the collect: read only ----------
+        // The game's "collect" button on the card does NOT collect: it opens a dialog ("Raccogli le
+        // ricompense") with every wave to be collected, the total lithium cost and Accept / Cancel. So:
+        // - Accept in that dialog is what gets noted, with the dialog's own figures (summary rewards,
+        //   total cost, waves). Cancel or closing the dialog notes nothing.
+        // - With "don't show this again today" ticked the card button collects straight away and no
+        //   dialog appears; only then is the card button itself noted, from the card's figures.
+        // Either way it is still only PENDING: it becomes a collection once the game has paid out (the
+        // card's rewards changed or the card is gone) and is forgotten if nothing changes within 60 s.
+        // These listeners only read: the click goes on to the game untouched.
+        const cardOf = id => document.querySelector(`.anomalyMission[data-space-object-id="${String(id).replace(/"/g, "")}"]`);
+        const dialogOpen = () => !!document.querySelector('.orionCollectRewards');
+        let dialogSeen = 0;   // last time a collect dialog was on screen or clicked in
+
+        const addPending = (id, record) =>
+        {
+            const pending = load(PENDING_KEY, {});
+            pending[id] = record;
+            save(PENDING_KEY, pending);
+        };
+
         document.addEventListener('click', event =>
         {
+            if(event.target.closest?.('.ui-dialog')?.querySelector('.orionCollectRewards') || event.target.closest?.('.orionCollectRewards')) dialogSeen = Date.now();
+
+            // Accept in the collect dialog
+            const confirm = event.target.closest?.('.orionCollectConfirm');
+            const dialog = confirm?.closest('.orionCollectRewards');
+            if(dialog && !confirm.disabled)
+            {
+                const id = dialog.getAttribute('data-space-object-id') || '';
+                if(!id) return;
+
+                // the game marks the waves the lithium can pay for as .affordable; only those are collected
+                const rows = Array.from(dialog.querySelectorAll(dialog.querySelector('.collectWaveRow.affordable') ? '.collectWaveRow.affordable' : '.collectWaveRow'));
+                const waves = rows.map(r => parseNumber(r.querySelector('.cwWave')?.textContent)).filter(Boolean);
+                const rewards = dialog.querySelector('.collectSummaryRewards .rewardLine')
+                    ? readRewards(dialog, '.collectSummaryRewards .rewardLine')
+                    : readRewards(dialog, '.collectWaveRow.affordable .cwRewards .rewardLine');
+                const cost = parseNumber(dialog.querySelector('.collectTotalValue')?.textContent) ||
+                             rows.reduce((s, r) => s + parseNumber((r.querySelector('.cwCost')?.textContent || '').split(':').pop()), 0);
+                const card = cardOf(id);
+
+                addPending(id, { at:Date.now(), via:'dialog', print:card ? rewardsPrint(card) : '', cost, rewards,
+                                 wave:waves.length ? Math.max(...waves) : (card ? readMission(card).wave : 0), waves:waves.length });
+                return;
+            }
+
+            // the card's own button: only counts when no dialog follows
             const button = event.target.closest?.('.collectRewards');
             const card = button?.closest('.anomalyMission');
             if(!card || button.disabled) return;
@@ -796,16 +845,13 @@ onDomReady(function()
             const id = missionId(card);
             if(!id) return;
 
-            const pending = load(PENDING_KEY, {});
-            pending[id] =
-            {
-                at: Date.now(),
-                print: rewardsPrint(card),
-                cost: parseNumber((card.querySelector('.collectRewards .btnSub')?.textContent || '').split(':').pop()),
-                rewards: readRewards(card),
-                wave: readMission(card).wave,
-            };
-            save(PENDING_KEY, pending);
+            const record = { at:Date.now(), via:'card', print:rewardsPrint(card),
+                             cost:parseNumber((card.querySelector('.collectRewards .btnSub')?.textContent || '').split(':').pop()),
+                             rewards:readRewards(card), wave:readMission(card).wave };
+
+            // a local UI timer, no request: give the game time to open its dialog. If one came (even if
+            // already closed again), the dialog's Accept decides; if none came, the button collected directly.
+            setTimeout(() => { if(!dialogOpen() && dialogSeen < record.at) addPending(id, record); }, 1500);
         }, true);
 
         const settlePending = (db, cards) =>
@@ -815,6 +861,12 @@ onDomReady(function()
 
             Object.entries(pending).forEach(([id, p]) =>
             {
+                // a dialog came late after all: the card-button note is not a collection, Accept will be
+                if(p.via === 'card' && document.querySelector(`.orionCollectRewards[data-space-object-id="${String(id).replace(/"/g, "")}"]`))
+                {
+                    delete pending[id]; changed = true; return;
+                }
+
                 const card = cards.get(id);
                 if(card && rewardsPrint(card) === p.print)
                 {
@@ -827,7 +879,7 @@ onDomReady(function()
                 {
                     const r = p.rewards;
                     entry.collections = entry.collections || [];
-                    entry.collections.push({ at:p.at, wave:p.wave, cost:p.cost, lithium:r.lithium, metal:r.metal, crystal:r.crystal, deuterium:r.deuterium,
+                    entry.collections.push({ at:p.at, wave:p.wave, waves:p.waves || 0, cost:p.cost, lithium:r.lithium, metal:r.metal, crystal:r.crystal, deuterium:r.deuterium,
                                              msu:toMSU(r.metal, r.crystal, r.deuterium), other:r.other });
                 }
                 delete pending[id];
@@ -1094,6 +1146,7 @@ onDomReady(function()
         // called by the calculator's observer, with the observer disconnected
         const tick = () =>
         {
+            if(dialogOpen()) dialogSeen = Date.now();
             if(!document.querySelector('.orionTabContentWrapper')) return;
             placeButtons();
             sync();
