@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Orion Calculator
 // @namespace    https://github.com/nicolagalassi
-// @version      1.3.2
+// @version      1.3.3
 // @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; how many scans the lithium can pay for without starving them; and an archive with daily results of every anomaly taken on (level, stars, PvP/PvE, type, lithium, rewards collected, fuel spent, ships lost). Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -69,8 +69,10 @@
     "collect rewards" dialog (waves, total lithium cost, Accept / Cancel): what is noted is Accept in
     that dialog, with the dialog's own figures. Cancel notes nothing. With "don't show again today"
     ticked there is no dialog, and the card button itself is noted with the card's figures. Either way
-    it is saved once the game has really paid out (the card's rewards changed or the card is gone), and
-    forgotten if nothing changes within 60 s.
+    it is saved only once the game has really paid out: the card's collect cost (or, without one, its
+    rewards) went DOWN, or the card stayed gone. A new wave only adds to both, so it never counts as a
+    payout, and a card missing for an instant while the game redraws the list does not either. A
+    disabled button is not noted. Anything else is forgotten after 60 s.
   - Fuel: when the player sends a fleet, the game's own send request and its answer are READ through
     jQuery's global ajaxSend / ajaxComplete events. If the answer says the fleet left and the target is an
     anomaly (deep space type 4, the anomaly mission 14, or coordinates the archive knows), the fuel the
@@ -768,6 +770,7 @@ onDomReady(function()
         const DB_KEY = 'orionArchive.v1';
         const PENDING_KEY = 'orionArchive.pending';
         const PENDING_TTL = 60000;
+        const GONE_SETTLE = 3000;   // a card missing this long is really gone, not being redrawn
 
         const load = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; } catch(e) { return fallback; } };
         const save = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch(e) { /* storage blocked */ } };
@@ -807,6 +810,15 @@ onDomReady(function()
         };
 
         const rewardsPrint = card => Array.from(card.querySelectorAll('.rewardsCell .rewardLine')).map(l => clean(l.textContent)).join('|');
+
+        // What is waiting to be collected on the card: the collect button's lithium cost, and the rewards
+        // in MSU plus lithium. A wave arriving only ever adds to both; a payout takes away what it paid.
+        const cardCost = card => parseNumber((card.querySelector('.collectRewards .btnSub')?.textContent || '').split(':').pop());
+        const cardValue = card => { const r = readRewards(card); return toMSU(r.metal, r.crystal, r.deuterium) + r.lithium; };
+
+        // The game greys a refused button out with the attribute, a class or aria-disabled, depending on
+        // the element; a click on it does nothing, so nothing is noted.
+        const isDisabled = el => !!(el.disabled || el.classList.contains('disabled') || el.getAttribute('aria-disabled') === 'true');
 
         const readMission = card =>
         {
@@ -860,7 +872,7 @@ onDomReady(function()
             // Accept in the collect dialog
             const confirm = event.target.closest?.('.orionCollectConfirm');
             const dialog = confirm?.closest('.orionCollectRewards');
-            if(dialog && !confirm.disabled)
+            if(dialog && !isDisabled(confirm))
             {
                 const id = dialog.getAttribute('data-space-object-id') || '';
                 if(!id) return;
@@ -876,6 +888,7 @@ onDomReady(function()
                 const card = cardOf(id);
 
                 addPending(id, { at:Date.now(), via:'dialog', print:card ? rewardsPrint(card) : '', cost, rewards,
+                                 cardCost:card ? cardCost(card) : 0, cardValue:card ? cardValue(card) : 0,
                                  wave:waves.length ? Math.max(...waves) : (card ? readMission(card).wave : 0), waves:waves.length });
                 return;
             }
@@ -883,14 +896,13 @@ onDomReady(function()
             // the card's own button: only counts when no dialog follows
             const button = event.target.closest?.('.collectRewards');
             const card = button?.closest('.anomalyMission');
-            if(!card || button.disabled) return;
+            if(!card || isDisabled(button)) return;
 
             const id = missionId(card);
             if(!id) return;
 
-            const record = { at:Date.now(), via:'card', print:rewardsPrint(card),
-                             cost:parseNumber((card.querySelector('.collectRewards .btnSub')?.textContent || '').split(':').pop()),
-                             rewards:readRewards(card), wave:readMission(card).wave };
+            const record = { at:Date.now(), via:'card', print:rewardsPrint(card), cost:cardCost(card),
+                             rewards:readRewards(card), wave:readMission(card).wave, cardCost:cardCost(card), cardValue:cardValue(card) };
 
             // a local UI timer, no request: give the game time to open its dialog. If one came (even if
             // already closed again), the dialog's Accept decides; if none came, the button collected directly.
@@ -910,11 +922,28 @@ onDomReady(function()
                     delete pending[id]; changed = true; return;
                 }
 
+                // Has the game paid out? Not "the card changed": a wave arriving in the meantime changes it
+                // too, and turned a refused or unconfirmed collect into lithium paid. Only what was waiting
+                // on the card going DOWN says so. (Notes from 1.3.0 and older carry no figures: the old test.)
                 const card = cards.get(id);
-                if(card && rewardsPrint(card) === p.print)
+                if(card)
                 {
-                    if(Date.now() - p.at > PENDING_TTL) { delete pending[id]; changed = true; }   // refused by the game
-                    return;
+                    if(p.goneSince) { delete p.goneSince; changed = true; }   // it was only being redrawn
+                    const paid = !('cardCost' in p) ? rewardsPrint(card) !== p.print
+                               : p.cardCost ? cardCost(card) < p.cardCost
+                               : cardValue(card) < p.cardValue;
+                    if(!paid)
+                    {
+                        if(Date.now() - p.at > PENDING_TTL) { delete pending[id]; changed = true; }   // refused or never confirmed
+                        return;
+                    }
+                }
+                else
+                {
+                    // Gone from the list: collected for good, unless the game is just redrawing the tab (it
+                    // empties the list and refills it). It counts once it has stayed gone for a while.
+                    if(!p.goneSince) { p.goneSince = Date.now(); changed = true; return; }
+                    if(Date.now() - p.goneSince < GONE_SETTLE) return;
                 }
 
                 const entry = db.entries[id];
@@ -975,6 +1004,8 @@ onDomReady(function()
                     e.status = (e.collections || []).length ? 'collected' : 'expired';
                     e.endedAt = now;
                 }
+                // its collection is settled a moment after the card goes (see GONE_SETTLE)
+                else if(e.status === 'expired' && (e.collections || []).length) e.status = 'collected';
             });
 
             save(DB_KEY, db);
