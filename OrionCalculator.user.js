@@ -73,6 +73,9 @@
     rewards) went DOWN, or the card stayed gone. A new wave only adds to both, so it never counts as a
     payout, and a card missing for an instant while the game redraws the list does not either. A
     disabled button is not noted. Anything else is forgotten after 60 s.
+    Only what was really collected counts (1.3.4): the dialog's paid waves (its summary only when the
+    waves carry no rewards of their own), each resource capped at what actually left the card between
+    the click and the payout, so rewards of waves the lithium did not pay for are never counted.
   - Fuel: when the player sends a fleet, the game's own send request and its answer are READ through
     jQuery's global ajaxSend / ajaxComplete events. If the answer says the fleet left and the target is an
     anomaly (deep space type 4, the anomaly mission 14, or coordinates the archive knows), the fuel the
@@ -886,14 +889,16 @@ onDomReady(function()
                 // the game marks the waves the lithium can pay for as .affordable; only those are collected
                 const rows = Array.from(dialog.querySelectorAll(dialog.querySelector('.collectWaveRow.affordable') ? '.collectWaveRow.affordable' : '.collectWaveRow'));
                 const waves = rows.map(r => parseNumber(r.querySelector('.cwWave')?.textContent)).filter(Boolean);
-                const rewards = dialog.querySelector('.collectSummaryRewards .rewardLine')
-                    ? readRewards(dialog, '.collectSummaryRewards .rewardLine')
-                    : readRewards(dialog, '.collectWaveRow.affordable .cwRewards .rewardLine');
+                // what the paid waves give: the affordable rows' own rewards first, the summary only without
+                // them (it may total every wave, also those the lithium does not pay for)
+                const rewards = dialog.querySelector('.collectWaveRow.affordable .cwRewards .rewardLine')
+                    ? readRewards(dialog, '.collectWaveRow.affordable .cwRewards .rewardLine')
+                    : readRewards(dialog, '.collectSummaryRewards .rewardLine');
                 const cost = parseNumber(dialog.querySelector('.collectTotalValue')?.textContent) ||
                              rows.reduce((s, r) => s + parseNumber((r.querySelector('.cwCost')?.textContent || '').split(':').pop()), 0);
                 const card = cardOf(id);
 
-                addPending(id, { at:Date.now(), via:'dialog', print:card ? rewardsPrint(card) : '', cost, rewards,
+                addPending(id, { at:Date.now(), via:'dialog', print:card ? rewardsPrint(card) : '', cost, rewards, before:card ? readRewards(card) : null,
                                  cardCost:card ? cardCost(card) : 0, cardValue:card ? cardValue(card) : 0,
                                  wave:waves.length ? Math.max(...waves) : (card ? readMission(card).wave : 0), waves:waves.length });
                 return;
@@ -908,12 +913,38 @@ onDomReady(function()
             if(!id) return;
 
             const record = { at:Date.now(), via:'card', print:rewardsPrint(card), cost:cardCost(card),
-                             rewards:readRewards(card), wave:readMission(card).wave, cardCost:cardCost(card), cardValue:cardValue(card) };
+                             rewards:readRewards(card), before:readRewards(card), wave:readMission(card).wave, cardCost:cardCost(card), cardValue:cardValue(card) };
 
             // a local UI timer, no request: give the game time to open its dialog. If one came (even if
             // already closed again), the dialog's Accept decides; if none came, the button collected directly.
             setTimeout(() => { if(!dialogOpen() && dialogSeen < record.at) addPending(id, record); }, 1500);
         }, true);
+
+        // Only what was really collected counts, never what the dialog or the card promised. The card's
+        // rewards at the click (`before`) and after the payout (`after`, null when the card is gone) bound
+        // it: each resource is at most what left the card. Non-resource lines ("name 120") likewise, when
+        // their count is a plain number; anything else is kept as read.
+        const collectedOnly = (r, before, after) =>
+        {
+            if(!before) return r;
+            const out = { ...r, other:[] };
+            ['metal', 'crystal', 'deuterium', 'lithium'].forEach(k =>
+            {
+                const left = Math.max(0, (before[k] || 0) - (after ? after[k] || 0 : 0));
+                out[k] = Math.min(r[k] || 0, left);
+            });
+            const split = text => { const m = clean(text).match(/^(.*?)\s*(\d[\d.,' ]*)$/); return m ? [m[1], parseNumber(m[2])] : null; };
+            const counts = list => (list || []).reduce((acc, text) => { const x = split(text); if(x) acc[x[0]] = (acc[x[0]] || 0) + x[1]; return acc; }, {});
+            const had = counts(before.other), still = after ? counts(after.other) : {};
+            (r.other || []).forEach(text =>
+            {
+                const x = split(text);
+                if(!x || !(x[0] in had)) { out.other.push(text); return; }
+                const n = Math.min(x[1], Math.max(0, had[x[0]] - (still[x[0]] || 0)));
+                if(n) out.other.push(n === x[1] ? text : `${x[0]} ${n}`);
+            });
+            return out;
+        };
 
         const settlePending = (db, cards) =>
         {
@@ -955,7 +986,7 @@ onDomReady(function()
                 const entry = db.entries[id];
                 if(entry)
                 {
-                    const r = p.rewards;
+                    const r = collectedOnly(p.rewards, p.before, card ? readRewards(card) : null);
                     entry.collections = entry.collections || [];
                     entry.collections.push({ at:p.at, wave:p.wave, waves:p.waves || 0, cost:p.cost, lithium:r.lithium, metal:r.metal, crystal:r.crystal, deuterium:r.deuterium,
                                              msu:toMSU(r.metal, r.crystal, r.deuterium), other:r.other });
