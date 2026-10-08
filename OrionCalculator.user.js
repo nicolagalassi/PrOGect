@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Orion Calculator
 // @namespace    https://github.com/nicolagalassi
-// @version      1.3.6
+// @version      1.3.7
 // @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; how many scans the lithium can pay for without starving them; and an archive with daily results of every anomaly taken on (level, stars, PvP/PvE, type, lithium, rewards collected, ships received, fuel spent, ships lost). Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -57,6 +57,11 @@
   - Each scanner card gets a launch plan: the lithium free at the end is the lowest the bar would go from
     its collection onwards, the number of waves that buys, and the earliest launch that collects them all
     ("from now or later": waiting only adds lithium).
+  - Any anomaly under way can be IGNORED by the player (1.3.7): a toggle under its mission card, and an
+    "ignore" / "count again" link in the list above the scanner results. An ignored anomaly is left out
+    of the lithium still to pay, of the scans and of every launch plan, e.g. one the player will not
+    complete or does not mean to redeem. Kept in this browser (localStorage "orionAddons.ignored", by
+    coordinates) until that anomaly leaves the missions tab.
   - Above the results: how many scans can be paid now, i.e. the lowest the bar would go from now on
     divided by the scan cost, and the list of anomalies being held back for.
 
@@ -234,6 +239,15 @@ onDomReady(function()
         catch(e) { /* storage blocked: the plan simply does not see other anomalies */ }
     };
 
+    // Anomalies the player chose to leave out of the lithium planning (one they will not complete or do
+    // not mean to redeem): { coords:true }, in this browser only. Set and cleared only by the player's own
+    // click on the toggle; dropped when the anomaly leaves the missions tab.
+    const IGNORED_KEY = 'orionAddons.ignored';
+    const loadIgnored = () => { try { return JSON.parse(localStorage.getItem(IGNORED_KEY) || '{}') || {}; } catch(e) { return {}; } };
+    const saveIgnored = ignored => { try { localStorage.setItem(IGNORED_KEY, JSON.stringify(ignored)); } catch(e) { /* storage blocked */ } };
+    const ignoredRecords = () => { const ignored = loadIgnored(); return Object.values(loadLedger()).filter(r => ignored[r.coords]); };
+
+    // the anomalies under way that count: every remembered one but those the player ignores
     const liveLedger = () =>
     {
         const ledger = loadLedger();
@@ -246,7 +260,8 @@ onDomReady(function()
         });
 
         if(changed) saveLedger(ledger);
-        return Object.values(ledger);
+        const ignored = loadIgnored();
+        return Object.values(ledger).filter(r => !ignored[r.coords]);
     };
 
     const coordsText = text => (String(text || '').match(/\d+:\d+:\d+/) || [''])[0];
@@ -337,7 +352,8 @@ onDomReady(function()
             // by the same amount every wave (Chaos: 2.567.018 after 1 of 7 = 17.969.126 / 7, the scanner's
             // figure), so total = now / waves done * all waves. "Wave: 2 / 7" is the one on its way, so one
             // fewer is done; with no wave label left, every wave is done.
-            coords:card => coordsText(card.querySelectorAll('.missionRouteLabels .routeLabelCell')[1]?.querySelector('.nodeCoords')?.textContent),
+            // the route reads origin → anomaly → wave; a mission with no fleet out shows the anomaly alone
+            coords:card => { const cells = card.querySelectorAll('.missionRouteLabels .routeLabelCell'); return coordsText(cells[cells.length === 1 ? 0 : 1]?.querySelector('.nodeCoords')?.textContent); },
             project:(card, data, known) =>
             {
                 const [incoming, total] = ((card.querySelector('.nodeWave')?.textContent || '').match(/(\d+)\s*\/\s*(\d+)/) || []).slice(1).map(Number);
@@ -424,6 +440,11 @@ onDomReady(function()
         });
 
         saveLedger(ledger);
+
+        // an ignored anomaly that is gone (collected, expired) is forgotten, so a new one at the same
+        // coordinates counts again
+        const ignored = loadIgnored();
+        if(Object.keys(ignored).some(c => !ledger[c])) { Object.keys(ignored).forEach(c => { if(!ledger[c]) delete ignored[c]; }); saveIgnored(ignored); }
     };
 
     // Discover on a scanner card: note the anomaly before the game takes the card away. A capture
@@ -545,7 +566,11 @@ onDomReady(function()
             panel.insertAdjacentElement('afterend', warning);
         }
 
-        if(!records.length)
+        if(!records.length && ignoredRecords().length)
+        {
+            box.innerHTML += 'No anomaly under way counts: every one remembered is ignored.';
+        }
+        else if(!records.length)
         {
             box.innerHTML += 'No anomaly under way is remembered. If you have some, open the missions tab once so their lithium is counted.';
         }
@@ -555,8 +580,14 @@ onDomReady(function()
             box.innerHTML += `Lithium still to pay for <b>${records.length}</b> anomal${records.length > 1 ? 'ies' : 'y'} under way: <b>${compact(total)}</b>` +
                 records.map(r => `<div class="orionReserveRow">${r.name} [${r.coords}] · <b>${compact(r.cost)}</b>` +
                     (r.partial ? ' <span class="orionProfitShortText">cost so far - total not known yet</span>' : '') +
-                    (r.lithium ? ` · ${compact(r.lithium)} back` : '') + ` · ${endsIn(r)}</div>`).join('');
+                    (r.lithium ? ` · ${compact(r.lithium)} back` : '') + ` · ${endsIn(r)}` +
+                    ` · <a class="orionIgnoreLink" data-orion-ignore="${r.coords}" title="Leave this anomaly out of the lithium still to pay">ignore</a></div>`).join('');
         }
+
+        const skipped = ignoredRecords();
+        if(skipped.length)
+            box.innerHTML += `<div class="orionReserveIgnored">Ignored by you, not counted: ` +
+                skipped.map(r => `${r.name} [${r.coords}] · ${compact(r.cost)} <a class="orionIgnoreLink" data-orion-ignore="${r.coords}">count again</a>`).join(' · ') + `</div>`;
 
         // before the list, not inside it: the game owns that container
         holder.insertAdjacentElement('beforebegin', box);
@@ -646,6 +677,20 @@ onDomReady(function()
                 }
             }
 
+            // the player's own switch: count this anomaly in the lithium planning, or ignore it
+            const ownCoords = kind.coords(card);
+            if(kind === KINDS[1] && ownCoords)
+            {
+                const off = !!loadIgnored()[ownCoords];
+                const toggle = document.createElement('a');
+                toggle.className = 'orionIgnoreLink' + (off ? ' orionIgnored' : '');
+                toggle.setAttribute('data-orion-ignore', ownCoords);
+                toggle.title = 'Whether the lithium this anomaly still needs is held back in the scanner\'s plans';
+                toggle.textContent = off ? '☐ ignored in lithium planning - click to count it' : '☑ counted in lithium planning - click to ignore';
+                box.appendChild(toggle);
+            }
+
+            data.excluded = data.excluded.filter(Boolean);
             if(data.excluded.length)
             {
                 const extra = document.createElement('span');
@@ -680,6 +725,21 @@ onDomReady(function()
         rendered = KINDS.flatMap(kind => renderKind(kind, perHour));
         renderReserve();
     };
+
+    // The ignore toggle (card or list above the scanner). Only the player's click changes it; the page is
+    // redrawn at once, with the observer off as for every redraw of ours.
+    document.addEventListener('click', event =>
+    {
+        const link = event.target.closest?.('[data-orion-ignore]');
+        if(!link) return;
+        event.preventDefault();
+        const coords = link.getAttribute('data-orion-ignore');
+        const ignored = loadIgnored();
+        if(ignored[coords]) delete ignored[coords]; else ignored[coords] = true;
+        saveIgnored(ignored);
+        observer.disconnect();
+        try { render(); } finally { watch(); }
+    });
 
     // Something changed for the cards since the last render: a new one, one gone, one hidden/shown, or
     // its cost or rewards moved.
@@ -718,6 +778,11 @@ onDomReady(function()
         .orionReserve { margin:4px 0 8px; padding:6px 9px; font-size:11px; color:#a9b7c6; background:rgba(0,0,0,.35); border:1px solid rgba(224,178,90,.35); border-radius:3px; }
         .orionReserve b { color:#fff; }
         .orionReserve .orionReserveRow { margin-top:2px; color:#8d9bab; }
+        .orionReserve .orionReserveIgnored { margin-top:4px; color:#7c8a99; }
+        .orionIgnoreLink { color:#6fa8dc !important; cursor:pointer; text-decoration:none !important; }
+        .orionIgnoreLink:hover { text-decoration:underline !important; }
+        .orionProfit .orionIgnoreLink { flex-basis:100%; }
+        .orionProfit .orionIgnoreLink.orionIgnored { color:#e0b25a !important; }
         .orionReserve .orionProfitShortText { color:#e0b25a; }
         .orionReserve .orionReserveScans { margin-bottom:4px; font-size:12px; color:#8fd19e; }
         .orionScanWarning { margin:6px 0; padding:7px 10px; font-size:12px; color:#ffd7d2; background:rgba(160,30,20,.45);
