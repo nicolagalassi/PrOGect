@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Orion Calculator
 // @namespace    https://github.com/nicolagalassi
-// @version      1.3.4
+// @version      1.3.5
 // @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; how many scans the lithium can pay for without starving them; and an archive with daily results of every anomaly taken on (level, stars, PvP/PvE, type, lithium, rewards collected, ships received, fuel spent, ships lost). Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -100,7 +100,8 @@
   days, or everything; tiles with anomalies, collections and waves, rewards in MSU and per resource, net
   lithium spent, ships received, fuel, ships lost and the balance (rewards + ships received − ships lost
   − fuel, in MSU; lithium apart);
-  a bar per day (rewards above the line, costs below; a click opens that day); the ships lost by type;
+  a bar per day (rewards above the line, costs below; a click opens that day without moving the chart,
+  ‹ › scroll it a week); the ships received and lost by type; "Other" rewards with the same name added up;
   and the anomalies that APPEARED in the period (1.3.4; before, every anomaly still alive in it was listed),
   with the period's own figures (search, filters, sorting).
   Export: a CSV with one line per day, or the whole archive as JSON (files saved on your own computer,
@@ -740,7 +741,7 @@ onDomReady(function()
                   paidShort:'pagato', backShort:'reso', anomalies:'Anomalie', collectionsShort:'riscatti', wavesShort:'ondate',
                   ships:'navi', battlesShort:'battaglie', day:'Giorno', daysShort:'giorni', allTime:'Tutto', today:'Oggi',
                   prevDay:'Giorno prima', nextDay:'Giorno dopo', lastDays:'Ultimi {n} giorni fino a {d}',
-                  chartHint:'clic su una barra per aprire quel giorno', chartAria:'Ricompense e costi in MSU per giorno',
+                  chartHint:'clic su una barra per aprire quel giorno', chartPrev:'Settimana prima', chartNext:'Settimana dopo', chartAria:'Ricompense e costi in MSU per giorno',
                   rowsHint:'anomalie apparse nel periodo; cifre della riga = solo il periodo scelto', noneInPeriod:'Nessuna anomalia apparsa in questo periodo.',
                   csv:'CSV per giorno', json:'Esporta JSON', clear:'Svuota archivio', close:'Chiudi',
                   confirmClear:"Cancellare tutto l'archivio delle anomalie (anche carburante e battaglie)? Non si può annullare.", confirmDel:'Togliere questa anomalia dall\'archivio?',
@@ -754,7 +755,7 @@ onDomReady(function()
                   paidShort:'paid', backShort:'back', anomalies:'Anomalies', collectionsShort:'collections', wavesShort:'waves',
                   ships:'ships', battlesShort:'battles', day:'Day', daysShort:'days', allTime:'All', today:'Today',
                   prevDay:'Previous day', nextDay:'Next day', lastDays:'Last {n} days up to {d}',
-                  chartHint:'click a bar to open that day', chartAria:'Rewards and costs in MSU per day',
+                  chartHint:'click a bar to open that day', chartPrev:'Previous week', chartNext:'Next week', chartAria:'Rewards and costs in MSU per day',
                   rowsHint:'anomalies appeared in the period; row figures = chosen period only', noneInPeriod:'No anomaly appeared in this period.',
                   csv:'CSV per day', json:'Export JSON', clear:'Clear archive', close:'Close',
                   confirmClear:'Delete the whole anomaly archive (fuel and battles too)? This cannot be undone.', confirmDel:'Remove this anomaly from the archive?',
@@ -924,6 +925,10 @@ onDomReady(function()
         // rewards at the click (`before`) and after the payout (`after`, null when the card is gone) bound
         // it: each resource is at most what left the card. Non-resource lines ("name 120") likewise, when
         // their count is a plain number; anything else is kept as read.
+        // "Esperienza delle Forme di vita 15.794" -> ['Esperienza delle Forme di vita', 15794]; null when the
+        // line does not end in a plain number
+        const splitCount = text => { const m = clean(text).match(/^(.*?)\s*(\d[\d.,' ]*)$/); return m && m[1] ? [m[1], parseNumber(m[2])] : null; };
+
         const collectedOnly = (r, before, after) =>
         {
             if(!before) return r;
@@ -933,7 +938,7 @@ onDomReady(function()
                 const left = Math.max(0, (before[k] || 0) - (after ? after[k] || 0 : 0));
                 out[k] = Math.min(r[k] || 0, left);
             });
-            const split = text => { const m = clean(text).match(/^(.*?)\s*(\d[\d.,' ]*)$/); return m ? [m[1], parseNumber(m[2])] : null; };
+            const split = splitCount;
             const counts = list => (list || []).reduce((acc, text) => { const x = split(text); if(x) acc[x[0]] = (acc[x[0]] || 0) + x[1]; return acc; }, {});
             const had = counts(before.other), still = after ? counts(after.other) : {};
             (r.other || []).forEach(text =>
@@ -1262,8 +1267,29 @@ onDomReady(function()
 
         const net = t => t.gain + t.gotMsu - t.lostMsu - t.fuelMsu;
 
+        // "Other" with the same reward added up: two "Esperienza delle Forme di vita" lines become one with
+        // the sum; a line without a plain number is listed once with ×count.
+        const otherText = list =>
+        {
+            const sums = new Map();
+            (list || []).forEach(text =>
+            {
+                const x = splitCount(text);
+                const key = x ? x[0] : clean(text);
+                const cur = sums.get(key) || { n:0, times:0, counted:!!x };
+                if(x) cur.n += x[1];
+                cur.times++;
+                sums.set(key, cur);
+            });
+            return Array.from(sums, ([name, v]) => v.counted ? `${name} ${v.n.toLocaleString(LANG === 'it' ? 'it-IT' : 'en-GB')}` : name + (v.times > 1 ? ` ×${v.times}` : '')).join(', ');
+        };
+
         // ---------- the panel ----------
-        const view = { range:'day', day:dayKey(Date.now()), q:'', mode:'', kind:'', stars:'', status:'', sort:'date', desc:true };
+        // chartEnd: the chart's last day. It stays put while the selected day is inside the chart, so clicking
+        // a bar never pushes the days after it out of sight (up to 1.3.4 the chart always ended on the
+        // selected day); ‹ › next to the chart move it a week without changing the selected day.
+        const view = { range:'day', day:dayKey(Date.now()), chartEnd:dayKey(Date.now()), q:'', mode:'', kind:'', stars:'', status:'', sort:'date', desc:true };
+        const addDays = (key, n) => { const [y, m, d] = key.split('-').map(Number); return dayKey(new Date(y, m - 1, d + n).getTime()); };
 
         const period = () =>
         {
@@ -1296,7 +1322,7 @@ onDomReady(function()
             ['fuel', T.fuel, r => r.t.fuel ? compact(r.t.fuel) : ''],
             ['lostMsu', T.lost, r => r.t.lostN ? `${compact(r.t.lostMsu)} <span class="oaMuted">(${compact(r.t.lostN)})</span>` : ''],
             ['net', T.net, r => (r.t.gain || r.t.gotMsu || r.t.lostMsu || r.t.fuelMsu) ? `<span class="${net(r.t) < 0 ? 'oaNeg' : ''}">${compact(net(r.t))}</span>` : ''],
-            ['other', T.other, r => esc(r.t.other.join(', '))],
+            ['other', T.other, r => esc(otherText(r.t.other))],
         ];
         const NUMERIC = new Set(['date', 'level', 'stars', 'wave', 'paid', 'back', 'gain', 'gotMsu', 'fuel', 'lostMsu', 'net']);
         const sortValue = (r, k) => ({ paid:r.t.paid, back:r.t.back, gain:r.t.gain, gotMsu:r.t.gotMsu, fuel:r.t.fuel, lostMsu:r.t.lostMsu, net:net(r.t) })[k] ?? r[k];
@@ -1326,12 +1352,24 @@ onDomReady(function()
 
         // Daily bars, like OGLight's expedition days: rewards above the line (blue), what the day cost below
         // it (red: ships lost + fuel, both in MSU). Lithium is not MSU and stays out of the chart.
-        // Colours: the reference diverging pair, validated against the panel's dark surface.
+        // Colours: the reference diverging pair, validated against the panel's dark surface. Drawn as HTML
+        // columns (not a stretched SVG), so bars keep a sane width and labels are not squashed.
+        const chartDays = () => view.range === '30' ? 30 : 14;
         const chart = events =>
         {
-            const n = view.range === '30' ? 30 : 14;
+            const n = chartDays(), today = dayKey(Date.now());
+            // keep a newly selected day in view: move the chart only when it falls outside, and then centre it
+            // (not after ‹ ›: those may scroll the selected day away on purpose)
+            if(view.chartEnd > today) view.chartEnd = today;
+            const moved = view.chartFor !== view.day + view.range;
+            view.chartFor = view.day + view.range;
+            if(moved && (view.day > view.chartEnd || view.day <= addDays(view.chartEnd, -n)))
+            {
+                view.chartEnd = addDays(view.day, Math.floor(n / 2));
+                if(view.chartEnd > today) view.chartEnd = today;
+            }
             const keys = [];
-            for(let k = view.range === 'all' ? dayKey(Date.now()) : view.day, i = 0; i < n; i++, k = prevDay(k)) keys.unshift(k);
+            for(let k = view.chartEnd, i = 0; i < n; i++, k = prevDay(k)) keys.unshift(k);
 
             const days = keys.map(k =>
             {
@@ -1340,31 +1378,34 @@ onDomReady(function()
                 return { k, gain:t.gain + t.gotMsu, cost:t.lostMsu + t.fuelMsu, t };
             });
 
-            const maxUp = Math.max(1, ...days.map(d => d.gain)), maxDown = Math.max(0, ...days.map(d => d.cost));
-            const W = 700, H = 150, top = 6, bottom = 18;
-            const zero = top + (H - top - bottom) * maxUp / (maxUp + maxDown || 1);
-            const scale = (H - top - bottom) / (maxUp + maxDown || 1);
-            const slot = W / n, bar = Math.max(4, slot - 6);
+            const maxUp = Math.max(0, ...days.map(d => d.gain)), maxDown = Math.max(0, ...days.map(d => d.cost));
+            const H = 150, VAL = 14;                         // plot height; room for the value over a bar
+            const upH = maxUp + maxDown ? Math.round((H - VAL) * maxUp / (maxUp + maxDown)) : H - VAL;
+            const downH = H - VAL - upH;
+            const every = n > 14 ? 3 : 1;
 
-            const bars = days.map((d, i) =>
+            const cols = days.map((d, i) =>
             {
-                const x = i * slot + (slot - bar) / 2;
-                const up = d.gain * scale, down = d.cost * scale;
+                const up = maxUp ? Math.round(upH * d.gain / maxUp) : 0;
+                const down = maxDown ? Math.round(downH * d.cost / maxDown) : 0;
+                const sel = d.k === view.day && view.range === 'day';
                 const tip = `${dayLabel(d.k)}|${T.gain}: ${compact(d.t.gain)} MSU|${T.shipsGot}: ${compact(d.t.gotMsu)} MSU|${T.lostShort}: ${compact(d.t.lostMsu)} MSU|${T.fuel}: ${compact(d.t.fuel)} deut|${T.net}: ${compact(net(d.t))} MSU`;
-                return `<g class="oaBar${d.k === view.day && view.range === 'day' ? ' oaSel' : ''}" data-day="${d.k}" data-tip="${esc(tip)}">
-                    <rect class="oaHit" x="${i * slot}" y="0" width="${slot}" height="${H}"></rect>
-                    ${up > 0 ? `<rect class="oaUp" x="${x}" y="${zero - up}" width="${bar}" height="${up}" rx="2"></rect>` : ''}
-                    ${down > 0 ? `<rect class="oaDown" x="${x}" y="${zero + 2}" width="${bar}" height="${down}" rx="2"></rect>` : ''}
-                    ${(i % Math.ceil(n / 10) === 0 || i === n - 1) ? `<text x="${i * slot + slot / 2}" y="${H - 4}">${d.k.slice(8)}/${d.k.slice(5, 7)}</text>` : ''}
-                </g>`;
+                const label = (sel || d.k === today || i % every === 0) ? `${d.k.slice(8)}/${d.k.slice(5, 7)}` : '';
+                return `<div class="oaBar${sel ? ' oaSel' : ''}${d.k === today ? ' oaToday' : ''}" data-day="${d.k}" data-tip="${esc(tip)}">
+                    <div class="oaUpArea" style="height:${upH + VAL}px">${d.gain > 0 && (n <= 14 || sel) ? `<span class="oaVal">${compact(d.gain)}</span>` : ''}${up > 0 ? `<i class="oaUp" style="height:${Math.max(2, up)}px"></i>` : ''}</div>
+                    <div class="oaDownArea" style="height:${downH}px">${down > 0 ? `<i class="oaDown" style="height:${Math.max(2, down)}px"></i>` : ''}</div>
+                    <span class="oaLbl">${label}</span>
+                </div>`;
             }).join('');
 
             return `<div class="oaChart">
                 <div class="oaLegend"><span><i class="oaSwUp"></i>${T.gainAll} (MSU)</span><span><i class="oaSwDown"></i>${T.costs} (MSU)</span>
                     <span class="oaMuted">${T.chartHint}</span></div>
-                <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(T.chartAria)}">
-                    <line class="oaZero" x1="0" x2="${W}" y1="${zero}" y2="${zero}"></line>${bars}
-                </svg><div class="oaTip"></div></div>`;
+                <div class="oaPlot" role="img" aria-label="${esc(T.chartAria)}">
+                    <button class="oaPan" data-a="chartPrev" title="${T.chartPrev}">‹</button>
+                    <div class="oaCols" style="--oaZero:${upH + VAL}px">${cols}</div>
+                    <button class="oaPan" data-a="chartNext" title="${T.chartNext}"${view.chartEnd >= today ? ' disabled' : ''}>›</button>
+                </div><div class="oaTip"></div></div>`;
         };
 
         const tile = (label, value, sub, cls = '') => `<div class="oaTile ${cls}"><span>${label}</span><b>${value}</b>${sub ? `<em>${sub}</em>` : ''}</div>`;
@@ -1401,7 +1442,7 @@ onDomReady(function()
                     ${tile(T.net, compact(net(t)) + ' MSU', T.netHint, net(t) < 0 ? 'oaNegTile' : 'oaPosTile')}
                 </div>
                 ${chart(events)}
-                ${gotList || lostList || t.other.length ? `<div class="oaDetail">${gotList ? `<div><b>${T.shipsGot}:</b> ${gotList}</div>` : ''}${lostList ? `<div><b>${T.lost}:</b> ${lostList}</div>` : ''}${t.other.length ? `<div><b>${T.other}:</b> ${esc(t.other.join(', '))}</div>` : ''}</div>` : ''}
+                ${gotList || lostList || t.other.length ? `<div class="oaDetail">${gotList ? `<div><b>${T.shipsGot}:</b> ${gotList}</div>` : ''}${lostList ? `<div><b>${T.lost}:</b> ${lostList}</div>` : ''}${t.other.length ? `<div><b>${T.other}:</b> ${esc(otherText(t.other))}</div>` : ''}</div>` : ''}
                 <div class="oaFilters">
                     <input type="search" class="oaQ" placeholder="${T.search}" value="${esc(view.q)}">
                     <label>${T.mode} <select data-f="mode">${options(all.map(e => e.mode), view.mode)}</select></label>
@@ -1484,7 +1525,10 @@ onDomReady(function()
                 if(action === 'clear' && confirm(T.confirmClear)) { save(DB_KEY, { entries:{}, fuel:[], battles:{} }); updateButtons(); }
                 if(action === 'prev') { view.day = prevDay(view.day); if(view.range === 'all') view.range = 'day'; }
                 if(action === 'next' && view.day < dayKey(Date.now())) { view.day = nextDay(view.day); if(view.range === 'all') view.range = 'day'; }
-                if(action === 'today') { view.day = dayKey(Date.now()); view.range = 'day'; }
+                if(action === 'today') { view.day = view.chartEnd = dayKey(Date.now()); view.range = 'day'; }
+                // scroll the chart a week; the selected day and the table stay as they are
+                if(action === 'chartPrev') view.chartEnd = addDays(view.chartEnd, -7);
+                if(action === 'chartNext') { view.chartEnd = addDays(view.chartEnd, 7); if(view.chartEnd > dayKey(Date.now())) view.chartEnd = dayKey(Date.now()); }
 
                 const range = event.target.closest('[data-range]')?.getAttribute('data-range');
                 if(range) view.range = range;
@@ -1592,13 +1636,24 @@ onDomReady(function()
             #orionArchiveModal .oaLegend i { display:inline-block; width:10px; height:10px; margin-right:5px; border-radius:2px; vertical-align:-1px; }
             #orionArchiveModal .oaSwUp { background:#3987e5; }
             #orionArchiveModal .oaSwDown { background:#e66767; }
-            #orionArchiveModal svg { display:block; width:100%; height:150px; }
-            #orionArchiveModal svg text { fill:#7c8a99; font-size:9px; text-anchor:middle; }
-            #orionArchiveModal .oaZero { stroke:#3a4b5c; stroke-width:1; }
-            #orionArchiveModal .oaUp { fill:#3987e5; }
-            #orionArchiveModal .oaDown { fill:#e66767; }
-            #orionArchiveModal .oaHit { fill:transparent; cursor:pointer; }
-            #orionArchiveModal .oaBar:hover .oaHit, #orionArchiveModal .oaSel .oaHit { fill:rgba(255,255,255,.06); }
+            #orionArchiveModal .oaPlot { display:flex; align-items:stretch; gap:4px; }
+            #orionArchiveModal .oaPan { flex:none; width:22px; padding:0; background:#1b2530; border:1px solid #2c3a48; border-radius:3px; color:#d7e3ef; cursor:pointer; font-size:16px; }
+            #orionArchiveModal .oaPan:hover:not([disabled]) { background:#24313f; }
+            #orionArchiveModal .oaPan[disabled] { opacity:.3; cursor:default; }
+            #orionArchiveModal .oaCols { position:relative; flex:1; display:flex; min-width:0; }
+            #orionArchiveModal .oaCols::before { content:''; position:absolute; left:0; right:0; top:var(--oaZero); border-top:1px solid #3a4b5c; }
+            #orionArchiveModal .oaBar { flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; border-radius:3px; cursor:pointer; }
+            #orionArchiveModal .oaBar:hover { background:rgba(255,255,255,.04); }
+            #orionArchiveModal .oaSel, #orionArchiveModal .oaSel:hover { background:rgba(57,135,229,.14); box-shadow:inset 0 0 0 1px rgba(57,135,229,.45); }
+            #orionArchiveModal .oaUpArea { width:100%; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; }
+            #orionArchiveModal .oaDownArea { width:100%; display:flex; flex-direction:column; align-items:center; padding-top:1px; }
+            #orionArchiveModal .oaUp, #orionArchiveModal .oaDown { display:block; width:70%; max-width:34px; }
+            #orionArchiveModal .oaUp { background:#3987e5; border-radius:3px 3px 0 0; }
+            #orionArchiveModal .oaDown { background:#e66767; border-radius:0 0 3px 3px; }
+            #orionArchiveModal .oaVal { color:#9fb3c8; font-size:9px; line-height:12px; white-space:nowrap; }
+            #orionArchiveModal .oaLbl { height:14px; margin-top:2px; color:#7c8a99; font-size:10px; white-space:nowrap; }
+            #orionArchiveModal .oaToday .oaLbl { color:#d7e3ef; }
+            #orionArchiveModal .oaSel .oaLbl { color:#fff; font-weight:bold; }
             #orionArchiveModal .oaTip { display:none; position:absolute; z-index:2; width:180px; padding:6px 8px; pointer-events:none;
                 background:#1b2530; border:1px solid #3a4b5c; border-radius:3px; color:#d7e3ef; }
             #orionArchiveModal .oaTip b { color:#fff; }
