@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         OGame Orion Calculator
 // @namespace    https://github.com/nicolagalassi
-// @version      1.3.3
-// @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; how many scans the lithium can pay for without starving them; and an archive with daily results of every anomaly taken on (level, stars, PvP/PvE, type, lithium, rewards collected, fuel spent, ships lost). Display only.
+// @version      1.3.4
+// @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; how many scans the lithium can pay for without starving them; and an archive with daily results of every anomaly taken on (level, stars, PvP/PvE, type, lithium, rewards collected, ships received, fuel spent, ships lost). Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
 // @icon         https://gf1.geo.gfsrv.net/cdn3d/favicon.ico
@@ -82,6 +82,10 @@
     counts when it names an archived anomaly by its id, or else falls at its coordinates during its life:
     the player's own ships destroyed in the last round, valued at their build cost in MSU (the ships this
     script knows; others are counted, not valued).
+  - Ships received as a reward: a collected reward line that names a ship this script knows (Italian
+    or English name, e.g. "Caccia leggero 120") is valued at the ship's build cost in MSU, like ships lost,
+    and shown in its own "Ships reward" column; it counts in the balance. Any other non-resource reward
+    stays under "Other", not valued. Read from the reward text already saved, so older collections count too.
     Up to 1.3.1 an anomaly's coordinates were taken from the start of the mission's route, i.e. the
     player's own planet or moon: no battle at an anomaly matched, fights at home did, and flights home
     were taken for anomaly fuel. 1.3.2 reads the anomaly's coordinates, fixes old entries from the reports
@@ -91,9 +95,11 @@
   The panel - "Orion stats" in the game's left menu on every page, and a button above every Orion tab -
   shows the results per DAY, like OGLight's expedition days: pick a day (◀ ▶, Today), the last 7 or 30
   days, or everything; tiles with anomalies, collections and waves, rewards in MSU and per resource, net
-  lithium spent, fuel, ships lost and the balance (rewards − ships lost − fuel, in MSU; lithium apart);
+  lithium spent, ships received, fuel, ships lost and the balance (rewards + ships received − ships lost
+  − fuel, in MSU; lithium apart);
   a bar per day (rewards above the line, costs below; a click opens that day); the ships lost by type;
-  and the anomalies alive in the period with the period's own figures (search, filters, sorting).
+  and the anomalies that APPEARED in the period (1.3.4; before, every anomaly still alive in it was listed),
+  with the period's own figures (search, filters, sorting).
   Export: a CSV with one line per day, or the whole archive as JSON (files saved on your own computer,
   only when clicked).
   It cannot know what happened while the script was not installed, or on another browser; ships lost
@@ -726,13 +732,13 @@ onDomReady(function()
             it: { button:'Archivio anomalie', menu:'Orion stats', title:'Anomalie Orion: risultati giornalieri', search:'Cerca nome o coordinate…', all:'tutte',
                   mode:'Modalità', kind:'Tipologia', stars:'Stelle', status:'Stato', running:'in corso', collected:'riscattata', expired:'scaduta',
                   spawned:'Apparsa', name:'Nome', coords:'Coord.', level:'Liv.', waves:'Ondate', paid:'Litio pagato', back:'Litio reso',
-                  gain:'Ricompense', fuel:'Carburante', lost:'Navi perse', lostShort:'Navi perse', costs:'Costi: navi perse + carburante',
-                  net:'Bilancio', netHint:'ricompense − navi perse − carburante (litio a parte)', other:'Altro', lithium:'Litio netto speso',
+                  gain:'Ricompense', fuel:'Carburante', lost:'Navi perse', lostShort:'Navi perse', costs:'Costi: navi perse + carburante', gainAll:'Ricompense + navi ricevute',
+                  net:'Bilancio', netHint:'ricompense + navi ricevute − navi perse − carburante (litio a parte)', other:'Altro', shipsGot:'Navi ricevute', shipsGotShort:'Ships reward', lithium:'Litio netto speso',
                   paidShort:'pagato', backShort:'reso', anomalies:'Anomalie', collectionsShort:'riscatti', wavesShort:'ondate',
                   ships:'navi', battlesShort:'battaglie', day:'Giorno', daysShort:'giorni', allTime:'Tutto', today:'Oggi',
                   prevDay:'Giorno prima', nextDay:'Giorno dopo', lastDays:'Ultimi {n} giorni fino a {d}',
                   chartHint:'clic su una barra per aprire quel giorno', chartAria:'Ricompense e costi in MSU per giorno',
-                  rowsHint:'cifre della riga = solo il periodo scelto', noneInPeriod:'Nessuna anomalia in questo periodo.',
+                  rowsHint:'anomalie apparse nel periodo; cifre della riga = solo il periodo scelto', noneInPeriod:'Nessuna anomalia apparsa in questo periodo.',
                   csv:'CSV per giorno', json:'Esporta JSON', clear:'Svuota archivio', close:'Chiudi',
                   confirmClear:"Cancellare tutto l'archivio delle anomalie (anche carburante e battaglie)? Non si può annullare.", confirmDel:'Togliere questa anomalia dall\'archivio?',
                   empty:'Ancora nessuna anomalia registrata. Apri la scheda Missioni di Orion: le anomalie elencate vengono salvate qui.',
@@ -740,13 +746,13 @@ onDomReady(function()
             en: { button:'Anomaly archive', menu:'Orion stats', title:'Orion anomalies: daily results', search:'Search name or coordinates…', all:'all',
                   mode:'Mode', kind:'Type', stars:'Stars', status:'Status', running:'running', collected:'collected', expired:'expired',
                   spawned:'Appeared', name:'Name', coords:'Coords', level:'Lvl', waves:'Waves', paid:'Lithium paid', back:'Lithium back',
-                  gain:'Rewards', fuel:'Fuel', lost:'Ships lost', lostShort:'Ships lost', costs:'Costs: ships lost + fuel',
-                  net:'Balance', netHint:'rewards − ships lost − fuel (lithium apart)', other:'Other', lithium:'Net lithium spent',
+                  gain:'Rewards', fuel:'Fuel', lost:'Ships lost', lostShort:'Ships lost', costs:'Costs: ships lost + fuel', gainAll:'Rewards + ships received',
+                  net:'Balance', netHint:'rewards + ships received − ships lost − fuel (lithium apart)', other:'Other', shipsGot:'Ships received', shipsGotShort:'Ships reward', lithium:'Net lithium spent',
                   paidShort:'paid', backShort:'back', anomalies:'Anomalies', collectionsShort:'collections', wavesShort:'waves',
                   ships:'ships', battlesShort:'battles', day:'Day', daysShort:'days', allTime:'All', today:'Today',
                   prevDay:'Previous day', nextDay:'Next day', lastDays:'Last {n} days up to {d}',
                   chartHint:'click a bar to open that day', chartAria:'Rewards and costs in MSU per day',
-                  rowsHint:'row figures = chosen period only', noneInPeriod:'No anomaly in this period.',
+                  rowsHint:'anomalies appeared in the period; row figures = chosen period only', noneInPeriod:'No anomaly appeared in this period.',
                   csv:'CSV per day', json:'Export JSON', clear:'Clear archive', close:'Close',
                   confirmClear:'Delete the whole anomaly archive (fuel and battles too)? This cannot be undone.', confirmDel:'Remove this anomaly from the archive?',
                   empty:'No anomaly recorded yet. Open the Orion missions tab: the anomalies listed there are saved here.',
@@ -1094,6 +1100,20 @@ onDomReady(function()
         const lostMsu = lost => Object.entries(lost || {}).reduce((s, [id, n]) => s + (SHIPS[id] ? toMSU(SHIPS[id][2] * n, SHIPS[id][3] * n, SHIPS[id][4] * n) : 0), 0);
         const lostCount = lost => Object.values(lost || {}).reduce((s, n) => s + n, 0);
 
+        // A reward line that is not a resource is saved as its text ("Caccia leggero 120"). When it names a
+        // ship this script knows, it is a ship received: { id, n }. Longest names first, so "Incrociatore da
+        // battaglia" is not read as "Incrociatore". A ship line without a count, or a ship the table does
+        // not know, stays under "Other", not valued (nothing is invented).
+        const SHIP_NAMES = Object.entries(SHIPS).flatMap(([id, s]) => [[id, s[0]], [id, s[1]]]).sort((a, b) => b[1].length - a[1].length);
+        const shipReward = text =>
+        {
+            const t = clean(text).toLowerCase();
+            const hit = SHIP_NAMES.find(([, name]) => t.startsWith(name.toLowerCase()) && !/[a-zà-ù]/i.test(t.charAt(name.length)));
+            if(!hit) return null;
+            const n = parseNumber(t.slice(hit[1].length));
+            return n ? { id:hit[0], n } : null;
+        };
+
         const readBattles = () =>
         {
             const fresh = document.querySelectorAll('.rawMessageData[data-raw-messagetype="25"]:not([data-orion-read])');
@@ -1181,6 +1201,7 @@ onDomReady(function()
         };
 
         const blank = () => ({ collections:0, waves:0, paid:0, back:0, metal:0, crystal:0, deuterium:0, gain:0, other:[],
+                               got:{}, gotN:0, gotMsu:0,
                                fuel:0, fuelMsu:0, battles:0, lost:{}, lostN:0, lostMsu:0 });
 
         const add = (t, ev) =>
@@ -1189,7 +1210,14 @@ onDomReady(function()
             {
                 t.collections++; t.waves += ev.waves || 0; t.paid += ev.cost || 0; t.back += ev.lithium || 0;
                 t.metal += ev.metal || 0; t.crystal += ev.crystal || 0; t.deuterium += ev.deuterium || 0;
-                t.gain += ev.msu || 0; t.other.push(...(ev.other || []));
+                t.gain += ev.msu || 0;
+                (ev.other || []).forEach(text =>
+                {
+                    const ship = shipReward(text);
+                    if(!ship) { t.other.push(text); return; }
+                    t.got[ship.id] = (t.got[ship.id] || 0) + ship.n;
+                    t.gotN += ship.n; t.gotMsu += lostMsu({ [ship.id]:ship.n });   // build cost in MSU, as for ships lost
+                });
             }
             else if(ev.kind === 'fuel') { t.fuel += ev.deut || 0; t.fuelMsu += toMSU(0, 0, ev.deut || 0); }
             else if(ev.kind === 'battle')
@@ -1201,7 +1229,7 @@ onDomReady(function()
             return t;
         };
 
-        const net = t => t.gain - t.lostMsu - t.fuelMsu;
+        const net = t => t.gain + t.gotMsu - t.lostMsu - t.fuelMsu;
 
         // ---------- the panel ----------
         const view = { range:'day', day:dayKey(Date.now()), q:'', mode:'', kind:'', stars:'', status:'', sort:'date', desc:true };
@@ -1233,20 +1261,22 @@ onDomReady(function()
             ['paid', T.paid, r => r.t.paid ? compact(r.t.paid) : ''],
             ['back', T.back, r => r.t.back ? compact(r.t.back) : ''],
             ['gain', T.gain, r => r.t.gain ? compact(r.t.gain) : ''],
+            ['gotMsu', T.shipsGotShort, r => r.t.gotN ? `${compact(r.t.gotMsu)} <span class="oaMuted">(${compact(r.t.gotN)})</span>` : ''],
             ['fuel', T.fuel, r => r.t.fuel ? compact(r.t.fuel) : ''],
             ['lostMsu', T.lost, r => r.t.lostN ? `${compact(r.t.lostMsu)} <span class="oaMuted">(${compact(r.t.lostN)})</span>` : ''],
-            ['net', T.net, r => (r.t.gain || r.t.lostMsu || r.t.fuelMsu) ? `<span class="${net(r.t) < 0 ? 'oaNeg' : ''}">${compact(net(r.t))}</span>` : ''],
+            ['net', T.net, r => (r.t.gain || r.t.gotMsu || r.t.lostMsu || r.t.fuelMsu) ? `<span class="${net(r.t) < 0 ? 'oaNeg' : ''}">${compact(net(r.t))}</span>` : ''],
             ['other', T.other, r => esc(r.t.other.join(', '))],
         ];
-        const NUMERIC = new Set(['date', 'level', 'stars', 'wave', 'paid', 'back', 'gain', 'fuel', 'lostMsu', 'net']);
-        const sortValue = (r, k) => ({ paid:r.t.paid, back:r.t.back, gain:r.t.gain, fuel:r.t.fuel, lostMsu:r.t.lostMsu, net:net(r.t) })[k] ?? r[k];
+        const NUMERIC = new Set(['date', 'level', 'stars', 'wave', 'paid', 'back', 'gain', 'gotMsu', 'fuel', 'lostMsu', 'net']);
+        const sortValue = (r, k) => ({ paid:r.t.paid, back:r.t.back, gain:r.t.gain, gotMsu:r.t.gotMsu, fuel:r.t.fuel, lostMsu:r.t.lostMsu, net:net(r.t) })[k] ?? r[k];
 
-        // the anomalies alive at some point of the period, with the period's own figures
+        // the anomalies that appeared in the period (the selected day, by default), with the period's own
+        // figures. Up to 1.3.3 every anomaly still alive in the period was listed, so yesterday's showed up today.
         const rowsFor = (db, events, from, to) =>
         {
             const q = view.q.toLowerCase();
             return Object.values(db.entries)
-                .filter(e => (e.spawnedAt || e.firstSeen || 0) < to && (e.endedAt || Date.now()) >= from)
+                .filter(e => { const at = e.spawnedAt || e.firstSeen || 0; return at >= from && at < to; })
                 .map(e => ({ ...e, date:e.spawnedAt || e.firstSeen || 0, t:events.filter(ev => ev.entry === e.id).reduce(add, blank()) }))
                 .filter(r =>
                     (!q || (r.name + ' ' + r.coords).toLowerCase().includes(q)) &&
@@ -1276,7 +1306,7 @@ onDomReady(function()
             {
                 const from = dayStart(k), to = dayStart(nextDay(k));
                 const t = events.filter(ev => ev.at >= from && ev.at < to).reduce(add, blank());
-                return { k, gain:t.gain, cost:t.lostMsu + t.fuelMsu, t };
+                return { k, gain:t.gain + t.gotMsu, cost:t.lostMsu + t.fuelMsu, t };
             });
 
             const maxUp = Math.max(1, ...days.map(d => d.gain)), maxDown = Math.max(0, ...days.map(d => d.cost));
@@ -1289,7 +1319,7 @@ onDomReady(function()
             {
                 const x = i * slot + (slot - bar) / 2;
                 const up = d.gain * scale, down = d.cost * scale;
-                const tip = `${dayLabel(d.k)}|${T.gain}: ${compact(d.gain)} MSU|${T.lostShort}: ${compact(d.t.lostMsu)} MSU|${T.fuel}: ${compact(d.t.fuel)} deut|${T.net}: ${compact(net(d.t))} MSU`;
+                const tip = `${dayLabel(d.k)}|${T.gain}: ${compact(d.t.gain)} MSU|${T.shipsGot}: ${compact(d.t.gotMsu)} MSU|${T.lostShort}: ${compact(d.t.lostMsu)} MSU|${T.fuel}: ${compact(d.t.fuel)} deut|${T.net}: ${compact(net(d.t))} MSU`;
                 return `<g class="oaBar${d.k === view.day && view.range === 'day' ? ' oaSel' : ''}" data-day="${d.k}" data-tip="${esc(tip)}">
                     <rect class="oaHit" x="${i * slot}" y="0" width="${slot}" height="${H}"></rect>
                     ${up > 0 ? `<rect class="oaUp" x="${x}" y="${zero - up}" width="${bar}" height="${up}" rx="2"></rect>` : ''}
@@ -1299,7 +1329,7 @@ onDomReady(function()
             }).join('');
 
             return `<div class="oaChart">
-                <div class="oaLegend"><span><i class="oaSwUp"></i>${T.gain} (MSU)</span><span><i class="oaSwDown"></i>${T.costs} (MSU)</span>
+                <div class="oaLegend"><span><i class="oaSwUp"></i>${T.gainAll} (MSU)</span><span><i class="oaSwDown"></i>${T.costs} (MSU)</span>
                     <span class="oaMuted">${T.chartHint}</span></div>
                 <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(T.chartAria)}">
                     <line class="oaZero" x1="0" x2="${W}" y1="${zero}" y2="${zero}"></line>${bars}
@@ -1326,19 +1356,21 @@ onDomReady(function()
 
             if(!all.length && !db.fuel.length) { modal.querySelector('.oaBody').innerHTML = `<p class="oaEmpty">${T.empty}</p>`; return; }
 
+            const gotList = Object.entries(t.got).sort((a, b) => b[1] - a[1]).map(([id, n]) => `${esc(shipName(id))} ×${compact(n)}`).join(', ');
             const lostList = Object.entries(t.lost).sort((a, b) => b[1] - a[1]).map(([id, n]) => `${esc(shipName(id))} ×${compact(n)}`).join(', ');
 
             modal.querySelector('.oaBody').innerHTML = `
                 <div class="oaTiles">
                     ${tile(T.anomalies, rows.length, `${t.collections} ${T.collectionsShort}${t.waves ? ` · ${t.waves} ${T.wavesShort}` : ''}`)}
                     ${tile(T.gain, compact(t.gain) + ' MSU', `M ${compact(t.metal)} · C ${compact(t.crystal)} · D ${compact(t.deuterium)}`)}
+                    ${tile(T.shipsGot, compact(t.gotMsu) + ' MSU', `${compact(t.gotN)} ${T.ships}`)}
                     ${tile(T.lithium, compact(t.paid - t.back), `${T.paidShort} ${compact(t.paid)} · ${T.backShort} ${compact(t.back)}`)}
                     ${tile(T.fuel, compact(t.fuel) + ' deut', `≈ ${compact(t.fuelMsu)} MSU`)}
                     ${tile(T.lost, compact(t.lostMsu) + ' MSU', t.lostN ? `${compact(t.lostN)} ${T.ships} · ${t.battles} ${T.battlesShort}` : `${t.battles} ${T.battlesShort}`)}
                     ${tile(T.net, compact(net(t)) + ' MSU', T.netHint, net(t) < 0 ? 'oaNegTile' : 'oaPosTile')}
                 </div>
                 ${chart(events)}
-                ${lostList || t.other.length ? `<div class="oaDetail">${lostList ? `<div><b>${T.lost}:</b> ${lostList}</div>` : ''}${t.other.length ? `<div><b>${T.other}:</b> ${esc(t.other.join(', '))}</div>` : ''}</div>` : ''}
+                ${gotList || lostList || t.other.length ? `<div class="oaDetail">${gotList ? `<div><b>${T.shipsGot}:</b> ${gotList}</div>` : ''}${lostList ? `<div><b>${T.lost}:</b> ${lostList}</div>` : ''}${t.other.length ? `<div><b>${T.other}:</b> ${esc(t.other.join(', '))}</div>` : ''}</div>` : ''}
                 <div class="oaFilters">
                     <input type="search" class="oaQ" placeholder="${T.search}" value="${esc(view.q)}">
                     <label>${T.mode} <select data-f="mode">${options(all.map(e => e.mode), view.mode)}</select></label>
@@ -1370,11 +1402,11 @@ onDomReady(function()
         {
             const events = allEvents(loadDb());
             const keys = [...new Set(events.map(ev => dayKey(ev.at)))].sort();
-            const head = ['day', 'collections', 'waves', 'lithium_paid', 'lithium_back', 'metal', 'crystal', 'deuterium', 'rewards_msu', 'fuel_deut', 'battles', 'ships_lost', 'ships_lost_msu', 'net_msu'];
+            const head = ['day', 'collections', 'waves', 'lithium_paid', 'lithium_back', 'metal', 'crystal', 'deuterium', 'rewards_msu', 'ships_reward', 'ships_reward_msu', 'fuel_deut', 'battles', 'ships_lost', 'ships_lost_msu', 'net_msu'];
             const lines = keys.map(k =>
             {
                 const t = events.filter(ev => dayKey(ev.at) === k).reduce(add, blank());
-                return [k, t.collections, t.waves, t.paid, t.back, t.metal, t.crystal, t.deuterium, t.gain, t.fuel, t.battles, t.lostN, t.lostMsu, net(t)].join(';');
+                return [k, t.collections, t.waves, t.paid, t.back, t.metal, t.crystal, t.deuterium, t.gain, t.gotN, t.gotMsu, t.fuel, t.battles, t.lostN, t.lostMsu, net(t)].join(';');
             });
             download('orion-anomalies-per-day.csv', '﻿' + [head.join(';')].concat(lines).join('\n'), 'text/csv');
         };
