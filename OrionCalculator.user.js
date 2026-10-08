@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Orion Calculator
 // @namespace    https://github.com/nicolagalassi
-// @version      1.3.0
+// @version      1.3.2
 // @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; how many scans the lithium can pay for without starving them; and an archive with daily results of every anomaly taken on (level, stars, PvP/PvE, type, lithium, rewards collected, fuel spent, ships lost). Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -76,9 +76,15 @@
     anomaly (deep space type 4, the anomaly mission 14, or coordinates the archive knows), the fuel the
     dispatch page itself computes (fleetDispatcher.getConsumption()) is noted with the time.
   - Ships lost: the combat reports the player opens in the messages carry their data in the page
-    (.rawMessageData, as OGLight reads them). A report at the coordinates of an archived anomaly, during
-    its life, counts: the player's own ships destroyed in the last round, valued at their build cost in
-    MSU (the ships this script knows; others are counted, not valued).
+    (.rawMessageData, as OGLight reads them). A report fought at an anomaly (not on a planet or moon)
+    counts when it names an archived anomaly by its id, or else falls at its coordinates during its life:
+    the player's own ships destroyed in the last round, valued at their build cost in MSU (the ships this
+    script knows; others are counted, not valued).
+    Up to 1.3.1 an anomaly's coordinates were taken from the start of the mission's route, i.e. the
+    player's own planet or moon: no battle at an anomaly matched, fights at home did, and flights home
+    were taken for anomaly fuel. 1.3.2 reads the anomaly's coordinates, fixes old entries from the reports
+    that name them, drops the battles noted before and leaves out fuel sent to the player's own planets
+    and moons outside the anomaly mission.
   - Each anomaly no longer listed is closed: "collected" with at least one collection, "expired" otherwise.
   The panel - "Orion stats" in the game's left menu on every page, and a button above every Orion tab -
   shows the results per DAY, like OGLight's expedition days: pick a day (◀ ▶, Today), the last 7 or 30
@@ -770,6 +776,9 @@ onDomReady(function()
         {
             const db = load(DB_KEY, {});
             db.entries = db.entries || {}; db.fuel = db.fuel || []; db.battles = db.battles || {};
+            // battles noted before 1.3.2 matched the anomaly by the planet its fleet left from, so they are
+            // fights on the player's own planet or moon: dropped, and read again from the combat reports
+            Object.keys(db.battles).forEach(id => { if(!db.battles[id].v) delete db.battles[id]; });
             return db;
         };
 
@@ -803,7 +812,9 @@ onDomReady(function()
         {
             const tags = Array.from(card.querySelectorAll('.missionDetailsSubtitle .titleTypeIcon')).map(t => clean(t.textContent));
             const [wave, total] = (clean(card.querySelector('.nodeWave')?.textContent).match(/(\d+)\s*\/\s*(\d+)/) || []).slice(1).map(Number);
-            const coords = (clean(card.querySelector('.missionRouteLabels .nodeCoords')?.textContent) ||
+            // the route reads origin → anomaly: the second label is the anomaly (as the ledger reads it). Up to
+            // 1.3.1 the first one was taken, i.e. the player's own planet or moon the fleet left from.
+            const coords = (clean(card.querySelectorAll('.missionRouteLabels .routeLabelCell')[1]?.querySelector('.nodeCoords')?.textContent) ||
                             clean(card.querySelector('.missionDetailsTable .cell:nth-child(3) span:last-child')?.textContent)).match(/\d+:\d+:\d+/)?.[0] || '';
             const mode = tags[0] || (card.classList.contains('pvp') ? 'PvP' : card.classList.contains('pve') ? 'PvE' : '');
 
@@ -817,6 +828,7 @@ onDomReady(function()
                 spawnedAt: parseGameDate(card.querySelector('.spawnedCell')?.textContent),
                 wave:   wave || 0,
                 waves:  total || 0,
+                ...(coords ? { located:true } : {}),   // coords are the anomaly's own (entries saved before 1.3.2 lack this)
             };
         };
 
@@ -1022,7 +1034,7 @@ onDomReady(function()
                 if(!sent) return;
 
                 const db = loadDb();
-                const known = new Set(Object.values(db.entries).map(e => e.coords));
+                const known = new Set(Object.values(db.entries).filter(e => e.located).map(e => e.coords));
                 if(!(snap.type === 4 || snap.mission === ANOMALY_MISSION || known.has(snap.coords))) return;
 
                 db.fuel.push({ at:Date.now(), coords:snap.coords, deut:snap.deut, mission:snap.mission });
@@ -1069,20 +1081,30 @@ onDomReady(function()
 
                 const coords = (raw.getAttribute('data-raw-coords') || '').match(/\d+:\d+:\d+/)?.[0] || '';
                 const at = (parseInt(raw.getAttribute('data-raw-timestamp') || raw.getAttribute('data-raw-datetime') || '0', 10) * 1000) || Date.now();
-                const entry = matchEntry(known, coords, at);
-                if(!entry) return;   // not at an anomaly the archive knows
 
-                let fleets, rounds, result;
+                let fleets, rounds, result, target;
                 try
                 {
                     fleets = JSON.parse(raw.getAttribute('data-raw-fleets') || '[]');
                     rounds = JSON.parse(raw.getAttribute('data-raw-combatrounds') || '[]');
                     result = JSON.parse(raw.getAttribute('data-raw-result') || '{}');
+                    target = JSON.parse(raw.getAttribute('data-raw-defenderspaceobject') || '{}');
                 }
                 catch(e) { return; }
 
+                // the report says itself where it was fought: a battle on the player's planet or moon is not
+                // an anomaly's, even when an archived anomaly carries that planet's coords (see below)
+                if(target?.type && target.type !== 'anomaly') return;
+
                 const own = (fleets || []).filter(f => String(f.player?.id) === String(me));
                 if(!own.length) return;
+
+                // which anomaly: the report names it by the same id the mission card carries (the archive's key);
+                // failing that, by coords and time. Entries saved before 1.3.2 carry the coords the fleet left
+                // from, not the anomaly's, so they are found by id only, and take the report's coords.
+                const entry = (target?.id && db.entries[target.id]) || matchEntry(known.filter(e => e.located), coords, at);
+                if(!entry) return;   // not at an anomaly the archive knows
+                if(!entry.located && coords) { entry.coords = coords; entry.located = true; }
 
                 const ownIds = new Set(own.map(f => f.fleetId));
                 const lost = {};
@@ -1092,7 +1114,7 @@ onDomReady(function()
                     (f.technologies || []).forEach(t => { if(t.destroyedTotal) lost[t.technologyId] = (lost[t.technologyId] || 0) + t.destroyedTotal; });
                 });
 
-                db.battles[id] = { at, coords, entry:entry.id, lost, won:own.some(f => f.side === result?.winner), draw:result?.winner === 'none' };
+                db.battles[id] = { v:2, at, coords, entry:entry.id, lost, won:own.some(f => f.side === result?.winner), draw:result?.winner === 'none' };
                 changed = true;
             });
 
@@ -1113,7 +1135,16 @@ onDomReady(function()
             const entries = Object.values(db.entries);
             const out = [];
             entries.forEach(e => (e.collections || []).forEach(c => out.push({ kind:'collect', entry:e.id, ...c })));
-            db.fuel.forEach(f => out.push({ kind:'fuel', entry:matchEntry(entries, f.coords, f.at)?.id || '', ...f }));
+            const located = entries.filter(e => e.located);
+            // before 1.3.2 an anomaly's coords were the player's own planet or moon, so flights home were noted
+            // as anomaly fuel: a flight to one of the player's planets (the game's own planet list) is left out
+            // unless it carries the anomaly mission
+            const home = new Set(Array.from(document.querySelectorAll('#planetList .planet-koords')).map(el => coordsText(el.textContent)));
+            db.fuel.forEach(f =>
+            {
+                if(f.mission !== ANOMALY_MISSION && home.has(f.coords)) return;
+                out.push({ kind:'fuel', entry:matchEntry(located, f.coords, f.at)?.id || '', ...f });
+            });
             Object.entries(db.battles).forEach(([id, b]) => out.push({ kind:'battle', id, ...b }));
             return out;
         };
