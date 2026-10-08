@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGLight Orion Addons
 // @namespace    https://github.com/nicolagalassi
-// @version      0.18.0
+// @version      0.18.1
 // @description  Add-ons for OGLight on the Project Orion test server: OGLight keeps starting with an Orion building in the build queue, real costs for the Orion buildings in OGLight's own layout (level arrows, to-do list), and a button on every anomaly-mission wave that opens OGLight's battle simulator pre-filled. Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -201,10 +201,12 @@ onDomReady(function()
     // Only verified entries go here: we do not guess.
     const MANUAL_FORMULAS =
     {
-        // Interstellar Anomaly Scanner. Verified against the game's own panel on s808-en (beta,
-        // 01 Oct 2026): level 49 = 867,810,695 / 433,905,347 / 144,635,115, i.e. exactly
-        // floor(84|42|14 * 1.4^48). Demolition matches too: 84 * 1.4^46 * (1 - 64% ion bonus).
-        45: { metal:84, crystal:42, deut:14, factor:1.4 },
+        // Interstellar Anomaly Scanner. Gameforge changed its price on the s808-en beta on 08 Oct 2026
+        // (it was floor(84|42|14 * 1.4^(level - 1)) until then). Verified against the game's own panel:
+        // level 52 = 86,078,902,528 / 43,039,451,264 / 14,346,483,754 and level 54 = 193,677,530,690 /
+        // 96,838,765,345 / 32,279,588,448, i.e. exactly floor(90|45|15 * 1.5^51) and floor(... * 1.5^53),
+        // to the unit on all three resources. The 54/52 ratio is 2.25 = 1.5^2 on each of them.
+        45: { metal:90, crystal:45, deut:15, factor:1.5 },
 
         // Control center — Intergalactic Recovery Center. Levels 1, 2 and 3 read off the game on s808-en
         // (beta, 01 Oct 2026): 75,000 / 52,500 / 22,500, then 112.5k / 78.8k / 33.8k, then 168.8k /
@@ -321,6 +323,31 @@ onDomReady(function()
         if(levels.length !== 1) return null;
 
         return { refLevel:levels[0], refCost:observed[levels[0]][resource], factor:CONTROL_CENTER_FACTOR };
+    };
+
+    // Gameforge can change a price on the beta (the scanner did on 08 Oct 2026). Prices remembered for
+    // other levels before the change would then win over the new curve in costAt(), so they are dropped
+    // as soon as the game shows a price that says the curve moved:
+    // - a tech with a verified formula: a remembered level the formula no longer gives is stale. If the
+    //   game's own price does not match the formula either, the formula is out of date too: only the
+    //   price just shown is kept (other levels then fall back to the formula until it is updated here).
+    // - any other tech: a level shown at a different price than remembered means every remembered level
+    //   is suspect, so only the new one is kept.
+    const matchesFormula = (manual, level, costs) =>
+        ['metal', 'crystal', 'deut'].every(resource =>
+            (costs[resource] || 0) === Math.floor((manual[resource] || 0) * Math.pow(manual.factor, level - 1)));
+
+    const keepCurrentObservations = (id, observed, gameLevel, gameCosts) =>
+    {
+        const manual = MANUAL_FORMULAS[id];
+        if(manual)
+        {
+            if(!matchesFormula(manual, gameLevel, gameCosts)) return {};
+            const kept = {};
+            Object.keys(observed).forEach(level => { if(matchesFormula(manual, Number(level), observed[level])) kept[level] = observed[level]; });
+            return kept;
+        }
+        return observed[gameLevel] ? {} : observed;
     };
 
     // { value, exact } for one resource at one level, or null when we cannot know it.
@@ -704,8 +731,10 @@ onDomReady(function()
         store[id] = store[id] || {};
         if(JSON.stringify(store[id][gameLevel]) !== JSON.stringify(gameCosts))
         {
+            const before = JSON.stringify(store[id]);
+            store[id] = keepCurrentObservations(id, store[id], gameLevel, gameCosts);
             store[id][gameLevel] = gameCosts;
-            saveStore(store);
+            if(JSON.stringify(store[id]) !== before) saveStore(store);
         }
 
         const details = panel.querySelector('#technologydetails') || panel;
