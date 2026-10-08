@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         OGame Orion Calculator
 // @namespace    https://github.com/nicolagalassi
-// @version      1.2.1
-// @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; how many scans the lithium can pay for without starving them; and a searchable archive of every anomaly taken on (level, stars, PvP/PvE, type, lithium, rewards collected). Display only.
+// @version      1.3.0
+// @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; how many scans the lithium can pay for without starving them; and an archive with daily results of every anomaly taken on (level, stars, PvP/PvE, type, lithium, rewards collected, fuel spent, ships lost). Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
 // @icon         https://gf1.geo.gfsrv.net/cdn3d/favicon.ico
@@ -60,29 +60,42 @@
   - Above the results: how many scans can be paid now, i.e. the lowest the bar would go from now on
     divided by the scan cost, and the list of anomalies being held back for.
 
-  ANOMALY ARCHIVE
+  ANOMALY ARCHIVE AND DAILY RESULTS
   The ledger above forgets an anomaly once it is collected; the archive keeps it, in this browser only
   (localStorage "orionArchive.v1"), keyed by the game's own id for it (data-space-object-id).
   - Every time the missions tab is drawn, each anomaly listed is written down or updated: name,
     coordinates, level, difficulty stars, PvP/PvE, type (e.g. "Battle"), when it appeared, waves reached.
-  - A collection is READ by a capture listener. The card's collect button only opens the game's
+  - Collections are READ by a capture listener. The card's collect button only opens the game's
     "collect rewards" dialog (waves, total lithium cost, Accept / Cancel): what is noted is Accept in
     that dialog, with the dialog's own figures. Cancel notes nothing. With "don't show again today"
     ticked there is no dialog, and the card button itself is noted with the card's figures. Either way
     it is saved once the game has really paid out (the card's rewards changed or the card is gone), and
-    forgotten if nothing changes within 60 s. Lithium back is taken from the lithium rewards; resources are also given in MSU; rewards
-    that are not resources (ships…) are kept as the game's text.
-  - An anomaly no longer listed is closed: "collected" with at least one collection saved, "expired"
-    otherwise.
-  - A button above every Orion tab opens it as a table: search, filters (mode, type, stars, status),
-    sorting by any column, totals of the rows shown, CSV/JSON export (a file saved on your own computer,
-    only when clicked), delete a row or clear everything.
-  It cannot know rewards collected while the script was not installed, or on another browser.
+    forgotten if nothing changes within 60 s.
+  - Fuel: when the player sends a fleet, the game's own send request and its answer are READ through
+    jQuery's global ajaxSend / ajaxComplete events. If the answer says the fleet left and the target is an
+    anomaly (deep space type 4, the anomaly mission 14, or coordinates the archive knows), the fuel the
+    dispatch page itself computes (fleetDispatcher.getConsumption()) is noted with the time.
+  - Ships lost: the combat reports the player opens in the messages carry their data in the page
+    (.rawMessageData, as OGLight reads them). A report at the coordinates of an archived anomaly, during
+    its life, counts: the player's own ships destroyed in the last round, valued at their build cost in
+    MSU (the ships this script knows; others are counted, not valued).
+  - Each anomaly no longer listed is closed: "collected" with at least one collection, "expired" otherwise.
+  The panel - "Orion stats" in the game's left menu on every page, and a button above every Orion tab -
+  shows the results per DAY, like OGLight's expedition days: pick a day (◀ ▶, Today), the last 7 or 30
+  days, or everything; tiles with anomalies, collections and waves, rewards in MSU and per resource, net
+  lithium spent, fuel, ships lost and the balance (rewards − ships lost − fuel, in MSU; lithium apart);
+  a bar per day (rewards above the line, costs below; a click opens that day); the ships lost by type;
+  and the anomalies alive in the period with the period's own figures (search, filters, sorting).
+  Export: a CSV with one line per day, or the whole archive as JSON (files saved on your own computer,
+  only when clicked).
+  It cannot know what happened while the script was not installed, or on another browser; ships lost
+  are only counted once their combat report has been opened.
 
   COMPLIANCE (OGame Origin tool rules — see AGENTS.md):
   - §1.1/§1.2  Display only: it neither scans, nor discovers, nor redeems anything. The Discover and
                collect clicks are only read, never stopped, delayed, changed or repeated.
-  - §1.3/§4    NO request to the game server. It reads the Orion tabs the player opened; the DOM-only
+  - §1.3/§4    NO request to the game server; the game's own send-fleet request is only observed
+               (jQuery ajaxSend/ajaxComplete), never made, changed or repeated. It reads the Orion tabs the player opened; the DOM-only
                observer handles the game redrawing them.
   - §4.2       No cp=, no planet switching.
   - §1.9       Nothing leaves the machine; the anomalies taken on and the archive stay in this browser's
@@ -702,22 +715,34 @@ onDomReady(function()
         // ---------- language ----------
         const LANG = /^it/i.test(document.documentElement.lang || navigator.language || '') ? 'it' : 'en';
         const T = ({
-            it: { button:'Archivio anomalie', title:'Archivio anomalie Orion', search:'Cerca nome o coordinate…', all:'tutte',
+            it: { button:'Archivio anomalie', menu:'Orion stats', title:'Anomalie Orion: risultati giornalieri', search:'Cerca nome o coordinate…', all:'tutte',
                   mode:'Modalità', kind:'Tipologia', stars:'Stelle', status:'Stato', running:'in corso', collected:'riscattata', expired:'scaduta',
                   spawned:'Apparsa', name:'Nome', coords:'Coord.', level:'Liv.', waves:'Ondate', paid:'Litio pagato', back:'Litio reso',
-                  metal:'Metallo', crystal:'Cristallo', deut:'Deuterio', msu:'MSU', other:'Altro', collections:'Riscatti',
-                  totals:'Totale ({n} anomalie)', csv:'Esporta CSV', json:'Esporta JSON', clear:'Svuota archivio', close:'Chiudi',
-                  confirmClear:"Cancellare tutto l'archivio delle anomalie? Non si può annullare.", confirmDel:'Togliere questa anomalia dall\'archivio?',
+                  gain:'Ricompense', fuel:'Carburante', lost:'Navi perse', lostShort:'Navi perse', costs:'Costi: navi perse + carburante',
+                  net:'Bilancio', netHint:'ricompense − navi perse − carburante (litio a parte)', other:'Altro', lithium:'Litio netto speso',
+                  paidShort:'pagato', backShort:'reso', anomalies:'Anomalie', collectionsShort:'riscatti', wavesShort:'ondate',
+                  ships:'navi', battlesShort:'battaglie', day:'Giorno', daysShort:'giorni', allTime:'Tutto', today:'Oggi',
+                  prevDay:'Giorno prima', nextDay:'Giorno dopo', lastDays:'Ultimi {n} giorni fino a {d}',
+                  chartHint:'clic su una barra per aprire quel giorno', chartAria:'Ricompense e costi in MSU per giorno',
+                  rowsHint:'cifre della riga = solo il periodo scelto', noneInPeriod:'Nessuna anomalia in questo periodo.',
+                  csv:'CSV per giorno', json:'Esporta JSON', clear:'Svuota archivio', close:'Chiudi',
+                  confirmClear:"Cancellare tutto l'archivio delle anomalie (anche carburante e battaglie)? Non si può annullare.", confirmDel:'Togliere questa anomalia dall\'archivio?',
                   empty:'Ancora nessuna anomalia registrata. Apri la scheda Missioni di Orion: le anomalie elencate vengono salvate qui.',
-                  note:"Salvato solo in questo browser. Le ricompense sono registrate quando premi il pulsante del gioco per riscattarle." },
-            en: { button:'Anomaly archive', title:'Orion anomaly archive', search:'Search name or coordinates…', all:'all',
+                  note:'Salvato solo in questo browser. Ricompense: quando accetti il riscatto. Carburante: quando invii una flotta verso un\'anomalia. Navi perse: quando apri i rapporti di combattimento nella posta.' },
+            en: { button:'Anomaly archive', menu:'Orion stats', title:'Orion anomalies: daily results', search:'Search name or coordinates…', all:'all',
                   mode:'Mode', kind:'Type', stars:'Stars', status:'Status', running:'running', collected:'collected', expired:'expired',
                   spawned:'Appeared', name:'Name', coords:'Coords', level:'Lvl', waves:'Waves', paid:'Lithium paid', back:'Lithium back',
-                  metal:'Metal', crystal:'Crystal', deut:'Deuterium', msu:'MSU', other:'Other', collections:'Collections',
-                  totals:'Total ({n} anomalies)', csv:'Export CSV', json:'Export JSON', clear:'Clear archive', close:'Close',
-                  confirmClear:'Delete the whole anomaly archive? This cannot be undone.', confirmDel:'Remove this anomaly from the archive?',
+                  gain:'Rewards', fuel:'Fuel', lost:'Ships lost', lostShort:'Ships lost', costs:'Costs: ships lost + fuel',
+                  net:'Balance', netHint:'rewards − ships lost − fuel (lithium apart)', other:'Other', lithium:'Net lithium spent',
+                  paidShort:'paid', backShort:'back', anomalies:'Anomalies', collectionsShort:'collections', wavesShort:'waves',
+                  ships:'ships', battlesShort:'battles', day:'Day', daysShort:'days', allTime:'All', today:'Today',
+                  prevDay:'Previous day', nextDay:'Next day', lastDays:'Last {n} days up to {d}',
+                  chartHint:'click a bar to open that day', chartAria:'Rewards and costs in MSU per day',
+                  rowsHint:'row figures = chosen period only', noneInPeriod:'No anomaly in this period.',
+                  csv:'CSV per day', json:'Export JSON', clear:'Clear archive', close:'Close',
+                  confirmClear:'Delete the whole anomaly archive (fuel and battles too)? This cannot be undone.', confirmDel:'Remove this anomaly from the archive?',
                   empty:'No anomaly recorded yet. Open the Orion missions tab: the anomalies listed there are saved here.',
-                  note:'Stored in this browser only. Rewards are recorded when you press the game\'s own collect button.' },
+                  note:'Stored in this browser only. Rewards: when you accept a collection. Fuel: when you send a fleet to an anomaly. Ships lost: when you open your combat reports.' },
         })[LANG];
 
         // ---------- helpers ----------
@@ -740,7 +765,13 @@ onDomReady(function()
 
         const load = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; } catch(e) { return fallback; } };
         const save = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch(e) { /* storage blocked */ } };
-        const loadDb = () => load(DB_KEY, { entries:{} });
+        // { entries:{ id:anomaly }, fuel:[ {at, coords, deut} ], battles:{ messageId:{at, coords, entry, lost} } }
+        const loadDb = () =>
+        {
+            const db = load(DB_KEY, {});
+            db.entries = db.entries || {}; db.fuel = db.fuel || []; db.battles = db.battles || {};
+            return db;
+        };
 
         // ---------- reading a mission card ----------
         const missionId = card => card.getAttribute('data-space-object-id') || '';
@@ -938,16 +969,194 @@ onDomReady(function()
             updateButtons();
         };
 
-        // ---------- totals per anomaly ----------
-        const sum = (e, key) => (e.collections || []).reduce((s, c) => s + (c[key] || 0), 0);
-        const row = e => ({
-            ...e,
-            paid: sum(e, 'cost'), back: sum(e, 'lithium'), metal: sum(e, 'metal'), crystal: sum(e, 'crystal'), deuterium: sum(e, 'deuterium'),
-            msu: sum(e, 'msu'), other: (e.collections || []).flatMap(c => c.other || []).join(', '), ncoll: (e.collections || []).length,
-            date: e.spawnedAt || e.firstSeen || 0,
-        });
+        // ---------- which anomaly an event at `coords` / `at` belongs to ----------
+        // The same coordinates can host several anomalies over time, so the one whose life (from its
+        // appearance to its end, with a margin either side) covers the moment wins; the nearest start if
+        // more than one does.
+        const MARGIN = 12 * 3600 * 1000;
+        const matchEntry = (entries, coords, at) =>
+        {
+            const fits = entries.filter(e => e.coords === coords &&
+                at >= (e.spawnedAt || e.firstSeen || 0) - MARGIN && at <= (e.endedAt || Date.now()) + MARGIN);
+            return fits.sort((a, b) => Math.abs(at - (a.spawnedAt || a.firstSeen)) - Math.abs(at - (b.spawnedAt || b.firstSeen)))[0] || null;
+        };
 
-        // ---------- the viewer ----------
+        // ---------- fuel: deuterium spent sending fleets to an anomaly ----------
+        // The game sends a fleet with its own request (fleetdispatch, action=sendFleet). jQuery's global
+        // ajaxSend / ajaxComplete events let us READ that request and the game's answer: no request of ours,
+        // nothing changed, nothing delayed. The fuel is the figure the game itself shows on the dispatch page
+        // (fleetDispatcher.getConsumption()), noted only when the answer says the fleet left and the target is
+        // an anomaly: deep space (type 4), the anomaly mission, or coordinates the archive knows.
+        // The game's own "Send fleet" link on an anomaly card uses mission=14 and type=4.
+        const ANOMALY_MISSION = 14;
+        const jq = window.jQuery;
+        const fuelSnapshots = new Map();
+
+        if(jq && /component=fleetdispatch/.test(location.search))
+        {
+            jq(document).on('ajaxSend', (event, xhr, settings) =>
+            {
+                if(!/action=sendFleet/.test(settings?.url || '')) return;
+                try
+                {
+                    const fd = window.fleetDispatcher;
+                    const t = fd?.targetPlanet || {};
+                    fuelSnapshots.set(xhr, {
+                        coords: [t.galaxy, t.system, t.position].join(':'),
+                        type: Number(t.type),
+                        mission: Number(fd?.mission),
+                        deut: Math.round(parseFloat(fd?.getConsumption?.() || 0)) || 0,
+                    });
+                }
+                catch(e) { /* dispatch page changed: no fuel noted */ }
+            });
+
+            jq(document).on('ajaxComplete', (event, xhr) =>
+            {
+                const snap = fuelSnapshots.get(xhr);
+                fuelSnapshots.delete(xhr);
+                if(!snap || !snap.deut) return;
+
+                let sent = false;
+                try { const json = xhr.responseJSON || JSON.parse(xhr.responseText || '{}'); sent = json.success === true; } catch(e) { /* not JSON */ }
+                if(!sent) return;
+
+                const db = loadDb();
+                const known = new Set(Object.values(db.entries).map(e => e.coords));
+                if(!(snap.type === 4 || snap.mission === ANOMALY_MISSION || known.has(snap.coords))) return;
+
+                db.fuel.push({ at:Date.now(), coords:snap.coords, deut:snap.deut, mission:snap.mission });
+                save(DB_KEY, db);
+            });
+        }
+
+        // ---------- battles at an anomaly: ships lost ----------
+        // Combat reports carry their data in the message list itself (.rawMessageData, the same attributes
+        // OGLight reads). A report counts when its coordinates and time match an archived anomaly; the ships
+        // lost are the own fleets' destroyed totals in the last round. Read when the player opens the combat
+        // reports; each report once (by message id).
+        const SHIPS =
+        {
+            202:['Cargo leggero', 'Small Cargo', 2000, 2000, 0],          203:['Cargo pesante', 'Large Cargo', 6000, 6000, 0],
+            204:['Caccia leggero', 'Light Fighter', 3000, 1000, 0],       205:['Caccia pesante', 'Heavy Fighter', 6000, 4000, 0],
+            206:['Incrociatore', 'Cruiser', 20000, 7000, 2000],           207:['Nave da battaglia', 'Battleship', 45000, 15000, 0],
+            208:['Colonizzatrice', 'Colony Ship', 10000, 20000, 10000],   209:['Riciclatrice', 'Recycler', 10000, 6000, 2000],
+            210:['Sonda spia', 'Espionage Probe', 0, 1000, 0],            211:['Bombardiere', 'Bomber', 50000, 25000, 15000],
+            212:['Satellite solare', 'Solar Satellite', 0, 2000, 500],    213:['Corazzata', 'Destroyer', 60000, 50000, 15000],
+            214:['Morte nera', 'Deathstar', 5000000, 4000000, 1000000],   215:['Incrociatore da battaglia', 'Battlecruiser', 30000, 40000, 15000],
+            217:['Crawler', 'Crawler', 2000, 2000, 1000],                 218:['Reaper', 'Reaper', 85000, 55000, 20000],
+            219:['Pathfinder', 'Pathfinder', 8000, 15000, 8000],
+        };
+        const shipName = id => SHIPS[id] ? SHIPS[id][LANG === 'it' ? 0 : 1] : '#' + id;
+        const lostMsu = lost => Object.entries(lost || {}).reduce((s, [id, n]) => s + (SHIPS[id] ? toMSU(SHIPS[id][2] * n, SHIPS[id][3] * n, SHIPS[id][4] * n) : 0), 0);
+        const lostCount = lost => Object.values(lost || {}).reduce((s, n) => s + n, 0);
+
+        const readBattles = () =>
+        {
+            const fresh = document.querySelectorAll('.rawMessageData[data-raw-messagetype="25"]:not([data-orion-read])');
+            if(!fresh.length) return;
+
+            const me = document.querySelector('meta[name="ogame-player-id"]')?.getAttribute('content') || '';
+            const db = loadDb();
+            const known = Object.values(db.entries).filter(e => e.coords);
+            let changed = false;
+
+            fresh.forEach(raw =>
+            {
+                raw.setAttribute('data-orion-read', '1');
+                const id = raw.closest('[data-msg-id]')?.getAttribute('data-msg-id') || raw.getAttribute('data-raw-hashcode') || '';
+                if(!id || db.battles[id]) return;
+
+                const coords = (raw.getAttribute('data-raw-coords') || '').match(/\d+:\d+:\d+/)?.[0] || '';
+                const at = (parseInt(raw.getAttribute('data-raw-timestamp') || raw.getAttribute('data-raw-datetime') || '0', 10) * 1000) || Date.now();
+                const entry = matchEntry(known, coords, at);
+                if(!entry) return;   // not at an anomaly the archive knows
+
+                let fleets, rounds, result;
+                try
+                {
+                    fleets = JSON.parse(raw.getAttribute('data-raw-fleets') || '[]');
+                    rounds = JSON.parse(raw.getAttribute('data-raw-combatrounds') || '[]');
+                    result = JSON.parse(raw.getAttribute('data-raw-result') || '{}');
+                }
+                catch(e) { return; }
+
+                const own = (fleets || []).filter(f => String(f.player?.id) === String(me));
+                if(!own.length) return;
+
+                const ownIds = new Set(own.map(f => f.fleetId));
+                const lost = {};
+                (rounds[rounds.length - 1]?.fleets || []).forEach(f =>
+                {
+                    if(!ownIds.has(f.fleetId)) return;
+                    (f.technologies || []).forEach(t => { if(t.destroyedTotal) lost[t.technologyId] = (lost[t.technologyId] || 0) + t.destroyedTotal; });
+                });
+
+                db.battles[id] = { at, coords, entry:entry.id, lost, won:own.some(f => f.side === result?.winner), draw:result?.winner === 'none' };
+                changed = true;
+            });
+
+            if(changed) save(DB_KEY, db);
+        };
+
+        // ---------- days ----------
+        const DAY = 24 * 3600 * 1000;
+        const dayKey = ts => { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+        const dayStart = key => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d).getTime(); };
+        const nextDay = key => { const [y, m, d] = key.split('-').map(Number); return dayKey(new Date(y, m - 1, d + 1).getTime()); };
+        const prevDay = key => { const [y, m, d] = key.split('-').map(Number); return dayKey(new Date(y, m - 1, d - 1).getTime()); };
+        const dayLabel = key => new Date(dayStart(key)).toLocaleDateString(LANG === 'it' ? 'it-IT' : 'en-GB', { weekday:'short', day:'2-digit', month:'2-digit', year:'numeric' });
+
+        // every dated event, each tied to its anomaly
+        const allEvents = db =>
+        {
+            const entries = Object.values(db.entries);
+            const out = [];
+            entries.forEach(e => (e.collections || []).forEach(c => out.push({ kind:'collect', entry:e.id, ...c })));
+            db.fuel.forEach(f => out.push({ kind:'fuel', entry:matchEntry(entries, f.coords, f.at)?.id || '', ...f }));
+            Object.entries(db.battles).forEach(([id, b]) => out.push({ kind:'battle', id, ...b }));
+            return out;
+        };
+
+        const blank = () => ({ collections:0, waves:0, paid:0, back:0, metal:0, crystal:0, deuterium:0, gain:0, other:[],
+                               fuel:0, fuelMsu:0, battles:0, lost:{}, lostN:0, lostMsu:0 });
+
+        const add = (t, ev) =>
+        {
+            if(ev.kind === 'collect')
+            {
+                t.collections++; t.waves += ev.waves || 0; t.paid += ev.cost || 0; t.back += ev.lithium || 0;
+                t.metal += ev.metal || 0; t.crystal += ev.crystal || 0; t.deuterium += ev.deuterium || 0;
+                t.gain += ev.msu || 0; t.other.push(...(ev.other || []));
+            }
+            else if(ev.kind === 'fuel') { t.fuel += ev.deut || 0; t.fuelMsu += toMSU(0, 0, ev.deut || 0); }
+            else if(ev.kind === 'battle')
+            {
+                t.battles++;
+                Object.entries(ev.lost || {}).forEach(([id, n]) => { t.lost[id] = (t.lost[id] || 0) + n; });
+                t.lostN += lostCount(ev.lost); t.lostMsu += lostMsu(ev.lost);
+            }
+            return t;
+        };
+
+        const net = t => t.gain - t.lostMsu - t.fuelMsu;
+
+        // ---------- the panel ----------
+        const view = { range:'day', day:dayKey(Date.now()), q:'', mode:'', kind:'', stars:'', status:'', sort:'date', desc:true };
+
+        const period = () =>
+        {
+            if(view.range === 'all') return [0, Infinity];
+            const to = dayStart(nextDay(view.day));
+            if(view.range === 'day') return [dayStart(view.day), to];
+            let from = view.day;
+            for(let i = 1; i < Number(view.range); i++) from = prevDay(from);
+            return [dayStart(from), to];
+        };
+
+        const periodLabel = () => view.range === 'all' ? T.allTime : view.range === 'day' ? dayLabel(view.day) :
+            T.lastDays.replace('{n}', view.range).replace('{d}', dayLabel(view.day));
+
         const COLUMNS =
         [
             ['date', T.spawned, r => dateText(r.date)],
@@ -959,49 +1168,115 @@ onDomReady(function()
             ['kind', T.kind, r => esc(r.kind)],
             ['wave', T.waves, r => r.waves ? `${r.wave || 0}/${r.waves}` : ''],
             ['status', T.status, r => `<span class="oaStatus oa_${r.status}">${T[r.status] || r.status}</span>`],
-            ['ncoll', T.collections, r => r.ncoll || ''],
-            ['paid', T.paid, r => r.paid ? compact(r.paid) : ''],
-            ['back', T.back, r => r.back ? compact(r.back) : ''],
-            ['metal', T.metal, r => r.metal ? compact(r.metal) : ''],
-            ['crystal', T.crystal, r => r.crystal ? compact(r.crystal) : ''],
-            ['deuterium', T.deut, r => r.deuterium ? compact(r.deuterium) : ''],
-            ['msu', T.msu, r => r.msu ? compact(r.msu) : ''],
-            ['other', T.other, r => esc(r.other)],
+            ['paid', T.paid, r => r.t.paid ? compact(r.t.paid) : ''],
+            ['back', T.back, r => r.t.back ? compact(r.t.back) : ''],
+            ['gain', T.gain, r => r.t.gain ? compact(r.t.gain) : ''],
+            ['fuel', T.fuel, r => r.t.fuel ? compact(r.t.fuel) : ''],
+            ['lostMsu', T.lost, r => r.t.lostN ? `${compact(r.t.lostMsu)} <span class="oaMuted">(${compact(r.t.lostN)})</span>` : ''],
+            ['net', T.net, r => (r.t.gain || r.t.lostMsu || r.t.fuelMsu) ? `<span class="${net(r.t) < 0 ? 'oaNeg' : ''}">${compact(net(r.t))}</span>` : ''],
+            ['other', T.other, r => esc(r.t.other.join(', '))],
         ];
-        const NUMERIC = new Set(['date', 'level', 'stars', 'wave', 'ncoll', 'paid', 'back', 'metal', 'crystal', 'deuterium', 'msu']);
+        const NUMERIC = new Set(['date', 'level', 'stars', 'wave', 'paid', 'back', 'gain', 'fuel', 'lostMsu', 'net']);
+        const sortValue = (r, k) => ({ paid:r.t.paid, back:r.t.back, gain:r.t.gain, fuel:r.t.fuel, lostMsu:r.t.lostMsu, net:net(r.t) })[k] ?? r[k];
 
-        const view = { q:'', mode:'', kind:'', stars:'', status:'', sort:'date', desc:true };
-
-        const filtered = () =>
+        // the anomalies alive at some point of the period, with the period's own figures
+        const rowsFor = (db, events, from, to) =>
         {
             const q = view.q.toLowerCase();
-            return Object.values(loadDb().entries).map(row).filter(r =>
-                (!q || (r.name + ' ' + r.coords).toLowerCase().includes(q)) &&
-                (!view.mode || r.mode === view.mode) &&
-                (!view.kind || r.kind === view.kind) &&
-                (!view.stars || String(r.stars) === view.stars) &&
-                (!view.status || r.status === view.status))
-            .sort((a, b) =>
-            {
-                const x = a[view.sort], y = b[view.sort];
-                const d = NUMERIC.has(view.sort) ? (x || 0) - (y || 0) : String(x || '').localeCompare(String(y || ''));
-                return view.desc ? -d : d;
-            });
+            return Object.values(db.entries)
+                .filter(e => (e.spawnedAt || e.firstSeen || 0) < to && (e.endedAt || Date.now()) >= from)
+                .map(e => ({ ...e, date:e.spawnedAt || e.firstSeen || 0, t:events.filter(ev => ev.entry === e.id).reduce(add, blank()) }))
+                .filter(r =>
+                    (!q || (r.name + ' ' + r.coords).toLowerCase().includes(q)) &&
+                    (!view.mode || r.mode === view.mode) && (!view.kind || r.kind === view.kind) &&
+                    (!view.stars || String(r.stars) === view.stars) && (!view.status || r.status === view.status))
+                .sort((a, b) =>
+                {
+                    const x = sortValue(a, view.sort), y = sortValue(b, view.sort);
+                    const d = NUMERIC.has(view.sort) ? (x || 0) - (y || 0) : String(x || '').localeCompare(String(y || ''));
+                    return view.desc ? -d : d;
+                });
         };
 
         const options = (values, current) => `<option value="">${T.all}</option>` +
             [...new Set(values.filter(v => v !== '' && v !== undefined))].sort().map(v => `<option${String(v) === current ? ' selected' : ''}>${esc(v)}</option>`).join('');
+
+        // Daily bars, like OGLight's expedition days: rewards above the line (blue), what the day cost below
+        // it (red: ships lost + fuel, both in MSU). Lithium is not MSU and stays out of the chart.
+        // Colours: the reference diverging pair, validated against the panel's dark surface.
+        const chart = events =>
+        {
+            const n = view.range === '30' ? 30 : 14;
+            const keys = [];
+            for(let k = view.range === 'all' ? dayKey(Date.now()) : view.day, i = 0; i < n; i++, k = prevDay(k)) keys.unshift(k);
+
+            const days = keys.map(k =>
+            {
+                const from = dayStart(k), to = dayStart(nextDay(k));
+                const t = events.filter(ev => ev.at >= from && ev.at < to).reduce(add, blank());
+                return { k, gain:t.gain, cost:t.lostMsu + t.fuelMsu, t };
+            });
+
+            const maxUp = Math.max(1, ...days.map(d => d.gain)), maxDown = Math.max(0, ...days.map(d => d.cost));
+            const W = 700, H = 150, top = 6, bottom = 18;
+            const zero = top + (H - top - bottom) * maxUp / (maxUp + maxDown || 1);
+            const scale = (H - top - bottom) / (maxUp + maxDown || 1);
+            const slot = W / n, bar = Math.max(4, slot - 6);
+
+            const bars = days.map((d, i) =>
+            {
+                const x = i * slot + (slot - bar) / 2;
+                const up = d.gain * scale, down = d.cost * scale;
+                const tip = `${dayLabel(d.k)}|${T.gain}: ${compact(d.gain)} MSU|${T.lostShort}: ${compact(d.t.lostMsu)} MSU|${T.fuel}: ${compact(d.t.fuel)} deut|${T.net}: ${compact(net(d.t))} MSU`;
+                return `<g class="oaBar${d.k === view.day && view.range === 'day' ? ' oaSel' : ''}" data-day="${d.k}" data-tip="${esc(tip)}">
+                    <rect class="oaHit" x="${i * slot}" y="0" width="${slot}" height="${H}"></rect>
+                    ${up > 0 ? `<rect class="oaUp" x="${x}" y="${zero - up}" width="${bar}" height="${up}" rx="2"></rect>` : ''}
+                    ${down > 0 ? `<rect class="oaDown" x="${x}" y="${zero + 2}" width="${bar}" height="${down}" rx="2"></rect>` : ''}
+                    ${(i % Math.ceil(n / 10) === 0 || i === n - 1) ? `<text x="${i * slot + slot / 2}" y="${H - 4}">${d.k.slice(8)}/${d.k.slice(5, 7)}</text>` : ''}
+                </g>`;
+            }).join('');
+
+            return `<div class="oaChart">
+                <div class="oaLegend"><span><i class="oaSwUp"></i>${T.gain} (MSU)</span><span><i class="oaSwDown"></i>${T.costs} (MSU)</span>
+                    <span class="oaMuted">${T.chartHint}</span></div>
+                <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(T.chartAria)}">
+                    <line class="oaZero" x1="0" x2="${W}" y1="${zero}" y2="${zero}"></line>${bars}
+                </svg><div class="oaTip"></div></div>`;
+        };
+
+        const tile = (label, value, sub, cls = '') => `<div class="oaTile ${cls}"><span>${label}</span><b>${value}</b>${sub ? `<em>${sub}</em>` : ''}</div>`;
 
         const renderModal = () =>
         {
             const modal = document.querySelector('#orionArchiveModal');
             if(!modal) return;
 
-            const all = Object.values(loadDb().entries);
-            const rows = filtered();
-            const total = key => rows.reduce((s, r) => s + (r[key] || 0), 0);
+            const db = loadDb();
+            const events = allEvents(db);
+            const [from, to] = period();
+            const inRange = events.filter(ev => ev.at >= from && ev.at < to);
+            const t = inRange.reduce(add, blank());
+            const rows = rowsFor(db, inRange, from, to);
+            const all = Object.values(db.entries);
 
-            modal.querySelector('.oaBody').innerHTML = !all.length ? `<p class="oaEmpty">${T.empty}</p>` : `
+            modal.querySelector('.oaPeriod').textContent = periodLabel();
+            modal.querySelectorAll('[data-range]').forEach(b => b.classList.toggle('oaOn', b.getAttribute('data-range') === view.range));
+
+            if(!all.length && !db.fuel.length) { modal.querySelector('.oaBody').innerHTML = `<p class="oaEmpty">${T.empty}</p>`; return; }
+
+            const lostList = Object.entries(t.lost).sort((a, b) => b[1] - a[1]).map(([id, n]) => `${esc(shipName(id))} ×${compact(n)}`).join(', ');
+
+            modal.querySelector('.oaBody').innerHTML = `
+                <div class="oaTiles">
+                    ${tile(T.anomalies, rows.length, `${t.collections} ${T.collectionsShort}${t.waves ? ` · ${t.waves} ${T.wavesShort}` : ''}`)}
+                    ${tile(T.gain, compact(t.gain) + ' MSU', `M ${compact(t.metal)} · C ${compact(t.crystal)} · D ${compact(t.deuterium)}`)}
+                    ${tile(T.lithium, compact(t.paid - t.back), `${T.paidShort} ${compact(t.paid)} · ${T.backShort} ${compact(t.back)}`)}
+                    ${tile(T.fuel, compact(t.fuel) + ' deut', `≈ ${compact(t.fuelMsu)} MSU`)}
+                    ${tile(T.lost, compact(t.lostMsu) + ' MSU', t.lostN ? `${compact(t.lostN)} ${T.ships} · ${t.battles} ${T.battlesShort}` : `${t.battles} ${T.battlesShort}`)}
+                    ${tile(T.net, compact(net(t)) + ' MSU', T.netHint, net(t) < 0 ? 'oaNegTile' : 'oaPosTile')}
+                </div>
+                ${chart(events)}
+                ${lostList || t.other.length ? `<div class="oaDetail">${lostList ? `<div><b>${T.lost}:</b> ${lostList}</div>` : ''}${t.other.length ? `<div><b>${T.other}:</b> ${esc(t.other.join(', '))}</div>` : ''}</div>` : ''}
                 <div class="oaFilters">
                     <input type="search" class="oaQ" placeholder="${T.search}" value="${esc(view.q)}">
                     <label>${T.mode} <select data-f="mode">${options(all.map(e => e.mode), view.mode)}</select></label>
@@ -1009,14 +1284,13 @@ onDomReady(function()
                     <label>${T.stars} <select data-f="stars">${options(all.map(e => e.stars ? String(e.stars) : ''), view.stars)}</select></label>
                     <label>${T.status} <select data-f="status"><option value="">${T.all}</option>${['running', 'collected', 'expired']
                         .map(s => `<option value="${s}"${s === view.status ? ' selected' : ''}>${T[s]}</option>`).join('')}</select></label>
+                    <span class="oaMuted">${T.rowsHint}</span>
                 </div>
-                <div class="oaScroll"><table>
+                <div class="oaScroll">${rows.length ? `<table>
                     <thead><tr>${COLUMNS.map(([k, label]) => `<th data-k="${k}">${label}${view.sort === k ? (view.desc ? ' ▾' : ' ▴') : ''}</th>`).join('')}<th></th></tr></thead>
                     <tbody>${rows.map(r => `<tr>${COLUMNS.map(([k, , f]) => `<td class="${NUMERIC.has(k) ? 'oaNum' : ''}">${f(r)}</td>`).join('')}
                         <td><a class="oaDel" data-id="${esc(r.id)}" title="×">×</a></td></tr>`).join('')}</tbody>
-                    <tfoot><tr><td colspan="9">${T.totals.replace('{n}', rows.length)}</td><td class="oaNum">${total('ncoll')}</td>
-                        ${['paid', 'back', 'metal', 'crystal', 'deuterium', 'msu'].map(k => `<td class="oaNum">${compact(total(k))}</td>`).join('')}<td colspan="2"></td></tr></tfoot>
-                </table></div>`;
+                </table>` : `<p class="oaEmpty">${T.noneInPeriod}</p>`}</div>`;
         };
 
         const download = (name, text, type) =>
@@ -1029,12 +1303,31 @@ onDomReady(function()
             setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
         };
 
+        // one line per day, the same figures as the tiles
         const exportCsv = () =>
         {
-            const keys = ['id', 'date', 'name', 'coords', 'level', 'stars', 'mode', 'kind', 'wave', 'waves', 'status', 'ncoll', 'paid', 'back', 'metal', 'crystal', 'deuterium', 'msu', 'other'];
-            const cell = v => /[",;\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
-            const lines = [keys.join(';')].concat(filtered().map(r => keys.map(k => cell(k === 'date' ? new Date(r.date || 0).toISOString() : r[k])).join(';')));
-            download('orion-anomalies.csv', '﻿' + lines.join('\n'), 'text/csv');
+            const events = allEvents(loadDb());
+            const keys = [...new Set(events.map(ev => dayKey(ev.at)))].sort();
+            const head = ['day', 'collections', 'waves', 'lithium_paid', 'lithium_back', 'metal', 'crystal', 'deuterium', 'rewards_msu', 'fuel_deut', 'battles', 'ships_lost', 'ships_lost_msu', 'net_msu'];
+            const lines = keys.map(k =>
+            {
+                const t = events.filter(ev => dayKey(ev.at) === k).reduce(add, blank());
+                return [k, t.collections, t.waves, t.paid, t.back, t.metal, t.crystal, t.deuterium, t.gain, t.fuel, t.battles, t.lostN, t.lostMsu, net(t)].join(';');
+            });
+            download('orion-anomalies-per-day.csv', '﻿' + [head.join(';')].concat(lines).join('\n'), 'text/csv');
+        };
+
+        const showTip = (modal, g, event) =>
+        {
+            const tip = modal.querySelector('.oaTip');
+            if(!tip) return;
+            if(!g) { tip.style.display = 'none'; return; }
+            const [title, ...lines] = g.getAttribute('data-tip').split('|');
+            tip.innerHTML = `<b>${esc(title)}</b>` + lines.map(l => `<div>${esc(l)}</div>`).join('');
+            const box = tip.parentElement.getBoundingClientRect();
+            tip.style.display = 'block';
+            tip.style.left = Math.min(box.width - 190, Math.max(0, event.clientX - box.left + 12)) + 'px';
+            tip.style.top = Math.max(0, event.clientY - box.top - 10) + 'px';
         };
 
         const openModal = () =>
@@ -1045,6 +1338,11 @@ onDomReady(function()
             modal.id = 'orionArchiveModal';
             modal.innerHTML = `<div class="oaWindow">
                 <div class="oaHead"><b>${T.title}</b>
+                    <span class="oaNav">
+                        <button data-a="prev" title="${T.prevDay}">◀</button><span class="oaPeriod"></span><button data-a="next" title="${T.nextDay}">▶</button>
+                        <button data-a="today">${T.today}</button>
+                        <span class="oaSeg"><button data-range="day">${T.day}</button><button data-range="7">7 ${T.daysShort}</button><button data-range="30">30 ${T.daysShort}</button><button data-range="all">${T.allTime}</button></span>
+                    </span>
                     <span class="oaActions"><button data-a="csv">${T.csv}</button><button data-a="json">${T.json}</button>
                     <button data-a="clear">${T.clear}</button><button data-a="close">${T.close}</button></span></div>
                 <div class="oaBody"></div>
@@ -1055,17 +1353,31 @@ onDomReady(function()
             {
                 if(event.target === modal) return modal.remove();
                 const action = event.target.closest('[data-a]')?.getAttribute('data-a');
-                if(action === 'close') modal.remove();
+                if(action === 'close') return modal.remove();
                 if(action === 'csv') exportCsv();
                 if(action === 'json') download('orion-anomalies.json', JSON.stringify(loadDb(), null, 1), 'application/json');
-                if(action === 'clear' && confirm(T.confirmClear)) { save(DB_KEY, { entries:{} }); renderModal(); updateButtons(); }
+                if(action === 'clear' && confirm(T.confirmClear)) { save(DB_KEY, { entries:{}, fuel:[], battles:{} }); updateButtons(); }
+                if(action === 'prev') { view.day = prevDay(view.day); if(view.range === 'all') view.range = 'day'; }
+                if(action === 'next' && view.day < dayKey(Date.now())) { view.day = nextDay(view.day); if(view.range === 'all') view.range = 'day'; }
+                if(action === 'today') { view.day = dayKey(Date.now()); view.range = 'day'; }
+
+                const range = event.target.closest('[data-range]')?.getAttribute('data-range');
+                if(range) view.range = range;
+
+                const bar = event.target.closest('.oaBar');
+                if(bar) { view.day = bar.getAttribute('data-day'); view.range = 'day'; }
 
                 const th = event.target.closest('th[data-k]');
-                if(th) { const k = th.getAttribute('data-k'); view.desc = view.sort === k ? !view.desc : NUMERIC.has(k); view.sort = k; renderModal(); }
+                if(th) { const k = th.getAttribute('data-k'); view.desc = view.sort === k ? !view.desc : NUMERIC.has(k); view.sort = k; }
 
                 const del = event.target.closest('.oaDel');
-                if(del && confirm(T.confirmDel)) { const db = loadDb(); delete db.entries[del.getAttribute('data-id')]; save(DB_KEY, db); renderModal(); updateButtons(); }
+                if(del && confirm(T.confirmDel)) { const db = loadDb(); delete db.entries[del.getAttribute('data-id')]; save(DB_KEY, db); updateButtons(); }
+
+                if(action || range || bar || th || del) renderModal();
             });
+
+            modal.addEventListener('mousemove', event => showTip(modal, event.target.closest?.('.oaBar'), event));
+            modal.addEventListener('mouseleave', () => showTip(modal, null));
 
             modal.addEventListener('change', event =>
             {
@@ -1086,11 +1398,23 @@ onDomReady(function()
             renderModal();
         };
 
-        // ---------- the button above every Orion tab ----------
+        // ---------- ways in: the game's left menu (every page) and a button above every Orion tab ----------
         const updateButtons = () =>
         {
             const n = Object.keys(loadDb().entries).length;
             document.querySelectorAll('.orionArchiveButton span').forEach(s => { s.textContent = `${T.button} (${n})`; });
+        };
+
+        const placeMenu = () =>
+        {
+            const menu = document.querySelector('#menuTable');
+            if(!menu || menu.querySelector('.orionArchiveMenu')) return;
+            const li = document.createElement('li');
+            li.className = 'orionArchiveMenu';
+            li.innerHTML = `<span class="menu_icon"><span class="orionArchiveMenuIcon">📜</span></span>` +
+                           `<a class="menubutton" href="javascript:void(0);"><span class="textlabel">${T.menu}</span></a>`;
+            li.querySelector('a').addEventListener('click', openModal);
+            menu.appendChild(li);
         };
 
         const placeButtons = () =>
@@ -1115,23 +1439,57 @@ onDomReady(function()
             .orionArchiveButton { display:inline-block; padding:3px 9px; font-size:11px; color:#d7e3ef !important; background:rgba(0,0,0,.4);
                 border:1px solid rgba(143,209,158,.45); border-radius:3px; text-decoration:none !important; }
             .orionArchiveButton:hover { border-color:#8fd19e; color:#fff !important; }
+            .orionArchiveMenuIcon { display:inline-block; width:27px; text-align:center; line-height:27px; font-size:14px; }
             #orionArchiveModal { position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; }
-            #orionArchiveModal .oaWindow { width:min(1250px, 96vw); max-height:88vh; display:flex; flex-direction:column; background:#0d1014;
+            #orionArchiveModal .oaWindow { width:min(1250px, 96vw); max-height:92vh; display:flex; flex-direction:column; background:#0d1014;
                 border:1px solid #2c3a47; border-radius:4px; color:#a9b7c6; font:11px Verdana, Arial, sans-serif; box-shadow:0 8px 30px rgba(0,0,0,.7); }
-            #orionArchiveModal .oaHead { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border-bottom:1px solid #2c3a47; color:#fff; font-size:13px; }
+            #orionArchiveModal .oaHead { display:flex; flex-wrap:wrap; gap:6px 12px; justify-content:space-between; align-items:center; padding:8px 10px;
+                border-bottom:1px solid #2c3a47; color:#fff; font-size:13px; }
+            #orionArchiveModal .oaNav { display:flex; align-items:center; gap:4px; font-size:11px; }
+            #orionArchiveModal .oaPeriod { min-width:170px; text-align:center; color:#fff; font-weight:bold; }
+            #orionArchiveModal .oaSeg { margin-left:8px; }
+            #orionArchiveModal .oaSeg button { margin-left:0; border-radius:0; }
+            #orionArchiveModal .oaSeg button:first-child { border-radius:3px 0 0 3px; }
+            #orionArchiveModal .oaSeg button:last-child { border-radius:0 3px 3px 0; }
+            #orionArchiveModal button.oaOn { background:#2a78d6; border-color:#3987e5; color:#fff; }
             #orionArchiveModal button { margin-left:5px; padding:3px 8px; font-size:11px; color:#d7e3ef; background:#1b2530; border:1px solid #3a4b5c; border-radius:3px; cursor:pointer; }
             #orionArchiveModal button:hover { background:#25384a; }
-            #orionArchiveModal .oaBody { display:flex; flex-direction:column; min-height:0; padding:8px 10px; }
+            #orionArchiveModal .oaBody { display:flex; flex-direction:column; min-height:0; overflow:auto; padding:8px 10px; }
+            #orionArchiveModal .oaTiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-bottom:10px; }
+            #orionArchiveModal .oaTile { display:flex; flex-direction:column; gap:2px; padding:7px 9px; background:#121a22; border:1px solid #1f2b37; border-radius:4px; }
+            #orionArchiveModal .oaTile span { color:#8d9bab; }
+            #orionArchiveModal .oaTile b { color:#fff; font-size:16px; }
+            #orionArchiveModal .oaTile em { color:#7c8a99; font-style:normal; }
+            #orionArchiveModal .oaPosTile { border-color:#2a4f7a; }
+            #orionArchiveModal .oaNegTile { border-color:#7a3434; }
+            #orionArchiveModal .oaChart { position:relative; margin-bottom:8px; padding:6px 8px; background:#10161d; border-radius:4px; }
+            #orionArchiveModal .oaLegend { display:flex; flex-wrap:wrap; gap:14px; margin-bottom:4px; }
+            #orionArchiveModal .oaLegend i { display:inline-block; width:10px; height:10px; margin-right:5px; border-radius:2px; vertical-align:-1px; }
+            #orionArchiveModal .oaSwUp { background:#3987e5; }
+            #orionArchiveModal .oaSwDown { background:#e66767; }
+            #orionArchiveModal svg { display:block; width:100%; height:150px; }
+            #orionArchiveModal svg text { fill:#7c8a99; font-size:9px; text-anchor:middle; }
+            #orionArchiveModal .oaZero { stroke:#3a4b5c; stroke-width:1; }
+            #orionArchiveModal .oaUp { fill:#3987e5; }
+            #orionArchiveModal .oaDown { fill:#e66767; }
+            #orionArchiveModal .oaHit { fill:transparent; cursor:pointer; }
+            #orionArchiveModal .oaBar:hover .oaHit, #orionArchiveModal .oaSel .oaHit { fill:rgba(255,255,255,.06); }
+            #orionArchiveModal .oaTip { display:none; position:absolute; z-index:2; width:180px; padding:6px 8px; pointer-events:none;
+                background:#1b2530; border:1px solid #3a4b5c; border-radius:3px; color:#d7e3ef; }
+            #orionArchiveModal .oaTip b { color:#fff; }
+            #orionArchiveModal .oaDetail { margin-bottom:8px; line-height:1.6; }
+            #orionArchiveModal .oaDetail b { color:#d7e3ef; }
             #orionArchiveModal .oaFilters { display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; margin-bottom:8px; }
             #orionArchiveModal input, #orionArchiveModal select { font-size:11px; color:#d7e3ef; background:#151c24; border:1px solid #3a4b5c; border-radius:3px; padding:2px 4px; }
-            #orionArchiveModal .oaQ { width:220px; }
-            #orionArchiveModal .oaScroll { overflow:auto; max-height:64vh; }
+            #orionArchiveModal .oaQ { width:200px; }
+            #orionArchiveModal .oaScroll { overflow:auto; max-height:40vh; }
             #orionArchiveModal table { width:100%; border-collapse:collapse; }
             #orionArchiveModal th { position:sticky; top:0; background:#16202a; color:#fff; padding:4px 5px; text-align:left; cursor:pointer; white-space:nowrap; }
             #orionArchiveModal td { padding:3px 5px; border-bottom:1px solid #1d2731; white-space:nowrap; }
             #orionArchiveModal tbody tr:hover { background:#141d26; }
-            #orionArchiveModal tfoot td { color:#fff; font-weight:bold; border-top:1px solid #3a4b5c; background:#121a22; position:sticky; bottom:0; }
             #orionArchiveModal .oaNum { text-align:right; }
+            #orionArchiveModal .oaMuted { color:#7c8a99; }
+            #orionArchiveModal .oaNeg { color:#e66767; }
             #orionArchiveModal .oaTag { padding:0 4px; border-radius:2px; background:#2a3542; color:#fff; }
             #orionArchiveModal .oapvp { background:#7a2a22; }
             #orionArchiveModal .oapve { background:#24563a; }
@@ -1143,10 +1501,13 @@ onDomReady(function()
         `;
         document.head.appendChild(archiveStyle);
 
-        // called by the calculator's observer, with the observer disconnected
+        // called by the calculator's observer, with the observer disconnected. Every step returns at once
+        // when it has nothing to do, so this is cheap on pages that are not Orion.
         const tick = () =>
         {
             if(dialogOpen()) dialogSeen = Date.now();
+            placeMenu();
+            readBattles();
             if(!document.querySelector('.orionTabContentWrapper')) return;
             placeButtons();
             sync();
