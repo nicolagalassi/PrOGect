@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGame Orion Calculator
 // @namespace    https://github.com/nicolagalassi
-// @version      1.3.5
+// @version      1.3.6
 // @description  Project Orion test server: what each scanned anomaly and each active mission pays per hour of lithium production, best first; a launch plan per anomaly that keeps the lithium for the anomalies already under way; how many scans the lithium can pay for without starving them; and an archive with daily results of every anomaly taken on (level, stars, PvP/PvE, type, lithium, rewards collected, ships received, fuel spent, ships lost). Display only.
 // @author       nicolagalassi
 // @match        https://s808-en.ogame.gameforge.com/game/*
@@ -95,7 +95,8 @@
     that name them, drops the battles noted before and leaves out fuel sent to the player's own planets
     and moons outside the anomaly mission.
   - Each anomaly no longer listed is closed: "collected" with at least one collection, "expired" otherwise.
-  The panel - "Orion stats" in the game's left menu on every page, and a button above every Orion tab -
+  The panel - "Orion stats" in the game's left menu on every page, and a button above the Orion missions
+  overview (1.3.6: only there, no longer above every Orion tab) -
   shows the results per DAY, like OGLight's expedition days: pick a day (◀ ▶, Today), the last 7 or 30
   days, or everything; tiles with anomalies, collections and waves, rewards in MSU and per resource, net
   lithium spent, ships received, fuel, ships lost and the balance (rewards + ships received − ships lost
@@ -106,6 +107,9 @@
   with the period's own figures (search, filters, sorting).
   Export: a CSV with one line per day, or the whole archive as JSON (files saved on your own computer,
   only when clicked).
+  Under the left menu, like OGLight's daily expedition box, a small box shows TODAY's rewards collected
+  (metal, crystal, deuterium) and the day's balance in MSU; a click opens the panel on today. It is
+  redrawn from the archive in this browser only when the archive or the day changes.
   It cannot know what happened while the script was not installed, or on another browser; ships lost
   are only counted once their combat report has been opened.
 
@@ -741,7 +745,7 @@ onDomReady(function()
                   paidShort:'pagato', backShort:'reso', anomalies:'Anomalie', collectionsShort:'riscatti', wavesShort:'ondate',
                   ships:'navi', battlesShort:'battaglie', day:'Giorno', daysShort:'giorni', allTime:'Tutto', today:'Oggi',
                   prevDay:'Giorno prima', nextDay:'Giorno dopo', lastDays:'Ultimi {n} giorni fino a {d}',
-                  chartHint:'clic su una barra per aprire quel giorno', chartPrev:'Settimana prima', chartNext:'Settimana dopo', chartAria:'Ricompense e costi in MSU per giorno',
+                  chartHint:'clic su una barra per aprire quel giorno', chartPrev:'Settimana prima', boxHint:'Oggi: ricompense riscattate e bilancio in MSU. Clic per aprire le statistiche Orion.', chartNext:'Settimana dopo', chartAria:'Ricompense e costi in MSU per giorno',
                   rowsHint:'anomalie apparse nel periodo; cifre della riga = solo il periodo scelto', noneInPeriod:'Nessuna anomalia apparsa in questo periodo.',
                   csv:'CSV per giorno', json:'Esporta JSON', clear:'Svuota archivio', close:'Chiudi',
                   confirmClear:"Cancellare tutto l'archivio delle anomalie (anche carburante e battaglie)? Non si può annullare.", confirmDel:'Togliere questa anomalia dall\'archivio?',
@@ -755,7 +759,7 @@ onDomReady(function()
                   paidShort:'paid', backShort:'back', anomalies:'Anomalies', collectionsShort:'collections', wavesShort:'waves',
                   ships:'ships', battlesShort:'battles', day:'Day', daysShort:'days', allTime:'All', today:'Today',
                   prevDay:'Previous day', nextDay:'Next day', lastDays:'Last {n} days up to {d}',
-                  chartHint:'click a bar to open that day', chartPrev:'Previous week', chartNext:'Next week', chartAria:'Rewards and costs in MSU per day',
+                  chartHint:'click a bar to open that day', chartPrev:'Previous week', boxHint:'Today: rewards collected and balance in MSU. Click to open the Orion stats.', chartNext:'Next week', chartAria:'Rewards and costs in MSU per day',
                   rowsHint:'anomalies appeared in the period; row figures = chosen period only', noneInPeriod:'No anomaly appeared in this period.',
                   csv:'CSV per day', json:'Export JSON', clear:'Clear archive', close:'Close',
                   confirmClear:'Delete the whole anomaly archive (fuel and battles too)? This cannot be undone.', confirmDel:'Remove this anomaly from the archive?',
@@ -1496,9 +1500,10 @@ onDomReady(function()
             tip.style.top = Math.max(0, event.clientY - box.top - 10) + 'px';
         };
 
-        const openModal = () =>
+        const openModal = (event, opensToday = false) =>
         {
             if(document.querySelector('#orionArchiveModal')) return;
+            if(opensToday) { view.day = view.chartEnd = dayKey(Date.now()); view.range = 'day'; }
 
             const modal = document.createElement('div');
             modal.id = 'orionArchiveModal';
@@ -1567,7 +1572,8 @@ onDomReady(function()
             renderModal();
         };
 
-        // ---------- ways in: the game's left menu (every page) and a button above every Orion tab ----------
+        // ---------- ways in: the game's left menu (every page), the box under it, and a button above the
+        // Orion missions overview (up to 1.3.5 one above every Orion tab, two on some) ----------
         const updateButtons = () =>
         {
             const n = Object.keys(loadDb().entries).length;
@@ -1589,7 +1595,7 @@ onDomReady(function()
         const placeButtons = () =>
         {
             let added = false;
-            document.querySelectorAll('.orionTabContentWrapper').forEach(wrapper =>
+            document.querySelectorAll('.orionTabContentWrapper.anomalyMissions').forEach(wrapper =>
             {
                 if(wrapper.previousElementSibling?.classList.contains('orionArchiveBar')) return;
                 added = true;
@@ -1602,12 +1608,54 @@ onDomReady(function()
             if(added) updateButtons();
         };
 
+        // Today's box under the left menu, like OGLight's daily expeditions: rewards collected today per
+        // resource and the day's balance in MSU (rewards + ships received − ships lost − fuel). Read from
+        // the archive in this browser only; redrawn only when the archive or the day changed.
+        let boxKey = '';
+        const placeBox = () =>
+        {
+            const menu = document.querySelector('#menuTable');
+            if(!menu) return;
+            let box = document.querySelector('#orionTodayBox');
+            const today = dayKey(Date.now());
+            let raw = '';
+            try { raw = localStorage.getItem(DB_KEY) || ''; } catch(e) { /* storage blocked */ }
+            const key = today + '|' + raw;
+            if(box && key === boxKey) return;
+            boxKey = key;
+
+            if(!box)
+            {
+                box = document.createElement('div');
+                box.id = 'orionTodayBox';
+                box.title = T.boxHint;
+                box.addEventListener('click', event => openModal(event, true));
+                menu.insertAdjacentElement('afterend', box);
+            }
+            const from = dayStart(today), to = dayStart(nextDay(today));
+            const t = allEvents(loadDb()).filter(ev => ev.at >= from && ev.at < to).reduce(add, blank());
+            const cell = (cls, label, value) => `<div class="otbCell"><span class="otbIcon ${cls}">${label}</span><b class="${value < 0 ? 'otbNeg' : value > 0 ? 'otbPos' : ''}">${compact(value)}</b></div>`;
+            box.innerHTML = `<div class="otbHead">Orion · ${esc(new Date(from).toLocaleDateString(LANG === 'it' ? 'it-IT' : 'en-GB', { day:'numeric', month:'long', year:'numeric' }))}</div>
+                <div class="otbGrid">${cell('otbM', 'M', t.metal)}${cell('otbC', 'C', t.crystal)}${cell('otbD', 'D', t.deuterium)}${cell('otbMsu', 'MSU', net(t))}</div>`;
+        };
+
         const archiveStyle = document.createElement('style');
         archiveStyle.textContent = `
             .orionArchiveBar { margin:4px 0 6px; text-align:right; }
             .orionArchiveButton { display:inline-block; padding:3px 9px; font-size:11px; color:#d7e3ef !important; background:rgba(0,0,0,.4);
                 border:1px solid rgba(143,209,158,.45); border-radius:3px; text-decoration:none !important; }
             .orionArchiveButton:hover { border-color:#8fd19e; color:#fff !important; }
+            #orionTodayBox { margin:8px 4px 0; padding:6px 6px 8px; background:rgba(13,16,20,.85); border:1px solid #2c3a47; border-radius:4px;
+                font:11px Verdana, Arial, sans-serif; color:#a9b7c6; cursor:pointer; }
+            #orionTodayBox:hover { border-color:#3a5068; }
+            #orionTodayBox .otbHead { color:#8fb3d9; font-weight:bold; text-align:center; margin-bottom:6px; }
+            #orionTodayBox .otbGrid { display:grid; grid-template-columns:1fr 1fr; gap:6px 4px; }
+            #orionTodayBox .otbCell { display:flex; flex-direction:column; align-items:center; gap:2px; }
+            #orionTodayBox .otbIcon { min-width:22px; height:18px; padding:0 3px; line-height:18px; text-align:center; border-radius:3px; font-size:10px; font-weight:bold; color:#0d1014; }
+            #orionTodayBox .otbM { background:#a7a9ad; } #orionTodayBox .otbC { background:#7fc4e8; }
+            #orionTodayBox .otbD { background:#4fb3a9; } #orionTodayBox .otbMsu { background:none; color:#fff; }
+            #orionTodayBox b { color:#d7e3ef; font-weight:normal; }
+            #orionTodayBox .otbPos { color:#8fd19e; } #orionTodayBox .otbNeg { color:#e66767; }
             .orionArchiveMenuIcon { display:inline-block; width:27px; text-align:center; line-height:27px; font-size:14px; }
             #orionArchiveModal { position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; }
             #orionArchiveModal .oaWindow { width:min(1250px, 96vw); max-height:92vh; display:flex; flex-direction:column; background:#0d1014;
@@ -1688,6 +1736,7 @@ onDomReady(function()
             if(dialogOpen()) dialogSeen = Date.now();
             placeMenu();
             readBattles();
+            placeBox();
             if(!document.querySelector('.orionTabContentWrapper')) return;
             placeButtons();
             sync();
