@@ -1,0 +1,50 @@
+# Publishes exodus/ (merged Exodus rankings) on GitHub Pages.
+# fetch.mjs reads the official public OGame API - highscore files that Gameforge regenerates about once an
+# hour - so a run every 3 hours is plenty; nothing polls the game more often than that (AGENTS.md 6).
+# data.js is built here and deployed, never committed.
+name: Exodus rankings on Pages
+
+on:
+  schedule:
+    - cron: '17 */3 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['exodus/**', '.github/workflows/exodus-pages.yml']
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: exodus-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download the public API files
+        run: node exodus/fetch.mjs
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp exodus/index.html exodus/data.js _site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

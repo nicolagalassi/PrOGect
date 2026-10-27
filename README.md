@@ -25,6 +25,17 @@ you can run one, all of them, or none.
 They all read the pages you already have open; where one needs more, it is a single read you
 trigger with a click, never a background loop.
 
+## Exodus: merged rankings
+
+[`exodus/`](exodus/) is a standalone page, not a userscript: the players of the Italian universes that
+merge in the Exodus, in one ranking per colour group (Blu, Arancio, Verde), for total, economy,
+research and military points. It uses only the official public OGame API and does not run in the game.
+
+1. `node exodus/fetch.mjs` downloads the public API files of the 15 universes (one request at a time,
+   about a minute) into `exodus/data.js`. Run it again whenever you want fresh figures; Gameforge
+   updates the rankings about once an hour.
+2. Open `exodus/index.html` in the browser.
+
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).

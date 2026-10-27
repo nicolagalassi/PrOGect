@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exodus - classifiche unite</title>
+<!-- Data: data.js, written by fetch.mjs from the official public OGame API. Rebuild with `node exodus/fetch.mjs`. -->
+<script src="data.js"></script>
+<style>
+    :root
+    {
+        --bg:#0f1626; --panel:#16203a; --panel-2:#1b2744; --line:#2a3a5c; --ink:#e6ecf7; --muted:#9aa8c3; --faint:#6f7e9c;
+        --accent:var(--group, #5aa9f0);
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main{ max-width:1100px; margin:0 auto; padding:28px 20px 60px; }
+    h1{ margin:0 0 4px; font-size:22px; font-weight:650; }
+    .sub{ color:var(--muted); margin:0 0 22px; }
+
+    .groups{ display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); gap:10px; margin-bottom:18px; }
+    .group{ all:unset; cursor:pointer; padding:12px 14px; background:var(--panel); border:1px solid var(--line); border-left:0; border-radius:8px;
+        box-shadow:inset 3px 0 0 var(--c); transition:border-color .15s ease-out, background .15s ease-out; }
+    .group:hover{ background:var(--panel-2); }
+    .group:focus-visible{ outline:2px solid var(--c); outline-offset:2px; }
+    .group[aria-pressed="true"]{ border-color:var(--c); background:var(--panel-2); }
+    .group b{ display:block; font-size:15px; color:var(--c); }
+    .group span{ display:block; color:var(--muted); font-size:12.5px; margin-top:2px; }
+
+    .bar{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin-bottom:12px; }
+    .tabs{ display:inline-flex; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:3px; }
+    .tabs button{ all:unset; cursor:pointer; padding:6px 13px; border-radius:6px; color:var(--muted); font-weight:550; }
+    .tabs button:hover{ color:var(--ink); }
+    .tabs button:focus-visible{ outline:2px solid var(--accent); }
+    .tabs button[aria-pressed="true"]{ background:var(--accent); color:#0b1220; }
+    input[type=search]{ flex:1 1 220px; min-width:180px; padding:8px 11px; background:var(--panel); border:1px solid var(--line); border-radius:8px; color:var(--ink); font:inherit; }
+    input[type=search]:focus{ outline:none; border-color:var(--accent); }
+    label.check{ display:inline-flex; align-items:center; gap:7px; color:var(--muted); cursor:pointer; user-select:none; }
+    label.check input{ accent-color:var(--accent); }
+
+    .chips{ display:flex; flex-wrap:wrap; gap:6px; margin:0 0 12px; }
+    .chip{ all:unset; cursor:pointer; padding:3px 10px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:12.5px; }
+    .chip:focus-visible{ outline:2px solid var(--accent); }
+    .chip[aria-pressed="true"]{ border-color:var(--accent); color:var(--ink); background:var(--panel-2); }
+    .chip small{ color:var(--faint); margin-left:4px; }
+
+    .summary{ color:var(--muted); font-size:13px; margin:0 0 8px; }
+    table{ width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    th, td{ padding:7px 12px; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
+    th{ position:sticky; top:0; background:var(--panel-2); color:var(--muted); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+    td.num, th.num{ text-align:right; font-variant-numeric:tabular-nums; }
+    tbody tr:hover{ background:var(--panel-2); }
+    td.rank{ color:var(--faint); width:1%; }
+    tr.top td.rank{ color:var(--accent); font-weight:700; }
+    td.name{ font-weight:550; }
+    .ally{ color:var(--muted); }
+    .uni{ color:var(--muted); }
+    .uni em{ font-style:normal; color:var(--faint); margin-left:6px; }
+    .flag{ display:inline-block; margin-left:6px; padding:0 5px; border-radius:4px; font-size:11px; font-weight:700; line-height:16px; vertical-align:1px; background:#2b3550; color:var(--muted); }
+    .flag.v{ background:#24405f; color:#9ccbff; }
+    .flag.i, .flag.I{ background:#3d3523; color:#e7c27a; }
+    .flag.b{ background:#4a2328; color:#ff9b9b; }
+    .more{ display:block; margin:14px auto 0; padding:8px 18px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:8px; font:inherit; cursor:pointer; }
+    .more:hover{ border-color:var(--accent); }
+    .empty{ padding:40px 20px; text-align:center; color:var(--muted); background:var(--panel); border:1px solid var(--line); border-radius:8px; }
+    .empty code{ color:var(--ink); }
+    footer{ margin-top:22px; color:var(--faint); font-size:12px; }
+    @media (max-width:700px){ th.opt, td.opt{ display:none; } }
+</style>
+</head>
+<body>
+<main>
+    <h1>Exodus: classifiche unite</h1>
+    <p class="sub">I giocatori degli universi che si fondono, in un'unica classifica per gruppo. Dati dall'API pubblica di OGame.</p>
+
+    <div class="groups" id="groups" role="group" aria-label="Gruppo"></div>
+
+    <div class="bar">
+        <div class="tabs" id="tabs" role="group" aria-label="Classifica"></div>
+        <input type="search" id="search" placeholder="Cerca giocatore o alleanza" aria-label="Cerca giocatore o alleanza">
+        <label class="check"><input type="checkbox" id="active"> Nascondi inattivi e bannati</label>
+    </div>
+
+    <div class="chips" id="chips" role="group" aria-label="Universi"></div>
+    <p class="summary" id="summary"></p>
+    <div id="table"></div>
+    <footer id="footer"></footer>
+</main>
+
+<script>
+(() =>
+{
+    'use strict';
+
+    const data = window.EXODUS_DATA;
+    const $ = id => document.getElementById(id);
+
+    if(!data)
+    {
+        $('table').innerHTML = '<div class="empty">Nessun dato. Esegui <code>node exodus/fetch.mjs</code> e ricarica la pagina.</div>';
+        return;
+    }
+
+    // [id, name, status, alliance, total, totalPos, economy, economyPos, research, researchPos, military, militaryPos, ships]
+    const CATEGORIES =
+    [
+        { key:'total', label:'Generale', score:4, pos:5 },
+        { key:'economy', label:'Economia', score:6, pos:7 },
+        { key:'research', label:'Ricerca', score:8, pos:9 },
+        { key:'military', label:'Militare', score:10, pos:11, ships:12 },
+    ];
+    const FLAGS = { v:'in vacanza', i:'inattivo da 7 giorni', I:'inattivo da 28 giorni', b:'bannato', o:'fuorilegge' };
+    const PAGE = 250;
+
+    const fmt = new Intl.NumberFormat('it-IT');
+    const esc = text => String(text).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+
+    const state = { group:data.groups[0].id, category:'total', query:'', activeOnly:false, hidden:new Set(), shown:PAGE };
+
+    const group = () => data.groups.find(g => g.id === state.group);
+
+    const renderGroups = () =>
+    {
+        $('groups').innerHTML = data.groups.map(g =>
+        {
+            const players = g.universes.reduce((sum, n) => sum + (data.universes[n]?.players.length || 0), 0);
+            return `<button class="group" style="--c:${g.color}" data-id="${g.id}" aria-pressed="${g.id === state.group}">` +
+                `<b>Gruppo ${esc(g.name)}</b><span>${g.universes.length} universi, ${fmt.format(players)} giocatori</span>` +
+                `<span>Destinazioni: ${g.destinations.map(esc).join(', ')}</span></button>`;
+        }).join('');
+        document.documentElement.style.setProperty('--group', group().color);
+    };
+
+    const renderTabs = () =>
+    {
+        $('tabs').innerHTML = CATEGORIES.map(c => `<button data-key="${c.key}" aria-pressed="${c.key === state.category}">${c.label}</button>`).join('');
+    };
+
+    const renderChips = () =>
+    {
+        $('chips').innerHTML = group().universes.map(n =>
+        {
+            const u = data.universes[n];
+            return `<button class="chip" data-n="${n}" aria-pressed="${!state.hidden.has(n)}">${esc(u?.name || n)}<small>${n}</small></button>`;
+        }).join('');
+    };
+
+    const rows = () =>
+    {
+        const category = CATEGORIES.find(c => c.key === state.category);
+        const query = state.query.trim().toLowerCase();
+        const list = [];
+
+        for(const n of group().universes)
+        {
+            if(state.hidden.has(n)) continue;
+            const universe = data.universes[n];
+            if(!universe) continue;
+
+            for(const p of universe.players)
+            {
+                if(state.activeOnly && /[iIb]/.test(p[2])) continue;
+                list.push({ p, universe });
+            }
+        }
+
+        // the merged order: score first, then the original position as a stable tie-break
+        list.sort((a, b) => b.p[category.score] - a.p[category.score] || a.p[category.pos] - b.p[category.pos]);
+        list.forEach((row, index) => row.rank = index + 1);
+
+        const filtered = query ? list.filter(({ p }) => p[1].toLowerCase().includes(query) || p[3].toLowerCase().includes(query)) : list;
+        return { category, all:list.length, list:filtered };
+    };
+
+    const renderTable = () =>
+    {
+        const { category, all, list } = rows();
+        const shown = list.slice(0, state.shown);
+
+        $('summary').textContent = state.query
+            ? `${fmt.format(list.length)} risultati su ${fmt.format(all)} giocatori`
+            : `${fmt.format(all)} giocatori nella classifica ${category.label.toLowerCase()} del gruppo ${group().name}`;
+
+        if(!list.length)
+        {
+            $('table').innerHTML = '<div class="empty">Nessun giocatore corrisponde ai filtri.</div>';
+            return;
+        }
+
+        const flags = status => Array.from(status).filter(f => FLAGS[f]).map(f => `<span class="flag ${f}" title="${FLAGS[f]}">${f}</span>`).join('');
+
+        $('table').innerHTML =
+            `<table><thead><tr><th class="num">#</th><th>Giocatore</th><th>Alleanza</th><th>Universo</th><th class="num opt">Pos. originale</th>` +
+            `<th class="num">Punti</th>${category.ships ? '<th class="num opt">Navi</th>' : ''}</tr></thead><tbody>` +
+            shown.map(({ p, universe, rank }) =>
+                `<tr class="${rank <= 10 ? 'top' : ''}"><td class="num rank">${rank}</td>` +
+                `<td class="name">${esc(p[1])}${flags(p[2])}</td>` +
+                `<td class="ally">${p[3] ? esc(p[3]) : ''}</td>` +
+                `<td class="uni">${esc(universe.name)}<em>${universe.number}</em></td>` +
+                `<td class="num opt">${p[category.pos] ? fmt.format(p[category.pos]) : ''}</td>` +
+                `<td class="num">${fmt.format(p[category.score])}</td>` +
+                (category.ships ? `<td class="num opt">${fmt.format(p[category.ships])}</td>` : '') + `</tr>`).join('') +
+            `</tbody></table>` +
+            (list.length > shown.length ? `<button class="more" id="more">Mostra altri ${fmt.format(Math.min(PAGE, list.length - shown.length))} (${fmt.format(list.length - shown.length)} rimasti)</button>` : '');
+    };
+
+    const renderFooter = () =>
+    {
+        const stamps = group().universes.map(n => data.universes[n]?.updated).filter(Boolean);
+        const when = t => new Date(t * 1000).toLocaleString('it-IT', { dateStyle:'short', timeStyle:'short' });
+        $('footer').textContent = `Classifiche aggiornate da Gameforge tra ${when(Math.min(...stamps))} e ${when(Math.max(...stamps))}. ` +
+            `Dati scaricati il ${new Date(data.generatedAt).toLocaleString('it-IT', { dateStyle:'short', timeStyle:'short' })}. ` +
+            `Gli amministratori del gioco sono esclusi.`;
+    };
+
+    const render = () => { renderGroups(); renderTabs(); renderChips(); renderTable(); renderFooter(); };
+
+    $('groups').addEventListener('click', e =>
+    {
+        const button = e.target.closest('.group');
+        if(!button) return;
+        state.group = button.dataset.id; state.hidden.clear(); state.shown = PAGE;
+        render();
+    });
+    $('tabs').addEventListener('click', e =>
+    {
+        const button = e.target.closest('button');
+        if(!button) return;
+        state.category = button.dataset.key; state.shown = PAGE;
+        renderTabs(); renderTable();
+    });
+    $('chips').addEventListener('click', e =>
+    {
+        const button = e.target.closest('.chip');
+        if(!button) return;
+        const n = Number(button.dataset.n);
+        if(state.hidden.has(n)) state.hidden.delete(n);
+        else if(state.hidden.size < group().universes.length - 1) state.hidden.add(n); // at least one stays
+        state.shown = PAGE;
+        renderChips(); renderTable();
+    });
+    $('search').addEventListener('input', e => { state.query = e.target.value; state.shown = PAGE; renderTable(); });
+    $('active').addEventListener('change', e => { state.activeOnly = e.target.checked; state.shown = PAGE; renderTable(); });
+    $('table').addEventListener('click', e => { if(e.target.id === 'more') { state.shown += PAGE; renderTable(); } });
+
+    render();
+})();
+</script>
+</body>
+</html>
