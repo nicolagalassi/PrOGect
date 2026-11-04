@@ -1,0 +1,25 @@
+# devlog.jsonl is the dev bridge's capture of the LIVE game session (server host, planet ids,
+# coordinates). It must never be published.
+devlog.jsonl
+
+.claude/
+.serena/
+
+# local backups
+*.bak-*
+*.backup
+
+# third-party reference scripts consulted while porting to OGame v13, kept locally, NOT redistributed:
+# OGLight (MIT, © 2019 Oz) · OGame-One (GPL-3.0) · OGDark (OGLight fork)
+OGLight*.user.js
+oglight*.user.js
+OGLight Settings - standalone.html
+ogameone.user.js
+ogdarkv13.user.js.backup
+ogamediag.user.js
+analize.txt
+
+# throwaway visual harnesses (regenerated on demand from the userscript)
+*-mock/
+settings-harness/ogl.css
+settings-harness/polish.css
